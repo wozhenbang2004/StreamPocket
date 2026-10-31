@@ -207,6 +207,25 @@ public final class DownloadPauseTest {
         assertTrue(queue().isEmpty());
     }
 
+    @Test public void aNewBatchNeverPreemptsActiveWorkOrItsNotification() throws Exception {
+        seed(task("active","downloading","video").put("title","Current active fixture").put("progress",42),
+                task("waiting","queued","queued"),task("new-first","queued","queued"),task("new-last","queued","queued"));
+        own("active");queue().addLast("waiting");
+        service.onStartCommand(new Intent(app,DownloadService.class).setAction(DownloadService.ENQUEUE)
+                .putStringArrayListExtra("ids",new java.util.ArrayList<>(Arrays.asList("new-first","new-last"))),0,2);
+        assertEquals("active",field("active").get(service));
+        assertEquals(Arrays.asList("waiting","new-first","new-last"),Arrays.asList(queue().toArray(new String[0])));
+        assertEquals(42,TaskStore.get(app,"active").getDouble("progress"),0);
+        android.app.Notification notification=org.robolectric.Shadows.shadowOf(service).getLastForegroundNotification();
+        assertNotNull(notification);assertEquals("Current active fixture",notification.extras.getString(android.app.Notification.EXTRA_TEXT));
+        long first=TaskStore.get(app,"new-first").getLong("queuedAt"),last=TaskStore.get(app,"new-last").getLong("queuedAt");
+        assertTrue(last>first);
+        service.onStartCommand(new Intent(app,DownloadService.class).setAction(DownloadService.ENQUEUE)
+                .putStringArrayListExtra("ids",new java.util.ArrayList<>(Arrays.asList("new-first","new-last"))),0,3);
+        assertEquals(Arrays.asList("waiting","new-first","new-last"),Arrays.asList(queue().toArray(new String[0])));
+        assertEquals(first,TaskStore.get(app,"new-first").getLong("queuedAt"));
+    }
+
     private void command(String action,String id) { service.onStartCommand(new Intent(app,DownloadService.class).setAction(action).putExtra("id",id),0,1); }
     private void replay(DownloadProgress model,String line) throws Exception {
         assertTrue(model.accept(line));

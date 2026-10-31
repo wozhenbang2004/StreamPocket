@@ -159,12 +159,12 @@ public final class MediaWorkspaceUiTest {
             findText(field(activity,"menuPanel",View.class),"精彩标记").performClick(); idle();
             assertEquals("markers",field(activity,"sheetMode",String.class));
             LinearLayout markers=field(activity,"markerList",LinearLayout.class);
-            assertNotNull(findContainingText(markers,"00:20\n第一次转场"));
-            assertNotNull(findContainingText(markers,"01:20–01:35\n山顶的日落与云海"));
+            assertNotNull(findContainingText(markers,"00:20.000"));assertNotNull(findContainingText(markers,"第一次转场"));
+            assertNotNull(findContainingText(markers,"01:20.000 — 01:35.000"));assertNotNull(findContainingText(markers,"山顶的日落与云海"));
             capture(activity.getWindow().getDecorView(),"06-player-missing-original-fixture");
             ScrollView details=field(activity,"details",ScrollView.class); details.fullScroll(View.FOCUS_DOWN); idle();
             capture(activity.getWindow().getDecorView(),"07-player-preserved-point-range-fixtures");
-            findContainingText(markers,"01:20–01:35").performClick(); idle();
+            ((View)findContainingText(markers,"01:20.000 — 01:35.000").getParent()).performClick(); idle();
             assertNull(field(activity,"player",Object.class));
             try (LibraryStore store=new LibraryStore(app)) {
                 List<JSONObject> saved=store.markers(id);

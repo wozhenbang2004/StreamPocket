@@ -19,7 +19,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.TreeSet;
-import java.util.Arrays;
 import java.util.function.Consumer;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipEntry;
@@ -181,6 +180,9 @@ public final class Engine {
         request.addOption("--no-playlist");
         request.addOption("--socket-timeout", "15");
         request.addOption("--retries", "3");
+        request.addOption("--retry-sleep", "http:exp=1:8");
+        request.addOption("--retry-sleep", "fragment:exp=1:8");
+        request.addOption("--extractor-retries", "1");
         request.addOption("--fragment-retries", "3");
         request.addOption("--no-colors");
         File plugins = new File(app.getFilesDir(), "plugins");
@@ -260,47 +262,62 @@ public final class Engine {
     }
 
     public List<Media> inspect(String input, Consumer<String> progress) throws Exception {
+        return inspect(input, progress, () -> false);
+    }
+
+    public List<Media> inspect(String input, Consumer<String> progress, java.util.function.BooleanSupplier cancelled) throws Exception {
+        if (cancelled.getAsBoolean()) throw new InterruptedException("解析已取消");
         inspectCancelled = false;
         init();
         String url = normalizeUrl(input);
         boolean twitter = CoreRules.isTwitterUrl(url);
         boolean signedIn = twitter && hasTwitterLoginCookie();
-        List<String> apis = twitter && !signedIn ? Arrays.asList("graphql", "syndication", "legacy") : Collections.singletonList("");
+        List<String> apis = twitter && !signedIn ? SourceScheduler.SHARED.twitterApis() : Collections.singletonList("");
         StringBuilder failures = new StringBuilder();
-        RUNTIME_LOCK.readLock().lockInterruptibly();
-        try {
-            for (int attempt = 0; attempt < apis.size(); attempt++) {
-                if (inspectCancelled) throw new InterruptedException("解析已取消");
-                String api = apis.get(attempt);
-                progress.accept(attempt == 0 ? "正在获取视频信息…" : "正在尝试另一种解析方式…");
+        for (String api : apis) {
+            for (int retry = 0; retry < 2; retry++) {
+                if (inspectCancelled || cancelled.getAsBoolean()) throw new InterruptedException("解析已取消");
+                progress.accept(retry > 0 ? "连接暂时失败，正在退避重试…" : "正在获取视频信息…");
                 String processId = "inspect-" + java.util.UUID.randomUUID();
-                inspectProcess = processId;
-                try {
-                    YoutubeDLRequest request = request(url, processId);
-                    if (!api.isEmpty()) request.addOption("--extractor-args", "twitter:api=" + api);
-                    request.addOption("--dump-single-json");
-                    // Retain partial playlists, but never confuse the literal `null` with success.
-                    request.addOption("--dump-json");
-                    request.addOption("--ignore-errors");
-                    request.addOption("--skip-download");
-                    if (inspectCancelled) throw new InterruptedException("解析已取消");
-                    YoutubeDLResponse response = YoutubeDL.getInstance().execute(request, processId, false, null);
-                    JSONObject root = metadataFromResponse(response.getOut(), response.getErr(), response.getExitCode());
-                    if (inspectCancelled) throw new InterruptedException("解析已取消");
-                    List<Media> results = mediaFromMetadata(root, url);
-                    if (results.isEmpty()) throw new IOException("源站没有返回可下载的完整视频。\n" + cleanLog(response.getErr()));
-                    for (Media media : results) media.twitterApi = api;
-                    return results;
-                } catch (Exception error) {
-                    if (inspectCancelled || error instanceof InterruptedException) throw new InterruptedException("解析已取消");
-                    String reason = cleanLog(error.getMessage() == null ? error.toString() : error.getMessage());
-                    failures.append(api.isEmpty() ? "默认解析" : "X / " + api).append(":\n")
-                            .append(reason.substring(0, Math.min(reason.length(), 3500))).append("\n\n");
-                } finally { inspectProcess = null; cleanupRequest(processId); }
+                try (SourceScheduler.Lease lease = SourceScheduler.SHARED.acquire(url,
+                        () -> inspectCancelled || cancelled.getAsBoolean(), progress)) {
+                    RUNTIME_LOCK.readLock().lockInterruptibly();
+                    try {
+                        inspectProcess = processId;
+                        YoutubeDLRequest request = request(url, processId);
+                        if (!api.isEmpty()) request.addOption("--extractor-args", "twitter:api=" + api);
+                        request.addOption("--dump-single-json");
+                        request.addOption("--dump-json");
+                        request.addOption("--ignore-errors");
+                        request.addOption("--skip-download");
+                        if (inspectCancelled || cancelled.getAsBoolean()) throw new InterruptedException("解析已取消");
+                        YoutubeDLResponse response = YoutubeDL.getInstance().execute(request, processId, false, null);
+                        JSONObject root = metadataFromResponse(response.getOut(), response.getErr(), response.getExitCode());
+                        if (inspectCancelled || cancelled.getAsBoolean()) throw new InterruptedException("解析已取消");
+                        List<Media> results = mediaFromMetadata(root, url);
+                        if (results.isEmpty()) throw new IOException("源站没有返回可下载的完整视频。\n" + cleanLog(response.getErr()));
+                        for (Media media : results) media.twitterApi = api;
+                        lease.outcome(null);
+                        return results;
+                    } catch (Exception error) {
+                        if (inspectCancelled || cancelled.getAsBoolean() || error instanceof InterruptedException)
+                            throw new InterruptedException("解析已取消");
+                        lease.outcome(error);
+                        String reason = cleanLog(error.getMessage() == null ? error.toString() : error.getMessage());
+                        failures.append(api.isEmpty() ? "默认解析" : "X / " + api).append(":\n")
+                                .append(reason.substring(0, Math.min(reason.length(), 3500))).append("\n\n");
+                        SourceFailure.Kind kind = SourceFailure.kind(error);
+                        if (SourceFailure.retryable(error) && retry == 0) continue;
+                        // One platform limit is shared across APIs. Do not hammer other endpoints after it.
+                        if (kind == SourceFailure.Kind.RATE_LIMIT || kind == SourceFailure.Kind.AUTH
+                                || kind == SourceFailure.Kind.CHALLENGE || SourceFailure.retryable(error))
+                            throw new IOException(failures.toString().trim(), error);
+                        break;
+                    } finally { inspectProcess = null; cleanupRequest(processId); RUNTIME_LOCK.readLock().unlock(); }
+                }
             }
-            if (signedIn) failures.append("检测到 X 登录凭据；本次保留该登录状态，没有改用匿名访问。失效 Cookie 可在设置中清除或重新导入。\n");
-            throw new IOException(failures.toString().trim());
-        } finally { inspectProcess = null; RUNTIME_LOCK.readLock().unlock(); }
+        }
+        throw new IOException(failures.toString().trim());
     }
 
     private boolean hasTwitterLoginCookie() throws IOException {

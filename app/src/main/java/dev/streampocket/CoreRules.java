@@ -89,6 +89,7 @@ public final class CoreRules {
     }
 
     public static String inspectionMessage(Throwable error) {
+        if (SourceFailure.kind(error) != SourceFailure.Kind.OTHER) return userMessage(error);
         String text = cleanLog(error == null ? "" : error.toString()).toLowerCase(Locale.ROOT);
         if (text.contains("certificate") || text.contains("ssl")) return "解析连接的证书验证失败，请查看错误详情。视频尚未开始下载。";
         if (text.contains("no video could be found in this tweet") || text.contains("tweet is unavailable") || text.contains("tombstone"))
@@ -104,9 +105,13 @@ public final class CoreRules {
         String lower = text.toLowerCase(Locale.ROOT);
         if (lower.contains("no space") || lower.contains("enospc")) return "手机存储空间不足。腾出空间后可重试，临时文件会保留。";
         if (lower.contains("ffmpeg") || lower.contains("dlopen") || lower.contains("libc++") || lower.contains("native")) return "视频合并组件无法运行，可能与本机系统或原生库兼容性有关。请查看详情。";
+        SourceFailure.Kind kind = SourceFailure.kind(error);
+        if (kind == SourceFailure.Kind.RATE_LIMIT) return "平台请求过于频繁，已进入冷却。稍后重试，登录状态会保留。";
+        if (kind == SourceFailure.Kind.TIMEOUT) return "连接源站超时。请检查网络与代理后重试；这不代表登录已失效。";
+        if (kind == SourceFailure.Kind.NETWORK) return "连接源站失败。请检查网络与代理，稍后重试；登录状态会保留。";
+        if (kind == SourceFailure.Kind.AUTH) return "源站要求登录或当前账号权限不足。请在账号管理中检查此平台的登录状态。";
         if (lower.contains("captcha") || lower.contains("verification") || lower.contains("verify") || lower.contains("验证")) return "平台要求验证。请在账号管理中正常完成网页登录与验证，保存后重试。抖音目前属于实验性支持。";
         if (lower.contains("fresh cookies")) return "未能获取视频详情，可能与会话或解析接口有关。可更新解析器，或在账号管理中重新登录并保存后重试。";
-        if (lower.contains("cookie") || lower.contains("sign in") || lower.contains("login") || lower.contains("authentication") || lower.contains("会员")) return "此内容可能需要登录或更高权限。可在设置的账号管理中登录后重试。";
         if (lower.contains("unsupported url") || lower.contains("no video") || lower.contains("not available") || lower.contains("requested format")) return "当前链接或所选画质暂不可下载。请尝试最高可用画质，或更新内核后重试。";
         if (lower.contains("timed out") || lower.contains("timeout") || lower.contains("network") || lower.contains("unable to download") || lower.contains("403") || lower.contains("429")) return "网络连接或平台访问失败。请检查网络与代理，稍后重试；频繁请求也可能触发平台限制。";
         return "下载未完成，请查看详情并重试。已下载的临时数据会保留。";

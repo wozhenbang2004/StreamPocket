@@ -103,7 +103,7 @@ public final class VideoFirstPlayerUiTest {
             assertEquals("An open tool sheet pauses controller hiding",View.VISIBLE,controller(surface).getVisibility());
             capture(activity,"03-portrait-dark-markers-long-title-clock-fixture");
             assertEquals(canvasWidth,surface.getWidth()); assertEquals(canvasHeight,surface.getHeight());
-            assertNotNull(findText(field(activity,"markerPanel",View.class),"01:20–01:35\n留给夕阳的一段完整时间：远处的云海终于透出柔和的光"));
+            assertNotNull(findText(field(activity,"markerPanel",View.class),"01:20.000 — 01:35.000"));assertNotNull(findText(field(activity,"markerPanel",View.class),"留给夕阳的一段完整时间：远处的云海终于透出柔和的光"));
             findButton(field(activity,"markerPanel",View.class),"标记精彩片段").performClick(); idle();
             capture(activity,"04-portrait-dark-range-clock-fixture");
             assertEquals("range",field(activity,"sheetMode",String.class)); assertFullCanvas(root,surface);
@@ -143,7 +143,7 @@ public final class VideoFirstPlayerUiTest {
             field(activity,"markerOptionsButton",View.class).performClick(); idle();
             assertEquals("markers",field(activity,"sheetMode",String.class));
             assertFalse(field(activity,"bookmarkButton",Button.class).isEnabled());
-            assertNotNull(findText(field(activity,"markerList",View.class),"00:20\n第一阵风吹过山脊，我们都慢下了脚步"));
+            assertNotNull(findText(field(activity,"markerList",View.class),"00:20.250"));assertNotNull(findText(field(activity,"markerList",View.class),"第一阵风吹过山脊，我们都慢下了脚步"));
         } finally { controller.pause().stop().destroy(); idle(); }
     }
 

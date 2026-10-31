@@ -52,15 +52,15 @@ public final class Main022UiTest {
             MainActivity a=c.create(initial()).start().resume().visible().get();
             EditText input=field(a,"input",EditText.class);assertEquals(2,input.getMinLines());assertEquals(4,input.getMaxLines());capture(a.getWindow().getDecorView(),"00-light-home-link-fixture");
             Engine.Media m=fixtureMedia();invoke(a,"showMedia",new Class<?>[]{java.util.List.class},Collections.singletonList(m));drain(a);
-            View page=a.getWindow().getDecorView();assertNotNull(find(page,m.title));assertNotNull(find(page,"1920 × 1080 · 预计 128.0 MB"));assertNotNull(find(page,"加入下载"));
+            View page=a.getWindow().getDecorView();assertNotNull(find(page,m.title));assertNotNull(find(page,"1920 × 1080 · 预计 128.0 MB"));assertNotNull(find(page,"加入队列"));
             assertTrue("Inline media must not create a task until the user chooses download",TaskStore.all(a).isEmpty());
             assertTrue(ShadowDialog.getLatestDialog()==null||!ShadowDialog.getLatestDialog().isShowing());
-            assertFalse("Resolved input yields focus to the download decision",input.isShown());assertFalse(field(a,"parse",Button.class).isShown());assertTrue(find(page,"加入下载").isShown());
+            assertTrue("Editor stays available for the next share",input.isShown());assertTrue(field(a,"parse",Button.class).isShown());assertTrue(find(page,"加入队列").isShown());
             capture(page,"01-inline-resolved-metadata-fixture");
             find(page,"画质：最高可用画质  ▾").performClick();
             AlertDialog quality=(AlertDialog)ShadowDialog.getLatestDialog();quality.getListView().performItemClick(quality.getListView().getChildAt(1),1,1);drain(a);
             assertNotNull(find(page,"720p · 大小待下载时确定"));assertNull("Best-format size must not be attributed to another quality",find(page,"1920 × 1080 · 预计 128.0 MB"));
-            input.setText("https://x.com/example/status/9999");drain(a);assertNull("Editing the link clears stale media cards",find(page,m.title));
+            input.setText("https://x.com/example/status/9999");drain(a);assertNotNull("Typing the next link retains the current unqueued result",find(page,m.title));
             assertTrue(TaskStore.all(a).isEmpty());
         }finally{c.pause().stop().destroy();}
     }
@@ -125,11 +125,11 @@ public final class Main022UiTest {
         }finally{if(!destroyed)controller.pause().stop().destroy();}
     }
 
-    @Test public void staleSwipeNeverInvertsANewerTaskStateAndChangingLinkRestoresEditor() throws Exception {
+    @Test public void staleSwipeNeverInvertsANewerTaskStateAndNextLinkKeepsPendingResults() throws Exception {
         ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class);
         try{
             MainActivity a=c.create(initial()).start().resume().visible().get();invoke(a,"showMedia",new Class<?>[]{java.util.List.class},Collections.singletonList(fixtureMedia()));
-            find(a.getWindow().getDecorView(),"更换链接").performClick();assertTrue(field(a,"input",EditText.class).isShown());assertTrue(field(a,"parse",Button.class).isShown());assertNull(find(a.getWindow().getDecorView(),fixtureMedia().title));assertEquals(initial().getString("draft"),field(a,"input",EditText.class).getText().toString());
+            field(a,"input",EditText.class).setText("https://x.com/example/status/9999");assertTrue(field(a,"input",EditText.class).isShown());assertTrue(field(a,"parse",Button.class).isShown());assertNotNull(find(a.getWindow().getDecorView(),fixtureMedia().title));assertEquals("https://x.com/example/status/9999",field(a,"input",EditText.class).getText().toString());
             JSONObject live=task("race","状态竞争样例","downloading").put("phase","video");a.getSharedPreferences("tasks",0).edit().putString("items",new JSONArray().put(live).toString()).commit();invoke(a,"showTab",new Class<?>[]{String.class},"queue");
             TaskStore.update(a,"race",new JSONObject().put("status","paused"));invoke(a,"performSwipeAction",new Class<?>[]{String.class,String.class},"race","pauseable");assertEquals("paused",TaskStore.get(a,"race").getString("status"));assertNull(Shadows.shadowOf(a).getNextStartedService());
             TaskStore.update(a,"race",new JSONObject().put("status","merging"));invoke(a,"performSwipeAction",new Class<?>[]{String.class,String.class},"race","paused");assertEquals("merging",TaskStore.get(a,"race").getString("status"));assertNull(Shadows.shadowOf(a).getNextStartedService());

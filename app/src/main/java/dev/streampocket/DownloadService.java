@@ -62,21 +62,26 @@ public final class DownloadService extends Service {
         if (CANCEL.equals(intent.getAction())) {
             cancel(id); finishIfIdle(startId); return START_NOT_STICKY;
         }
-        if (!ENQUEUE.equals(intent.getAction()) || id == null || TaskStore.get(this, id) == null) {
-            stopSelf(startId); return START_NOT_STICKY;
+        java.util.ArrayList<String> ids = intent.getStringArrayListExtra("ids");
+        if (ids == null) { ids = new java.util.ArrayList<>(); if (id != null) ids.add(id); }
+        ids.removeIf(item -> item == null || TaskStore.get(this, item) == null);
+        if (!ENQUEUE.equals(intent.getAction()) || ids.isEmpty()) {
+            finishIfIdle(startId); return START_NOT_STICKY;
         }
-        // Every startForegroundService invocation is acknowledged promptly on the main thread.
-        JSONObject requested = TaskStore.get(this, id);
-        startForeground(NOTIFICATION, notification(requested != null && "pausing".equals(requested.optString("status"))
-                ? "正在暂停，等待下载进程退出…" : "准备下载", id, -1));
+        // A foreground start acknowledges Android immediately, but the notification
+        // must remain attached to the worker's current task, not the newly added one.
         synchronized (lock) {
-            if (!id.equals(active) && !queue.contains(id)) {
-                JSONObject task = TaskStore.get(this, id);
-                if (TaskStore.canEnqueue(task)) {
-                    if (TaskStore.markQueued(this, id)) { cancelled.remove(id); pauseRequested.remove(id); queue.add(id); }
-                    else patch(id, "failed", -1, "无法记录下载队列，请重试", "下载尚未开始。");
-                }
-            }
+            String shown = active != null ? active : queue.peekFirst();
+            if (shown == null) shown = ids.get(0);
+            JSONObject current = TaskStore.get(this, shown);
+            startForeground(NOTIFICATION, notification(current == null ? "等待下载" : current.optString("title"), shown,
+                    current == null ? -1 : current.optDouble("progress", -1)));
+            java.util.List<String> candidates = new java.util.ArrayList<>();
+            for (String item : ids) if (!item.equals(active) && !queue.contains(item)) candidates.add(item);
+            java.util.List<String> accepted = TaskStore.markQueuedBatch(this, candidates);
+            for (String item : accepted) { cancelled.remove(item); pauseRequested.remove(item); queue.addLast(item); }
+            if (accepted.isEmpty()) for (String item : candidates) if (TaskStore.canEnqueue(TaskStore.get(this, item)))
+                patch(item, "failed", -1, "无法记录下载队列，请重试", "下载尚未开始。");
             if (!draining && !queue.isEmpty()) { draining = true; worker.execute(this::drain); }
         }
         finishIfIdle(startId);
@@ -171,6 +176,7 @@ public final class DownloadService extends Service {
         PowerManager.WakeLock wakeLock = null;
         MediaExporter.Result committed = null;
         long committedBytes = 0;
+        SourceScheduler.Lease[] admission = {null};
         try {
             PowerManager power = getSystemService(PowerManager.class);
             if (power != null) {
@@ -185,6 +191,12 @@ public final class DownloadService extends Service {
             if (isCancelled(id)) throw new IOException("cancelled");
             Engine.Media media = Engine.Media.fromJson(task.getJSONObject("media"));
             Engine.Quality quality = Engine.Quality.fromJson(task.getJSONObject("quality"));
+            admission[0] = SourceScheduler.SHARED.acquire(media.url, () -> isCancelled(id), stage -> {
+                if (isCancelled(id)) return;
+                try { TaskStore.update(this, id, new JSONObject().put("status", "downloading").put("phase", "preparing")
+                        .put("stageLabel", stage).put("detail", stage)); } catch (Exception ignored) {}
+                updateNotification(media.title + " · " + stage, id, -1);
+            });
             File root = getExternalFilesDir("downloads");
             if (root == null) root = new File(getFilesDir(), "downloads");
             File directory = new File(root, id);
@@ -225,6 +237,9 @@ public final class DownloadService extends Service {
                     // The wrapper only dispatches stdout. Merge download stderr so
                     // retries and real source errors reach the same stage model.
                     output = YoutubeDL.getInstance().execute(request, "download-" + id, true, (progress, eta, line) -> {
+                        if (line.startsWith(DownloadProgress.PLAN_PREFIX) || line.startsWith(DownloadProgress.DOWNLOAD_PREFIX)) {
+                            admission[0].close(); // Metadata is ready; the transfer may continue alongside later inspections.
+                        }
                         String safeLine = Engine.cleanLog(line);
                         boolean event = tracker.accept(line);
                         if (!DownloadProgress.isProtocolLine(line)) {
@@ -254,6 +269,7 @@ public final class DownloadService extends Service {
                 }
             } finally { Engine.RUNTIME_LOCK.readLock().unlock(); }
             if (isCancelled(id)) throw new IOException("cancelled");
+            SourceScheduler.SHARED.outcomeForUrl(media.url, null);
             File complete = findFinalFile(workingDirectory, output);
             if (!publishProgress(id, tracker.saving())) throw new IOException("stopped");
             updateNotification("正在保存 · " + media.title, id, -1);
@@ -285,6 +301,7 @@ public final class DownloadService extends Service {
                 synchronized (lock) {
                     if (isCancelled(id)) finishStopped(id);
                     else {
+                        SourceScheduler.SHARED.outcomeForUrl(task.optString("url"), failure);
                         log.append('\n').append(Engine.cleanLog(failure.toString()));
                         patch(id, "failed", -1, "下载未完成", Engine.userMessage(failure));
                         try { TaskStore.update(this, id, new JSONObject().put("log", log.substring(Math.max(0, log.length() - 6000)))); }
@@ -293,6 +310,7 @@ public final class DownloadService extends Service {
                 }
             }
         } finally {
+            if (admission[0] != null) admission[0].close();
             engine.cleanupRequest("download-" + id);
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         }

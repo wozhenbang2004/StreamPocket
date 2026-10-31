@@ -30,13 +30,32 @@ public final class TaskStore {
     }
 
     public static synchronized String create(Context context, Engine.Media media, Engine.Quality quality) throws Exception {
+        return createBatch(context, java.util.Collections.singletonList(media), java.util.Collections.singletonList(quality)).get(0);
+    }
+
+    /** Accept a pasted batch durably as one operation, in the same order as its results. */
+    public static synchronized ArrayList<String> createBatch(Context context, List<Engine.Media> media, List<Engine.Quality> qualities) throws Exception {
         init(context);
-        String id = UUID.randomUUID().toString();
-        JSONObject task = new JSONObject().put("id", id).put("title", media.title).put("url", media.url)
-                .put("media", media.toJson()).put("quality", quality.toJson()).put("status", "queued")
-                .put("progress", -1).put("detail", "等待下载").put("userError", "").put("uri", "").put("mime", "")
-                .put("createdAt", System.currentTimeMillis());
-        JSONArray tasks = read(context); tasks.put(task); write(context, tasks); return id;
+        if (media.isEmpty() || media.size() != qualities.size()) throw new IllegalArgumentException("无效下载批次");
+        JSONArray tasks = read(context);
+        ArrayList<String> ids = new ArrayList<>();
+        List<JSONObject> existing = new ArrayList<>();
+        for (int n = 0; n < tasks.length(); n++) { JSONObject task = tasks.optJSONObject(n); if (task != null) existing.add(task); }
+        android.content.SharedPreferences preferences = context.getSharedPreferences("tasks", Context.MODE_PRIVATE);
+        long queuedAt = DownloadQueueOrder.nextQueuedAt(existing, System.currentTimeMillis(), preferences.getLong("lastQueuedAt", 0));
+        long last = queuedAt;
+        for (int n = 0; n < media.size(); n++) {
+            Engine.Media item = media.get(n);
+            String id = UUID.randomUUID().toString(); ids.add(id);
+            tasks.put(new JSONObject().put("id", id).put("title", item.title).put("url", item.url)
+                    .put("media", item.toJson()).put("quality", qualities.get(n).toJson()).put("status", "queued")
+                    .put("progress", -1).put("detail", "等待下载").put("userError", "").put("uri", "").put("mime", "")
+                    .put("createdAt", System.currentTimeMillis()).put("queuedAt", queuedAt));
+            last = queuedAt; queuedAt = Math.addExact(queuedAt, 1);
+        }
+        if (!preferences.edit().putString("items", tasks.toString()).putLong("lastQueuedAt", last).commit())
+            throw new java.io.IOException("无法保存下载批次，请重试。");
+        return ids;
     }
 
     public static synchronized List<JSONObject> all(Context context) {
@@ -48,29 +67,40 @@ public final class TaskStore {
 
     /** Called only when the worker actually accepts an enqueue, including a retry. */
     public static synchronized boolean markQueued(Context context, String id) {
+        return markQueuedBatch(context, java.util.Collections.singletonList(id)).contains(id);
+    }
+
+    /** A batch gets one disk commit and monotonically increasing worker acceptance positions. */
+    static synchronized List<String> markQueuedBatch(Context context, List<String> ids) {
         init(context);
-        JSONArray tasks = read(context); List<JSONObject> values = new ArrayList<>(); JSONObject selected = null;
-        for (int index = 0; index < tasks.length(); index++) {
-            JSONObject task = tasks.optJSONObject(index); if (task == null) continue;
-            values.add(task); if (task.optString("id").equals(id)) selected = task;
+        JSONArray tasks = read(context); List<JSONObject> values = new ArrayList<>();
+        java.util.Map<String, JSONObject> byId = new java.util.HashMap<>();
+        for (int n = 0; n < tasks.length(); n++) {
+            JSONObject task = tasks.optJSONObject(n); if (task == null) continue;
+            values.add(task); byId.put(task.optString("id"), task);
         }
-        if (selected == null) return false;
-        String oldStatus = selected.optString("status");
-        // A second service / rapid tap must never reopen a still-owned process.
-        if (!canEnqueue(selected)) return false;
+        android.content.SharedPreferences preferences = context.getSharedPreferences("tasks", Context.MODE_PRIVATE);
+        List<String> acceptedIds = new ArrayList<>();
         try {
-            android.content.SharedPreferences preferences = context.getSharedPreferences("tasks", Context.MODE_PRIVATE);
             long accepted = DownloadQueueOrder.nextQueuedAt(values, System.currentTimeMillis(), preferences.getLong("lastQueuedAt", 0));
-            boolean resume = oldStatus.equals("paused");
-            selected.put("queuedAt", accepted).put("status", "queued").put("phase", "queued").put("stageLabel", "等待下载")
-                    .put("stageProgress", -1).put("detail", resume ? "等待继续下载，保留已下载数据" : "等待下载")
-                    .put("userError", "").put("log", "").put("pauseRequested", false)
-                    .put("speedBytesPerSecond", -1).put("etaSeconds", -1).put("activeConnections", -1).put("transferComplete", false);
-            if (!resume) selected.put("progress", -1).put("downloadedBytes", 0).put("totalBytes", -1)
-                    .put("completedStreams", 0).put("totalStreams", 0).put("progressEstimated", false)
-                    .put("totalBytesEstimated", false).put("downloadedBytesEstimated", false);
-            return preferences.edit().putString("items", tasks.toString()).putLong("lastQueuedAt", accepted).commit();
-        } catch (Exception invalid) { return false; }
+            long last = accepted;
+            for (String id : new java.util.LinkedHashSet<>(ids)) {
+                JSONObject selected = byId.get(id);
+                if (!canEnqueue(selected)) continue;
+                boolean resume = selected.optString("status").equals("paused");
+                selected.put("queuedAt", accepted).put("status", "queued").put("phase", "queued").put("stageLabel", "等待下载")
+                        .put("stageProgress", -1).put("detail", resume ? "等待继续下载，保留已下载数据" : "等待下载")
+                        .put("userError", "").put("log", "").put("pauseRequested", false)
+                        .put("speedBytesPerSecond", -1).put("etaSeconds", -1).put("activeConnections", -1).put("transferComplete", false);
+                if (!resume) selected.put("progress", -1).put("downloadedBytes", 0).put("totalBytes", -1)
+                        .put("completedStreams", 0).put("totalStreams", 0).put("progressEstimated", false)
+                        .put("totalBytesEstimated", false).put("downloadedBytesEstimated", false);
+                acceptedIds.add(id); last = accepted; accepted = Math.addExact(accepted, 1);
+            }
+            if (!acceptedIds.isEmpty() && !preferences.edit().putString("items", tasks.toString()).putLong("lastQueuedAt", last).commit())
+                return java.util.Collections.emptyList();
+            return acceptedIds;
+        } catch (Exception invalid) { return java.util.Collections.emptyList(); }
     }
 
     static boolean canEnqueue(JSONObject task) {
