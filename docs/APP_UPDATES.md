@@ -32,7 +32,7 @@ apkSha256: 64-character SHA-256 hex
 signingCertificateSha256: 64-character public certificate SHA-256 hex
 ```
 
-No usable public APK Release is currently provided. Binary publication remains pending the native dependency corresponding-source and notice requirements. The client does not resolve those obligations.
+A source commit does not itself make an update available. The versioned [test Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.9-test) must actually contain the APK, manifest and adjacent third-party source materials described in [RELEASE_STATUS](RELEASE_STATUS.md). The GitHub non-prerelease/latest flag controls discovery, not production-quality acceptance.
 
 ## Acceptance/security boundaries
 
@@ -47,3 +47,21 @@ No usable public APK Release is currently provided. Binary publication remains p
 ## Limits
 
 No end-to-end public-release download/install, real-phone unknown-source permission, reboot transfer or system installation is claimed. The system installer must perform its own signature verification and obtain final user confirmation. Older builds without this updater require a manual same-signature upgrade first.
+
+## Publisher preflight
+
+- Publish both fixed asset names on the same non-draft, non-prerelease Release.
+  A tag alone is insufficient; GitHub must return this Release from releases/latest.
+  The client filters the Release flags, not a `-test` suffix in APK versionName.
+- Keep the installed testing lineage: dev.streampocket.localtest, ARM64, minSdk24,
+  same signing certificate. The unconfigured release build has applicationId
+  dev.streampocket and cannot upgrade this installed localtest lineage.
+- versionCode must be strictly greater than the installed code. Rebuilding or
+  changing the version name without increasing code does not offer an update.
+  A device already on code14 will not see another code14 through this updater.
+- Derive exact manifest version/name/size/hash/certificate from the final signed
+  APK, not an earlier APK or an intermediate native build. Upload only after
+  final native corresponding-source/notices and application-source matching are
+  verified. Keep signing private keys and private working history out of all assets.
+- Verify both uploaded assets and latest metadata by readback before announcing
+  online update availability. Source-only publication does not satisfy this gate.

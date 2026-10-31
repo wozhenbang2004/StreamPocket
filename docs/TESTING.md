@@ -41,3 +41,16 @@ Compile app/src/main/java/dev/streampocket/CoreRules.java and app/src/test/java/
 app/src/androidTest/java/dev/streampocket/UiAcceptanceInstrumentation.java is an optional real-media runner. tools/qa-x86.init.gradle targets an x86_64 emulator and adds licensed test-media assets to the test APK only.
 
 **Use only a disposable emulator or dedicated test profile without personal data.** The runner intentionally writes synthetic library/task/preferences records into dev.streampocket.localtest. Never run it on an existing personal library. Its presence is not a claim that device scenarios passed. The isolated emulator build is not an upgrade APK.
+
+## Marker / clipping checks
+
+```bash
+./gradlew testDebugUnitTest \
+  --tests dev.streampocket.MarkerEditor028Test \
+  --tests dev.streampocket.MarkerEditor028RenderTest
+```
+
+The render test reads licensed stills from test-media/marker-editor-028 and the
+licensed excerpt from test-media. Its new images are written to
+app/build/reports/view-fixtures/028. Injected reference stills are visibly labeled
+as layout fixtures, not real-phone decode/playback/export evidence.

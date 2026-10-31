@@ -9,7 +9,7 @@ The application's own source remains **GPL-3.0-or-later**, as specified in the e
 | Official yt-dlp zipapp (`app/src/main/res/raw/ytdlp`) | [2026.10.26](https://github.com/yt-dlp/yt-dlp/releases/tag/2026.10.26), source commit `c91f8de0bfb3577894abad716eaaa01659e6bd14`; SHA-256 `e51e69e89489f199530f13d32a4342da3ddb2cf34842f364603a066db05afbf3` | Unlicense; [included text](licenses/yt-dlp-Unlicense.txt). The zipapp contains Python source, not a native Python interpreter. |
 | yt-dlp-ejs inside that zipapp | [0.8.0](https://github.com/yt-dlp/ejs/tree/0.8.0) | Unlicense; [included text](licenses/yt-dlp-ejs-Unlicense.txt). Generated JS embeds Meriyah 6.1.4 (ISC; KFlash and others) and Astring 1.9.0 (MIT; David Bonnet). Complete permission notices are retained inside the zipapp and in [this copy](licenses/yt-dlp-ejs-bundled-NOTICE.txt). |
 | Experimental Douyin extractor override | [yt-dlp PR #17826](https://github.com/yt-dlp/yt-dlp/pull/17826), `728fe46fbaa97d6f03efcaf9e766d4db63338b8d`, author `viking1304` | Unlicense; provenance, wrapper changes and validation limits in [DOUYIN_PATCH](docs/DOUYIN_PATCH.md). |
-| Big Buck Bunny test excerpt, portrait derivative and decoded frame | [Official movie](https://peach.blender.org/download/), [official license statement](https://peach.blender.org/about/) | CC BY 3.0. `(c) copyright 2008, Blender Foundation / www.bigbuckbunny.org`. Excerpt/crop are declared derivatives, not original portrait footage. [Details](test-media/README.md). Test-only, not production APK assets. |
+| Big Buck Bunny test excerpt, portrait derivative and timestamp-bound decoded frames | [Official movie](https://peach.blender.org/download/), [official license statement](https://peach.blender.org/about/) | CC BY 3.0. `(c) copyright 2008, Blender Foundation / www.bigbuckbunny.org`. Excerpt/crop are declared derivatives, not original portrait footage. [Details](test-media/README.md). Test-only, not production APK assets. |
 
 ## Dependencies fetched by the build (not vendored here)
 
@@ -30,7 +30,7 @@ The complete resolved Java/Kotlin runtime set is listed in [RUNTIME_DEPENDENCIES
 
 Build/test-only dependencies include Gradle 8.9 (Apache 2.0), Android Gradle Plugin 8.7.3, JUnit 4.13.2 (EPL 1.0), JSON-java 20240303 (public domain) and Robolectric 4.16.1 (Apache 2.0). They are not an assertion about APK runtime coverage.
 
-## Native audit — not yet cleared for public APK distribution
+## Native components and companion source materials
 
 | Upstream AAR 0.18.1 | SHA-256 |
 | --- | --- |
@@ -48,6 +48,25 @@ Direct inspection found:
 - QuickJS: binary identifies 2025-04-26; upstream uses MIT. Exact downstream build/source revision remains to be documented.
 - aria2: 1.37.0, GPL-2.0-or-later; its archive includes GnuTLS, Nettle, GMP, libxml2, c-ares, libiconv, libunistring and others.
 
-These observations are **not** a complete SBOM/license audit. Exact native source/build correspondence remains incomplete. The upstream [FFmpeg guide](https://github.com/yausername/youtubedl-android/blob/0.18.1/BUILD_FFMPEG.md) and [Python guide](https://github.com/yausername/youtubedl-android/blob/0.18.1/BUILD_PYTHON.md) do not pin the Termux package snapshot for these binaries. The [FFmpeg update](https://github.com/yausername/youtubedl-android/commit/f2280ae7d8bc8d59590c8727a89f047983867c10) replaces prebuilt binaries, not their complete source/build closure.
+The [companion third-party source archive](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.2.9-test/StreamPocket-0.2.9-third-party-sources-arm64-20261031.zip) for the
+[v0.2.9-test Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.9-test) supplies the identified source releases,
+fixed Termux recipe archive, package patches, original wrapper source, captured
+configuration, build/archive-assembly instructions and license texts for these
+unchanged official payloads. It includes the known Python tempfile fallback
+modification and source checksums. Its SOURCE-MAP.json covers 272 ELF occurrences
+and 74 package families; COVERAGE.json records no concrete missing identified
+source archive or package recipe. Sources preserve their own copyright headers
+and licenses; recipe labels are not replacement license texts.
 
-Before APK distribution, provide all required license/copyright notices and appropriate Corresponding Source and build material for every covered component. GPLv3 section 6(d) allows equivalent network source access with clear directions beside object code; a moving upstream repository or application Java files alone do not establish coverage of shipped native libraries. See [RELEASE_STATUS](docs/RELEASE_STATUS.md). Until resolved, this repository offers no public APK and makes no binary redistribution compliance claim.
+The map distinguishes observed embedded evidence from fixed-recipe metadata;
+it does not assert that every library embeds a complete package revision string.
+This release retains the original binaries and makes no native rebuild,
+bit-identical reproduction or experimental replacement claim. See the archive's
+README.md, BUILDING.md, SOURCES.json, PAYLOADS.json, ARCHIVE-MEMBERS.json,
+licenses/ and SHA256SUMS for the material inventory and exact scope.
+
+The application-source tag and this companion archive must remain accessible
+with clear source directions beside the APK. A moving upstream link or this Java
+repository alone is not a substitute for the bundled source/build/notice material.
+Links are usable only after the corresponding Release assets are published.
+See [RELEASE_STATUS](docs/RELEASE_STATUS.md) for the test-build and device limits.

@@ -112,7 +112,8 @@ public final class Player022UiTest {
             }
             assertEquals("已标记 · 01:04",field(s.a,"gestureHint",TextView.class).getText().toString());
             marks.performLongClick();idle();assertEquals("markers",field(s.a,"sheetMode",String.class));
-            assertNotNull(find(field(s.a,"markerList",View.class),"01:04\n精彩时刻"));
+            assertNotNull(find(field(s.a,"markerList",View.class),"01:04.250"));
+            assertNotNull(find(field(s.a,"markerList",View.class),"64.25 秒 · 时间点"));
             View ticks=field(s.a,"highlightTicks",View.class);ticks.measure(exact(400),exact(48));ticks.layout(0,0,400,48);
             Bitmap bitmap=Bitmap.createBitmap(400,48,Bitmap.Config.ARGB_8888);ticks.draw(new Canvas(bitmap));
             boolean visible=false;for(int x=0;x<400;x++)for(int y=0;y<48;y++)if((bitmap.getPixel(x,y)>>>24)!=0)visible=true;
@@ -232,7 +233,7 @@ public final class Player022UiTest {
     private static void capture(PlayerActivity a,String name) throws Exception {
         layout(a);View view=a.getWindow().getDecorView();Bitmap bitmap=Bitmap.createBitmap(view.getWidth(),view.getHeight(),Bitmap.Config.ARGB_8888);view.draw(new Canvas(bitmap));
         File root=new File(System.getProperty("user.dir"));while(root!=null&&!new File(root,"settings.gradle").isFile())root=root.getParentFile();
-        File output=new File(root,"docs/design/assets/022-player");assertTrue(output.isDirectory()||output.mkdirs());try(FileOutputStream stream=new FileOutputStream(new File(output,name+".png"))){assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG,100,stream));}bitmap.recycle();
+        File output=new File(root,"docs/evidence/028/regression/022-player");assertTrue(output.isDirectory()||output.mkdirs());try(FileOutputStream stream=new FileOutputStream(new File(output,name+".png"))){assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG,100,stream));}bitmap.recycle();
     }
     private static <T>T field(Object owner,String name,Class<T> type) throws Exception {Field f=owner.getClass().getDeclaredField(name);f.setAccessible(true);return type.cast(f.get(owner));}
     private static void set(Object owner,String name,Object value) throws Exception {Field f=owner.getClass().getDeclaredField(name);f.setAccessible(true);f.set(owner,value);}

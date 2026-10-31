@@ -106,7 +106,8 @@ public final class Editor022UiTest {
         long video=store.addExportedVideo("界面夹具 · 深色剪辑视图",Uri.fromFile(media).toString(),"video/mp4",4,100_000);
         controller=Robolectric.buildActivity(EditorActivity.class,new Intent(app,EditorActivity.class).putExtra("video_id",video)).create().start();EditorActivity activity=controller.get();drain(activity);
         assertEquals(UiTheme.get(activity).bg,((ColorDrawable)field(activity,"root",View.class).getBackground()).getColor());
-        View preview=field(activity,"playerView",View.class);assertTrue(preview.getLayoutParams().height>=dp(300));assertEquals(View.GONE,field(activity,"preciseFields",View.class).getVisibility());capture(activity,"04-trim-dark-range-fixture");
+        View preview=field(activity,"playerView",View.class);assertTrue("FIT preview must remain usable without pushing the final actions offscreen",preview.getLayoutParams().height>=dp(180)&&preview.getLayoutParams().height<=dp(320));
+        controller.visible();View export=field(activity,"trimExportButton",View.class);assertEquals(dp(48),export.getLayoutParams().height);assertTrue(export.isShown());assertEquals(View.GONE,field(activity,"preciseFields",View.class).getVisibility());capture(activity,"04-trim-dark-range-fixture");
     }
     private int dp(float value){return Math.round(value*app.getResources().getDisplayMetrics().density);}
     private void measure(View view,int width,int height){view.measure(View.MeasureSpec.makeMeasureSpec(dp(width),View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(dp(height),View.MeasureSpec.EXACTLY));view.layout(0,0,dp(width),dp(height));}
@@ -117,7 +118,7 @@ public final class Editor022UiTest {
     private static <T>T field(Object owner,String name,Class<T> type)throws Exception{Field field=owner.getClass().getDeclaredField(name);field.setAccessible(true);return type.cast(field.get(owner));}
     private static void capture(EditorActivity activity,String name)throws Exception{
         View decor=activity.getWindow().getDecorView();int width=Math.round(412*decor.getResources().getDisplayMetrics().density),height=Math.round(915*decor.getResources().getDisplayMetrics().density);decor.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY));decor.layout(0,0,width,height);
-        File root=new File(System.getProperty("user.dir"));while(root!=null&&!new File(root,"settings.gradle").isFile())root=root.getParentFile();File directory=new File(root==null?new File(System.getProperty("user.dir")):root,"docs/design/assets/022-editor");if(!directory.isDirectory()&&!directory.mkdirs())throw new java.io.IOException("Cannot create render directory");
+        File root=new File(System.getProperty("user.dir"));while(root!=null&&!new File(root,"settings.gradle").isFile())root=root.getParentFile();File directory=new File(root==null?new File(System.getProperty("user.dir")):root,"docs/evidence/028/regression/022-editor");if(!directory.isDirectory()&&!directory.mkdirs())throw new java.io.IOException("Cannot create render directory");
         Bitmap bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);decor.draw(new Canvas(bitmap));try(FileOutputStream out=new FileOutputStream(new File(directory,name+".png"))){assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG,100,out));}finally{bitmap.recycle();}
     }
 }

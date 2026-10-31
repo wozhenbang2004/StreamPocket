@@ -57,13 +57,21 @@ final class ScrubStoryboardCache {
         } catch (Exception unavailable) { return null; }
     }
 
-    Bitmap read(long sampleMs) {
-        File file = new File(directory, sampleMs + ".jpg");
+    String identity() { return directory.getName(); }
+
+    Bitmap read(long sampleMs) { return readImage(Long.toString(sampleMs), WIDTH, HEIGHT); }
+
+    // Nearest non-sync frames are deliberately separate from rough keyframe tiles.
+    Bitmap readFrame(long positionMs) { return readImage("frame-v1-" + positionMs, 256, 144); }
+    void writeFrame(long positionMs, Bitmap bitmap) { writeImage("frame-v1-" + positionMs, bitmap); }
+
+    private Bitmap readImage(String name, int maxWidth, int maxHeight) {
+        File file = new File(directory, name + ".jpg");
         if (!file.isFile() || file.length() <= 0 || file.length() > 128 * 1024) return null;
         try {
             BitmapFactory.Options options = new BitmapFactory.Options(); options.inJustDecodeBounds = true;
             BitmapFactory.decodeFile(file.getPath(), options);
-            if (options.outWidth <= 0 || options.outHeight <= 0 || options.outWidth > WIDTH || options.outHeight > HEIGHT) { file.delete(); return null; }
+            if (options.outWidth <= 0 || options.outHeight <= 0 || options.outWidth > maxWidth || options.outHeight > maxHeight) { file.delete(); return null; }
             options.inJustDecodeBounds = false; options.inPreferredConfig = Bitmap.Config.RGB_565;
             Bitmap result = BitmapFactory.decodeFile(file.getPath(), options);
             if (result == null) file.delete();
@@ -71,9 +79,11 @@ final class ScrubStoryboardCache {
         } catch (RuntimeException | OutOfMemoryError invalid) { file.delete(); return null; }
     }
 
-    void write(long sampleMs, Bitmap bitmap) {
+    void write(long sampleMs, Bitmap bitmap) { writeImage(Long.toString(sampleMs), bitmap); }
+
+    private void writeImage(String name, Bitmap bitmap) {
         if (!directory.isDirectory() && !directory.mkdirs()) return;
-        File target = new File(directory, sampleMs + ".jpg"), staged = new File(directory, sampleMs + ".tmp");
+        File target = new File(directory, name + ".jpg"), staged = new File(directory, name + ".tmp");
         if (target.isFile()) return;
         try (FileOutputStream output = new FileOutputStream(staged)) {
             if (bitmap.compress(Bitmap.CompressFormat.JPEG, 80, output)) { output.flush(); staged.renameTo(target); }
@@ -83,6 +93,8 @@ final class ScrubStoryboardCache {
     }
 
     private void trim() {
+        File[] exact=directory.listFiles(file->file.getName().matches("frame-v1-[0-9]+\\.jpg"));
+        if(exact!=null&&exact.length>128){Arrays.sort(exact,Comparator.comparingLong(File::lastModified));for(int i=0;i<exact.length-128;i++)exact[i].delete();}
         File[] sources = root.listFiles(file -> file.isDirectory() && file.getName().matches("[a-f0-9]{64}"));
         if (sources == null) return;
         Arrays.sort(sources, Comparator.comparingLong(File::lastModified));

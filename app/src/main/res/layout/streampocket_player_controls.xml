@@ -13,6 +13,9 @@
         <TextView android:id="@+id/sp_player_title" android:layout_width="0dp" android:layout_height="wrap_content"
             android:layout_weight="1" android:paddingStart="8dp" android:paddingEnd="8dp"
             android:ellipsize="end" android:maxLines="1" android:textColor="#FAFAFA" android:textSize="14sp" />
+        <TextView android:id="@+id/sp_player_marker_list" android:layout_width="72dp" android:layout_height="48dp"
+            android:gravity="center" android:text="标记" android:textSize="13sp" android:textColor="#FAFAFA"
+            android:background="?android:attr/selectableItemBackgroundBorderless" android:contentDescription="打开已保存的精彩标记列表" />
         <ImageButton android:id="@+id/sp_player_more" android:layout_width="48dp" android:layout_height="48dp"
             android:background="?android:attr/selectableItemBackgroundBorderless" android:padding="10dp"
             android:src="@drawable/sp_player_more" android:contentDescription="更多播放操作" />
@@ -44,7 +47,7 @@
                 android:background="?android:attr/selectableItemBackgroundBorderless" android:contentDescription="播放倍速" />
             <ImageButton android:id="@+id/sp_player_marks" android:layout_width="48dp" android:layout_height="48dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless" android:padding="10dp"
-                android:src="@drawable/sp_player_bookmark" android:contentDescription="标记此刻，长按查看全部精彩标记" />
+                android:src="@drawable/sp_player_bookmark" android:contentDescription="标记此刻" />
             <ImageButton android:id="@+id/sp_player_rotate" android:layout_width="48dp" android:layout_height="48dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless" android:padding="10dp"
                 android:src="@drawable/sp_player_rotate" android:contentDescription="旋转屏幕" />

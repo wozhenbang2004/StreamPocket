@@ -134,8 +134,8 @@ public final class PlayerHighlightUiTest {
             assertEquals("山顶的日落与云海",range.optString("label"));
 
             field(activity,"markerOptionsButton",View.class).performLongClick(); idle();
-            TextView jump=findText(field(activity,"markerList",View.class),"00:20–00:35\n山顶的日落与云海");
-            assertNotNull(jump); jump.performClick(); awaitWorker(activity); assertEquals(20250,clock.positionMs);
+            TextView jump=findText(field(activity,"markerList",View.class),"00:20.250 — 00:35.875");
+            assertNotNull(jump);((View)jump.getParent()).performClick(); awaitWorker(activity); assertEquals(20250,clock.positionMs);
             try (LibraryStore store=new LibraryStore(app)) { assertEquals(20250,store.video(videoId).optLong("playbackMs")); }
             field(activity,"markerOptionsButton",View.class).performLongClick(); idle();
             clickDescription(activity,"管理 00:20–00:35 的精彩标记");
@@ -238,7 +238,7 @@ public final class PlayerHighlightUiTest {
     private static String outputDirectory() {
         File root=new File(System.getProperty("user.dir"));
         while (root!=null && !new File(root,"settings.gradle").isFile() && !new File(root,"settings.gradle.kts").isFile()) root=root.getParentFile();
-        return new File(root==null?new File(System.getProperty("user.dir")):root,"docs/design/assets/021-regression").getAbsolutePath();
+        return new File(root==null?new File(System.getProperty("user.dir")):root,"docs/evidence/028/regression/021-regression").getAbsolutePath();
     }
     private static void capture(View decor,String name) throws Exception {
         idle(); layoutWindow(decor);

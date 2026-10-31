@@ -2,6 +2,7 @@ package dev.streampocket;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Bitmap;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
@@ -24,7 +25,9 @@ public final class ClipRangeView extends View {
     private final RectF rect=new RectF();
     private final AccessibilityManager accessibility;
     private final UiTheme.Palette palette;
-    private long durationMs,startMs,endMs;
+    private long durationMs,startMs,endMs,windowStartMs,windowEndMs,downStartMs,downEndMs;
+    private final Bitmap[] frames=new Bitmap[7];
+    private Runnable windowListener;
     private int active=START,accessibilityFocus=-1,hovered=-1;
     private boolean dragging;
     private Listener listener;
@@ -42,27 +45,41 @@ public final class ClipRangeView extends View {
     public long getEndMs() { return endMs; }
     public long getDurationMs() { return durationMs; }
     public void setRange(long duration,long start,long end) {
-        durationMs=Math.max(0,duration);
+        long previous=durationMs;durationMs=Math.max(0,duration);
+        if(previous!=durationMs||windowEndMs<=windowStartMs){windowStartMs=0;windowEndMs=durationMs;}
         startMs=Math.max(0,Math.min(start,Math.max(0,durationMs-1)));
         endMs=durationMs==0?0:Math.max(startMs+1,Math.min(end,durationMs)); invalidate();
     }
+    long getWindowStartMs(){return windowStartMs;}
+    long getWindowEndMs(){return windowEndMs;}
+    void setWindowListener(Runnable listener){windowListener=listener;}
+    void setFrame(int index,Bitmap bitmap){if(index>=0&&index<frames.length){frames[index]=bitmap;invalidate();}}
+    void zoomToSelection(){long length=endMs-startMs,pad=Math.max(1500,length/2);setWindow(Math.max(0,startMs-pad),Math.min(durationMs,endMs+pad));}
+    void showFullTimeline(){setWindow(0,durationMs);}
+    private void setWindow(long start,long end){windowStartMs=start;windowEndMs=Math.max(start+1,end);java.util.Arrays.fill(frames,null);invalidate();if(windowListener!=null)windowListener.run();}
     @Override protected void onMeasure(int widthSpec,int heightSpec) {
         setMeasuredDimension(resolveSize(dp(280),widthSpec),resolveSize(dp(96),heightSpec));
     }
     private int dp(float value) { return Math.round(value*getResources().getDisplayMetrics().density); }
     private float left() { return dp(24); }
     private float right() { return Math.max(left()+1,getWidth()-dp(24)); }
-    private float x(long value) { return (float)(left()+(right()-left())*(durationMs>0?(double)value/durationMs:0f)); }
+    private float x(long value) { return (float)(left()+(right()-left())*(windowEndMs>windowStartMs?(double)(value-windowStartMs)/(windowEndMs-windowStartMs):0f)); }
     @Override protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas); float top=dp(20),bottom=dp(62),from=x(startMs),to=x(endMs);
+        super.onDraw(canvas); float top=dp(20),bottom=dp(62),from=Math.max(left(),x(startMs)),to=Math.min(right(),x(endMs));
         paint.setStyle(Paint.Style.FILL); paint.setColor(palette.control);
         rect.set(left(),top,right(),bottom); canvas.drawRoundRect(rect,dp(8),dp(8),paint);
-        paint.setColor(palette.accentSoft); rect.set(from,top,to,bottom); canvas.drawRoundRect(rect,dp(4),dp(4),paint);
+                float tile=(right()-left())/frames.length;
+        for(int i=0;i<frames.length;i++)if(frames[i]!=null&&!frames[i].isRecycled()){
+            Bitmap frame=frames[i];float scale=Math.max(tile/frame.getWidth(),(bottom-top)/frame.getHeight()),width=frame.getWidth()*scale,height=frame.getHeight()*scale;
+            float center=left()+tile*(i+.5f);canvas.save();canvas.clipRect(left()+tile*i,top,left()+tile*(i+1),bottom);
+            rect.set(center-width/2,(top+bottom-height)/2,center+width/2,(top+bottom+height)/2);paint.setAlpha(255);canvas.drawBitmap(frame,null,rect,paint);canvas.restore();
+        }
+        paint.setColor(palette.dark?0xA00A0C0F:0xA0F6F7F5);canvas.drawRect(left(),top,from,bottom,paint);canvas.drawRect(to,top,right(),bottom,paint);
         paint.setColor(palette.accent); canvas.drawRect(from,top,to,top+dp(2),paint); canvas.drawRect(from,bottom-dp(2),to,bottom,paint);
         drawHandle(canvas,from,START,top,bottom); drawHandle(canvas,to,END,top,bottom);
         paint.setColor(palette.muted); paint.setTextSize(11*getResources().getDisplayMetrics().scaledDensity); paint.setTextAlign(Paint.Align.LEFT);
-        canvas.drawText("00:00",left(),dp(84),paint); paint.setTextAlign(Paint.Align.RIGHT);
-        canvas.drawText(shortTime(durationMs),right(),dp(84),paint); paint.setTextAlign(Paint.Align.LEFT);
+        canvas.drawText(shortTime(windowStartMs),left(),dp(84),paint); paint.setTextAlign(Paint.Align.RIGHT);
+        canvas.drawText(shortTime(windowEndMs),right(),dp(84),paint); paint.setTextAlign(Paint.Align.LEFT);
     }
     private void drawHandle(Canvas canvas,float center,int handle,float top,float bottom) {
         paint.setColor(palette.accent); rect.set(center-dp(8),top-dp(2),center+dp(8),bottom+dp(2));
@@ -78,7 +95,7 @@ public final class ClipRangeView extends View {
         if (!isEnabled()||durationMs<=0) return false;
         switch(event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
-                active=nearest(event.getX()); dragging=true; requestFocus();
+                active=nearest(event.getX()); dragging=true;downStartMs=startMs;downEndMs=endMs;requestFocus();
                 if (getParent()!=null) getParent().requestDisallowInterceptTouchEvent(true);
                 updateTouch(event.getX(),true); return true;
             case MotionEvent.ACTION_MOVE:
@@ -87,6 +104,7 @@ public final class ClipRangeView extends View {
             case MotionEvent.ACTION_CANCEL:
                 if (!dragging) return false;
                 if (event.getActionMasked()==MotionEvent.ACTION_UP) updateTouch(event.getX(),true);
+                else{startMs=downStartMs;endMs=downEndMs;invalidate();}
                 dragging=false; if(getParent()!=null)getParent().requestDisallowInterceptTouchEvent(false);
                 if(listener!=null)listener.onRangeChanged(startMs,endMs,active,false);
                 if(event.getActionMasked()==MotionEvent.ACTION_UP)performClick();
@@ -98,7 +116,7 @@ public final class ClipRangeView extends View {
     private int nearest(float point) { return Math.abs(point-x(startMs))<=Math.abs(point-x(endMs))?START:END; }
     private void updateTouch(float point,boolean tracking) {
         double ratio=Math.max(0,Math.min(1,(point-left())/(right()-left())));
-        long value=Math.round(ratio*durationMs);
+        long value=windowStartMs+Math.round(ratio*(windowEndMs-windowStartMs));
         // The slider is coarse selection; the disclosed fields retain exact millisecond input.
         if(value>0&&value<durationMs)value=Math.round(value/100d)*100;
         change(active,value,tracking);

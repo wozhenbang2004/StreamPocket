@@ -5,6 +5,8 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
+import android.media.metrics.LogSessionId;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.media.MediaMetadataRetriever;
@@ -15,6 +17,8 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.Format;
+import androidx.media3.transformer.Codec;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.effect.Presentation;
@@ -184,17 +188,21 @@ public final class ExportService extends Service {
             try (android.content.res.AssetFileDescriptor ignored = getContentResolver().openAssetFileDescriptor(uri, "r")) {
                 if (ignored == null) throw new IOException("片段原文件无法读取");
             } catch (Exception unavailable) { throw new IOException("原文件不可用：" + clip.optString("title", "视频") + "。草稿仍保留。", unavailable); }
-            if (inputs.isEmpty()) {
-                MediaMetadataRetriever retriever = new MediaMetadataRetriever();
-                try {
-                    retriever.setDataSource(this, uri);
-                    width = integer(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
-                    height = integer(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
-                    int rotation = integer(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION));
-                    if (rotation == 90 || rotation == 270) { int temporary = width; width = height; height = temporary; }
-                } finally { retriever.release(); }
-                if (width <= 0 || height <= 0) throw new IOException("无法读取首个片段的视频尺寸，请确认原片可正常播放。");
-            }
+            MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+            try {
+                retriever.setDataSource(this, uri);
+                long actualDuration=longNumber(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
+                try { ClipContract.validate(start,end,actualDuration); }
+                catch(IllegalArgumentException invalid){throw new IOException("片段超出当前原文件时长："+clip.optString("title","视频")+"。请重新调整范围。",invalid);}
+                int sourceWidth=integer(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
+                int sourceHeight=integer(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+                if(sourceWidth<=0||sourceHeight<=0)throw new IOException("无法读取视频画面："+clip.optString("title","视频"));
+                if(inputs.isEmpty()){
+                    width=sourceWidth;height=sourceHeight;
+                    int rotation=integer(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION));
+                    if(rotation==90||rotation==270){int temporary=width;width=height;height=temporary;}
+                }
+            } finally { retriever.release(); }
             inputs.add(new Clip(uri, start, end)); duration = Math.addExact(duration, end - start);
         }
         int[] size = compatibilitySize(width, height);
@@ -206,13 +214,11 @@ public final class ExportService extends Service {
             File parent = getExternalFilesDir("exports");
             if (parent == null) parent = new File(getCacheDir(), "exports");
             if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException("无法创建剪辑临时目录");
-            activeFile = new File(parent, "拾流剪辑-" + job.id + "-" + System.currentTimeMillis() + ".mp4");
+            activeFile = new File(parent, outputFileName(job.title, System.currentTimeMillis()));
             Presentation fit = Presentation.createForWidthAndHeight(job.width, job.height, Presentation.LAYOUT_SCALE_TO_FIT);
             List<EditedMediaItem> edited = new ArrayList<>();
             for (Clip clip : job.clips) {
-                MediaItem source = new MediaItem.Builder().setUri(clip.uri)
-                        .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
-                                .setStartPositionMs(clip.startMs).setEndPositionMs(clip.endMs).build()).build();
+                MediaItem source = ClipContract.mediaItem(clip.uri,clip.startMs,clip.endMs);
                 edited.add(new EditedMediaItem.Builder(source)
                         .setEffects(new Effects(Collections.emptyList(), Collections.singletonList(fit))).build());
             }
@@ -222,7 +228,8 @@ public final class ExportService extends Service {
             Composition composition = composition(edited);
             transformer = new Transformer.Builder(this)
                     .setVideoMimeType(MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC)
-                    .setEncoderFactory(new DefaultEncoderFactory.Builder(this).setEnableFallback(false).build())
+                    .setEncoderFactory(new PreciseEncoderFactory(this))
+                    .experimentalSetMp4EditListTrimEnabled(false).experimentalSetTrimOptimizationEnabled(false)
                     .addListener(new Transformer.Listener() {
                         @Override public void onCompleted(Composition completed, ExportResult result) {
                             if (destroyed || activeId != job.id || isCancelled(job.id)) return;
@@ -248,13 +255,15 @@ public final class ExportService extends Service {
             MediaExporter.Result saved = null;
             try {
                 if (isCancelled(job.id)) throw new InterruptedIOException("已取消");
+                long outputDuration=inspectOutput(output,job.durationMs,job.clips.size());
+                if(isCancelled(job.id))throw new InterruptedIOException("已取消");
                 saved = MediaExporter.save(this, output, () -> isCancelled(job.id));
                 committed.add(job.id);
                 // Cancellation after save() returns must not undo the durable
                 // result, even if indexing or a later DB write fails.
                 try (LibraryStore store = new LibraryStore(this)) {
                     String detail = "成片已保存到视频库";
-                    try { store.addExportedVideo(job.title, saved.uri.toString(), saved.mime, output.length(), job.durationMs); }
+                    try { store.addExportedVideo(job.title, saved.uri.toString(), saved.mime, output.length(), outputDuration); }
                     catch (Exception indexFailure) { detail = "成片已保存到下载目录，视频库登记未完成"; }
                     store.updateProjectExport(job.id, "completed", 100, detail, saved.uri.toString());
                 }
@@ -395,6 +404,41 @@ public final class ExportService extends Service {
         if (lower.contains("space") || lower.contains("enospc")) return "手机空间不足，腾出空间后可从草稿重新导出。";
         return text.isEmpty() ? "导出未完成，草稿已保留。" : text;
     }
+    /** MIME equality alone does not request re-encoding for a single item in Media3 1.9.4.
+     * Delegate device codec selection, but explicitly require decoded audio/video so a
+     * non-keyframe trim cannot silently become a keyframe-aligned stream copy.
+     */
+    static final class PreciseEncoderFactory implements Codec.EncoderFactory {
+        private final DefaultEncoderFactory delegate;
+        PreciseEncoderFactory(Context context){delegate=new DefaultEncoderFactory.Builder(context).setEnableFallback(false).build();}
+        @Override public boolean videoNeedsEncoding(){return true;}
+        @Override public boolean audioNeedsEncoding(){return true;}
+        @Override public Codec createForVideoEncoding(Format format,@androidx.annotation.Nullable LogSessionId session)throws ExportException{return delegate.createForVideoEncoding(format,session);}
+        @Override public Codec createForAudioEncoding(Format format,@androidx.annotation.Nullable LogSessionId session)throws ExportException{return delegate.createForAudioEncoding(format,session);}
+    }
+    static String outputFileName(String title,long timestamp){
+        String safe=title.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]","_").trim();
+        if(safe.toLowerCase(java.util.Locale.ROOT).endsWith(".mp4"))safe=safe.substring(0,safe.length()-4);
+        if(safe.isEmpty()||safe.matches("\\.+"))safe="拾流剪辑";
+        if(safe.length()>60)safe=safe.substring(0,60);
+        return safe+"-"+timestamp+".mp4";
+    }
+    private long inspectOutput(File output,long expected,int clips)throws Exception{
+        if(output==null||!output.isFile()||output.length()<=0)throw new IOException("导出结果为空，草稿已保留。");
+        MediaMetadataRetriever probe=new MediaMetadataRetriever();
+        try{
+            probe.setDataSource(output.getAbsolutePath());
+            long duration=longNumber(probe.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
+            int width=integer(probe.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
+            int height=integer(probe.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+            if(duration<=0||width<=0||height<=0)throw new IOException("导出文件校验失败，未保存为成片；请从草稿重试。");
+            // Container durations include frame / AAC packet rounding; never label
+            // the arithmetic sum as a measured output duration.
+            if(Math.abs(duration-expected)>Math.max(1000L,clips*100L))throw new IOException("成片时长与所选片段不符，未保存为成片；请重新检查范围。");
+            return duration;
+        }finally{probe.release();}
+    }
+    private static long longNumber(String value){try{return Long.parseLong(value);}catch(Exception invalid){return 0;}}
     private static final class Clip {
         final Uri uri; final long startMs, endMs;
         Clip(Uri uri, long startMs, long endMs) { this.uri = uri; this.startMs = startMs; this.endMs = endMs; }

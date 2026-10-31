@@ -191,6 +191,13 @@ public final class LibraryStore implements Closeable {
         helper.getWritableDatabase().update("marker", v, "id=?", strings(markerId));
     }
 
+    public void editMarker(long videoId,long markerId,long startMs,long endMs,String label){
+        long duration=duration(videoId);
+        if(startMs<0||duration<=0||startMs>duration||endMs!=0&&(endMs<=startMs||endMs>duration))throw new IllegalArgumentException("标记时间无效");
+        ContentValues values=new ContentValues();values.put("position_ms",startMs);values.put("end_ms",endMs);values.put("label",text(label,"",200));
+        if(helper.getWritableDatabase().update("marker",values,"id=? AND video_id=?",new String[]{Long.toString(markerId),Long.toString(videoId)})!=1)throw new IllegalArgumentException("标记已不存在");
+    }
+
     public List<JSONObject> collections() {
         List<JSONObject> result = new ArrayList<>();
         try (Cursor c = helper.getReadableDatabase().rawQuery("SELECT c.id,c.name,COUNT(cv.video_id) AS count FROM collection c LEFT JOIN collection_video cv ON c.id=cv.collection_id GROUP BY c.id ORDER BY c.name COLLATE NOCASE,c.id", null)) {
@@ -355,6 +362,13 @@ public final class LibraryStore implements Closeable {
             v.put("start_ms", startMs); v.put("end_ms", endMs); v.put("position", position);
             long id = db.insertOrThrow("edit_clip", null, v); db.setTransactionSuccessful(); return id;
         } finally { db.endTransaction(); }
+    }
+    public synchronized void updateClipRange(long projectId,long clipId,String sourceUri,long startMs,long endMs,long measuredDurationMs){
+        if(!localUri(sourceUri))throw new IllegalArgumentException("素材地址无效");
+        ClipContract.validate(startMs,endMs,measuredDurationMs);
+        ContentValues values=new ContentValues();values.put("start_ms",startMs);values.put("end_ms",endMs);
+        // Match the stable draft object and its URI snapshot, not an optional library row.
+        if(helper.getWritableDatabase().update("edit_clip",values,"id=? AND project_id=? AND uri=?",new String[]{Long.toString(clipId),Long.toString(projectId),sourceUri})!=1)throw new IllegalArgumentException("片段已不存在或素材已改变");
     }
     public synchronized void removeClip(long clipId) {
         SQLiteDatabase db = helper.getWritableDatabase(); db.beginTransaction();

@@ -20,12 +20,16 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.FrameLayout;
+import android.content.pm.PackageManager;
+import android.Manifest;
 import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.media3.common.C;
+import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
@@ -51,10 +55,17 @@ public final class EditorActivity extends Activity {
     private LibraryStore store;
     private ThumbnailRepository covers;
     private int screen=PROJECTS, generation, pickerPage;
+    private long editingClipId;
     private long projectId, videoId, durationMs, positionMs, requestedStart, requestedEnd=-1;
     private String startDraft="", endDraft="", pickerQuery="";
     private boolean resumed, destroyed, sourceLoaded, previewClaim, rangePlaying, busy;
-    private long previewEnd;
+    private long previewEnd,previewStart;
+    private boolean selectionPreview,firstPreviewFrame;
+    private TimestampThumbnails frames;
+    private final List<TimestampThumbnails.Binding> stripBindings=new ArrayList<>();
+    private long frameWindowStart=-1,frameWindowEnd=-1;
+    private Button previewButton,sourceModeButton,trimExportButton,draftPreviewButton;
+    private FrameLayout draftPreviewHost;
     private JSONObject source, project;
     private List<JSONObject> clips=new ArrayList<>();
     private ExoPlayer player;
@@ -73,6 +84,7 @@ public final class EditorActivity extends Activity {
     private Button addClipButton;
     private final List<Button> clipMenus=new ArrayList<>();
     private final List<ImageView> boundCovers=new ArrayList<>();
+    private final List<ClipFrame> clipFrames=new ArrayList<>();
     private final Runnable searchDebounce=()->loadPicker(false);
     private final Runnable projectPoll=new Runnable() {
         @Override public void run() {
@@ -93,9 +105,8 @@ public final class EditorActivity extends Activity {
     private final Runnable previewTick=new Runnable() {
         @Override public void run() {
             if (!resumed || player==null || screen!=TRIM) return;
-            positionMs=Math.max(0,player.getCurrentPosition());
-            if (positionLabel!=null) positionLabel.setText("当前位置  "+time(positionMs));
-            if (rangePlaying && positionMs>=previewEnd) { player.pause(); rangePlaying=false; }
+            positionMs=currentSourcePosition();
+            if (positionLabel!=null) positionLabel.setText(selectionPreview?"片段预览  "+time(Math.max(0,player.getCurrentPosition()))+" / "+time(previewEnd-previewStart):"原片位置  "+time(positionMs));
             main.postDelayed(this,150);
         }
     };
@@ -103,9 +114,9 @@ public final class EditorActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         UiTheme.apply(this); super.onCreate(state); UiTheme.systemBars(this);
         UiTheme.Palette palette=UiTheme.get(this);WHITE=palette.surface;INK=palette.ink;MUTED=palette.muted;LINE=palette.line;BG=palette.bg;ACCENT=palette.accent;CONTROL=palette.control;
-        store=new LibraryStore(getApplicationContext()); covers=new ThumbnailRepository(this);
+        store=new LibraryStore(getApplicationContext()); covers=new ThumbnailRepository(this);frames=new TimestampThumbnails(this);
         if (state!=null) {
-            screen=state.getInt("screen",PROJECTS); projectId=state.getLong("project_id"); videoId=state.getLong("video_id");
+            editingClipId=state.getLong("editing_clip_id");screen=state.getInt("screen",PROJECTS); projectId=state.getLong("project_id"); videoId=state.getLong("video_id");
             positionMs=state.getLong("position_ms"); requestedStart=state.getLong("start_ms"); requestedEnd=state.getLong("end_ms",-1);
             startDraft=state.getString("start_draft",""); endDraft=state.getString("end_draft","");
             preciseOpen=state.getBoolean("precise_open",false);
@@ -115,7 +126,7 @@ public final class EditorActivity extends Activity {
             requestedStart=Math.max(0,getIntent().getLongExtra("start_ms",positionMs)); requestedEnd=getIntent().getLongExtra("end_ms",-1);
             screen=videoId>0?TRIM:projectId>0?PROJECT:PROJECTS;
         }
-        if (screen==TRIM && videoId>0) showTrim(videoId,true);
+        if (screen==TRIM && (videoId>0||editingClipId>0)) showTrim(videoId,true);
         else if (screen==PROJECT && projectId>0) showProject(projectId);
         else if (screen==PICKER) showPicker(); else showProjects();
         if (Build.VERSION.SDK_INT>=33) getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
@@ -126,7 +137,7 @@ public final class EditorActivity extends Activity {
         long id=intent.getLongExtra("project_id",0); if (id>0) showProject(id);
     }
     private void page(String heading) {
-        clearCovers();
+        clearCovers();frames.clear();stripBindings.clear();
         root=column(); root.setBackgroundColor(BG);
         root.setOnApplyWindowInsetsListener((view,insets)->{
             view.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom()); return insets;
@@ -137,8 +148,9 @@ public final class EditorActivity extends Activity {
         header.addView(text(heading,20,INK,true),new LinearLayout.LayoutParams(0,-2,1)); root.addView(header);
         ScrollView scroll=new ScrollView(this); scroll.setFillViewport(true);
         body=column(); body.setPadding(dp(20),dp(10),dp(20),dp(24)); scroll.addView(body,new ScrollView.LayoutParams(-1,-2));
+        scroll.setOnScrollChangeListener((view,x,y,oldX,oldY)->bindVisibleClipFrames());
         root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1)); setContentView(root);root.requestApplyInsets();
-        startInput=null; endInput=null; feedback=null; playerView=null;rangeView=null;rangeSummary=null;preciseFields=null;sourceMeta=null;
+        startInput=null; endInput=null; feedback=null; playerView=null;rangeView=null;rangeSummary=null;preciseFields=null;sourceMeta=null;sourceModeButton=null;previewButton=null;
     }
     private void showProjects() {
         rememberRange(); releasePreview(); screen=PROJECTS; int token=++generation;
@@ -164,12 +176,16 @@ public final class EditorActivity extends Activity {
     }
     private void showTrim(long id,boolean keepRange) {
         rememberRange(); releasePreview(); screen=TRIM; videoId=id; sourceLoaded=false; source=null;
-        if (!keepRange) { requestedStart=0; requestedEnd=-1; positionMs=0; startDraft=""; endDraft="";preciseOpen=false; }
-        int token=++generation; main.removeCallbacks(projectPoll); page("截取片段");
+        if (!keepRange) { editingClipId=0;requestedStart=0; requestedEnd=-1; positionMs=0; startDraft=""; endDraft="";preciseOpen=false; }
+        int token=++generation;final long editId=editingClipId,draftId=projectId; main.removeCallbacks(projectPoll); page("截取片段");
         feedback=text("正在读取本地视频…",14,MUTED,false); body.addView(feedback);
         io.execute(()->{
             try {
-                JSONObject item=store.video(id);
+                JSONObject item=id>0?store.video(id):null;
+                // Removing only a library record deliberately preserves draft URI snapshots.
+                if(item==null&&editId>0)for(JSONObject clip:store.clips(draftId))if(clip.optLong("id")==editId){
+                    item=new JSONObject().put("id",0).put("uri",clip.optString("uri")).put("title",clip.optString("title")).put("durationMs",0).put("bytes",-1);break;
+                }
                 if (item==null || item.optBoolean("missing")) throw new IllegalArgumentException("原视频不可用，文件可能已被移走。已有草稿会保留。");
                 long duration=item.optLong("durationMs");
                 if (duration<=0) {
@@ -178,10 +194,10 @@ public final class EditorActivity extends Activity {
                     finally { probe.release(); }
                 }
                 if (duration<=0) throw new IllegalArgumentException("无法读取视频时长，请先确认原片能正常播放。");
-                final long actualDuration=duration;
+                final long actualDuration=duration;final JSONObject sourceItem=item;
                 main.post(()->{
                     if (!current(token,TRIM)) return;
-                    source=item; durationMs=actualDuration; sourceLoaded=true;
+                    source=sourceItem; durationMs=actualDuration; sourceLoaded=true;
                     requestedStart=Math.min(Math.max(0,requestedStart),Math.max(0,durationMs-1));
                     if (requestedEnd<0) requestedEnd=Math.min(durationMs,requestedStart+15000);
                     if (startDraft.isEmpty()) startDraft=time(requestedStart); if (endDraft.isEmpty()) endDraft=time(requestedEnd);
@@ -192,71 +208,108 @@ public final class EditorActivity extends Activity {
     }
     private void renderTrim() {
         body.removeAllViews();
-        playerView=new PlayerView(this); playerView.setBackgroundColor(0xFF0A0C0F); playerView.setUseController(true);
+        // The preview and final actions do not scroll away while selecting a range.
+        root.removeViewAt(1);
+        boolean landscape=getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        LinearLayout workspace=landscape?row():column();root.addView(workspace,new LinearLayout.LayoutParams(-1,0,1));
+        LinearLayout media=column(),tools=column();
+        playerView=new PlayerView(this);playerView.setBackgroundColor(0xFF0A0C0F);playerView.setUseController(true);
         playerView.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);
-        playerView.setShowNextButton(false); playerView.setShowPreviousButton(false);
+        playerView.setShowNextButton(false);playerView.setShowPreviousButton(false);playerView.setShowFastForwardButton(false);playerView.setShowRewindButton(false);
         int viewport=getResources().getConfiguration().screenHeightDp;
-        int previewHeight=Math.max(180,Math.min(340,Math.round(viewport*.37f)));
-        add(body,playerView,0,new LinearLayout.LayoutParams(-1,dp(previewHeight)));
-        TextView name=text(source.optString("title","本地视频"),15,INK,true); name.setMaxLines(1);name.setEllipsize(android.text.TextUtils.TruncateAt.END);add(body,name,12);
+        int sourceWidth=source.optInt("width"),sourceHeight=source.optInt("height");
+        int previewHeight=sourceHeight>sourceWidth&&sourceWidth>0?Math.min(320,Math.round(viewport*.38f)):Math.max(180,Math.min(280,Math.round((getResources().getConfiguration().screenWidthDp)*9f/16)));
+        media.addView(playerView,new LinearLayout.LayoutParams(-1,landscape?0:dp(previewHeight),landscape?1:0));
+        if(landscape){workspace.addView(media,new LinearLayout.LayoutParams(0,-1,1));workspace.addView(tools,new LinearLayout.LayoutParams(dp(340),-1));}
+        else{workspace.addView(media,new LinearLayout.LayoutParams(-1,-2));workspace.addView(tools,new LinearLayout.LayoutParams(-1,0,1));}
+        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(false);body=column();body.setPadding(dp(20),dp(14),dp(20),dp(12));scroll.addView(body,new ScrollView.LayoutParams(-1,-2));tools.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        TextView name=text(source.optString("title","本地视频"),14,INK,true);name.setMaxLines(1);name.setEllipsize(android.text.TextUtils.TruncateAt.END);body.addView(name);
         name.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("原视频").setMessage(source.optString("title","本地视频")).setPositiveButton("返回",null).show());
-        long bytes=source.optLong("bytes",-1);
-        sourceMeta=text("原片 "+time(durationMs)+(bytes>0?" · "+MediaSize.format(bytes):""),12,MUTED,false);add(body,sourceMeta,3);
-        LinearLayout cursor=row();positionLabel=text("当前位置  "+time(positionMs),12,MUTED,false);cursor.addView(positionLabel,new LinearLayout.LayoutParams(0,-2,1));
-        Button setStart=quietButton("设为起点"),setEnd=quietButton("设为终点");
+        long bytes=source.optLong("bytes",-1);sourceMeta=text("原片 "+time(durationMs)+(bytes>0?" · "+MediaSize.format(bytes):""),12,MUTED,false);add(body,sourceMeta,3);
+        LinearLayout cursor=row();positionLabel=text("原片位置  "+time(positionMs),12,MUTED,false);cursor.addView(positionLabel,new LinearLayout.LayoutParams(0,-2,1));
+        Button setStart=quietButton("设起点"),setEnd=quietButton("设终点");
         setStart.setContentDescription("将当前播放位置设为片段起点");setEnd.setContentDescription("将当前播放位置设为片段终点");
-        setStart.setOnClickListener(v->{if(player!=null)startInput.setText(time(player.getCurrentPosition()));else toast("视频准备好后可定位起点");});
-        setEnd.setOnClickListener(v->{if(player!=null)endInput.setText(time(player.getCurrentPosition()));else toast("视频准备好后可定位终点");});
-        cursor.addView(setStart,new LinearLayout.LayoutParams(dp(80),dp(48)));cursor.addView(setEnd,new LinearLayout.LayoutParams(dp(80),dp(48)));add(body,cursor,4);
-        LinearLayout heading=row();rangeSummary=text("",13,ACCENT,true);rangeSummary.setMaxLines(2);heading.addView(rangeSummary,new LinearLayout.LayoutParams(0,-2,1));
+        setStart.setOnClickListener(v->{if(player!=null)startInput.setText(time(currentSourcePosition()));else toast("视频准备好后可定位起点");});
+        setEnd.setOnClickListener(v->{if(player!=null)endInput.setText(time(currentSourcePosition()));else toast("视频准备好后可定位终点");});
+        cursor.addView(setStart,new LinearLayout.LayoutParams(dp(64),dp(48)));cursor.addView(setEnd,new LinearLayout.LayoutParams(dp(64),dp(48)));add(body,cursor,6);
+        LinearLayout heading=row();rangeSummary=text("",14,ACCENT,true);rangeSummary.setMaxLines(2);heading.addView(rangeSummary,new LinearLayout.LayoutParams(0,-2,1));
         Button precise=quietButton("精确时间");precise.setContentDescription("展开或收起毫秒起止时间输入");heading.addView(precise,new LinearLayout.LayoutParams(dp(84),dp(48)));add(body,heading,0);
         rangeView=new ClipRangeView(this);add(body,rangeView,0,new LinearLayout.LayoutParams(-1,dp(96)));
+        LinearLayout zoom=row();Button zoomIn=quietButton("放大选区"),zoomOut=quietButton("查看全片");zoomIn.setOnClickListener(v->rangeView.zoomToSelection());zoomOut.setOnClickListener(v->rangeView.showFullTimeline());
+        zoom.addView(zoomIn,new LinearLayout.LayoutParams(0,dp(44),1));zoom.addView(zoomOut,new LinearLayout.LayoutParams(0,dp(44),1));add(body,zoom,0);
         preciseFields=column();LinearLayout fields=row(),start=column(),end=column();start.addView(text("起点",12,MUTED,false));end.addView(text("终点",12,MUTED,false));
         startInput=input("00:00.000");endInput=input("00:15.000");startInput.setContentDescription("片段起点，秒数或分秒，最多三位小数");endInput.setContentDescription("片段终点，秒数或分秒，最多三位小数");
-        startInput.setText(startDraft);endInput.setText(endDraft);add(start,startInput,6);add(end,endInput,6);
-        fields.addView(start,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams second=new LinearLayout.LayoutParams(0,-2,1);second.leftMargin=dp(12);fields.addView(end,second);preciseFields.addView(fields);
-        add(preciseFields,text("秒数或 分:秒，可精确到毫秒",12,MUTED,false),6);add(body,preciseFields,0);preciseFields.setVisibility(preciseOpen?View.VISIBLE:View.GONE);
-        precise.setSelected(preciseOpen);precise.setOnClickListener(v->{preciseOpen=!preciseOpen;precise.setSelected(preciseOpen);preciseFields.setVisibility(preciseOpen?View.VISIBLE:View.GONE);if(preciseOpen)UiTheme.enter(preciseFields);});
-        TextWatcher watcher=new TextWatcher(){public void beforeTextChanged(CharSequence value,int st,int count,int after){}public void onTextChanged(CharSequence value,int st,int before,int count){if(!syncingRange&&player!=null){rangePlaying=false;player.pause();}syncRangeFromFields();}public void afterTextChanged(Editable value){}};
+        startInput.setText(startDraft);endInput.setText(endDraft);add(start,startInput,6);add(end,endInput,6);fields.addView(start,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams second=new LinearLayout.LayoutParams(0,-2,1);second.leftMargin=dp(12);fields.addView(end,second);preciseFields.addView(fields);
+        add(preciseFields,text("秒数或 分:秒，最多三位小数；实际边界受源帧率影响",12,MUTED,false),6);add(body,preciseFields,0);preciseFields.setVisibility(preciseOpen?View.VISIBLE:View.GONE);
+        precise.setSelected(preciseOpen);precise.setOnClickListener(v->{preciseOpen=!preciseOpen;precise.setSelected(preciseOpen);preciseFields.setVisibility(preciseOpen?View.VISIBLE:View.GONE);});
+        TextWatcher watcher=new TextWatcher(){public void beforeTextChanged(CharSequence value,int st,int count,int after){}public void onTextChanged(CharSequence value,int st,int before,int count){if(!syncingRange&&player!=null){rangePlaying=false;seekSource(currentSourcePosition());player.pause();}syncRangeFromFields();}public void afterTextChanged(Editable value){}};
         startInput.addTextChangedListener(watcher);endInput.addTextChangedListener(watcher);
         rangeView.setListener((from,to,handle,tracking)->{
-            syncingRange=true;startInput.setText(time(from));endInput.setText(time(to));syncingRange=false;
-            startDraft=startInput.getText().toString();endDraft=endInput.getText().toString();requestedStart=from;requestedEnd=to;updateRangeSummary(from,to);
-            long target=handle==ClipRangeView.START?from:to;positionMs=target;
-            if(positionLabel!=null)positionLabel.setText("预览位置  "+time(target));
-            long now=SystemClock.uptimeMillis();if(player!=null&&(!tracking||now-lastRangeSeek>=80)){lastRangeSeek=now;rangePlaying=false;player.pause();player.seekTo(target);}
+            syncingRange=true;startInput.setText(time(from));endInput.setText(time(to));syncingRange=false;startDraft=startInput.getText().toString();endDraft=endInput.getText().toString();requestedStart=from;requestedEnd=to;updateRangeSummary(from,to);
+            long target=handle==ClipRangeView.START?from:Math.max(from,to-1);positionMs=target;if(positionLabel!=null)positionLabel.setText("原片位置  "+time(target));
+            long now=SystemClock.uptimeMillis();if(player!=null&&(!tracking||now-lastRangeSeek>=80)){lastRangeSeek=now;rangePlaying=false;player.pause();seekSource(target);}
         });
         long[] initial;try{initial=validatedRange(startDraft,endDraft,durationMs);}catch(IllegalArgumentException invalid){initial=new long[]{Math.max(0,Math.min(requestedStart,durationMs-1)),Math.max(1,Math.min(requestedEnd,durationMs))};}
-        rangeView.setRange(durationMs,initial[0],initial[1]);updateRangeSummary(rangeView.getStartMs(),rangeView.getEndMs());
-        feedback=text("片段 "+time(rangeView.getEndMs()-rangeView.getStartMs())+" · 原片保持不变",12,MUTED,false);add(body,feedback,0);
-        LinearLayout actions=row();Button preview=button("预览所选范围",false);preview.setOnClickListener(v->previewRange());actions.addView(preview,new LinearLayout.LayoutParams(0,dp(48),1));
-        addButton=button(projectId>0?"加入当前草稿":"加入剪辑草稿",true);addButton.setOnClickListener(v->addRange());LinearLayout.LayoutParams addParams=new LinearLayout.LayoutParams(0,dp(48),1);addParams.leftMargin=dp(12);actions.addView(addButton,addParams);add(body,actions,14);
+        rangeView.setRange(durationMs,initial[0],initial[1]);rangeView.setWindowListener(this::loadRangeFrames);updateRangeSummary(rangeView.getStartMs(),rangeView.getEndMs());loadRangeFrames();
+        feedback=text("拖动左右手柄，只保留高亮范围",12,MUTED,false);feedback.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);add(body,feedback,2);
+        sourceModeButton=quietButton("返回原片定位");sourceModeButton.setVisibility(View.GONE);sourceModeButton.setOnClickListener(v->{seekSource(previewStart);feedback.setText("已返回原片，可继续调整起止点。");});add(body,sourceModeButton,4);
+        addButton=quietButton(editingClipId>0?"保存片段范围":projectId>0?"加入当前草稿":"加入剪辑草稿");addButton.setOnClickListener(v->addRange());add(body,addButton,4);if(editingClipId>0)addButton.setVisibility(View.GONE);
+        LinearLayout actions=row();actions.setPadding(dp(20),dp(10),dp(20),dp(16));previewButton=button("预览片段",false);previewButton.setOnClickListener(v->previewRange());actions.addView(previewButton,new LinearLayout.LayoutParams(0,dp(48),1));
+        trimExportButton=button(editingClipId>0?"保存片段范围":"导出此片段",true);trimExportButton.setOnClickListener(v->{if(editingClipId>0)addRange();else reviewRangeExport();});LinearLayout.LayoutParams exportParams=new LinearLayout.LayoutParams(0,dp(48),1);exportParams.leftMargin=dp(12);actions.addView(trimExportButton,exportParams);tools.addView(actions);
+    }
+    private void loadRangeFrames(){
+        if(!resumed||!firstPreviewFrame||source==null||rangeView==null)return;ClipRangeView target=rangeView;int token=generation;long from=target.getWindowStartMs(),to=target.getWindowEndMs();
+        if(!stripBindings.isEmpty()&&from==frameWindowStart&&to==frameWindowEnd)return;
+        for(TimestampThumbnails.Binding binding:stripBindings)binding.cancel();stripBindings.clear();frameWindowStart=from;frameWindowEnd=to;
+        for(int i=0;i<7;i++){final int index=i;target.setFrame(i,null);long at=from+(to-from)*i/7;stripBindings.add(frames.load(Uri.parse(source.optString("uri")),at,durationMs,bitmap->{if(current(token,TRIM)&&rangeView==target)target.setFrame(index,bitmap);}));}
+    }
+    private long currentSourcePosition(){if(player==null)return positionMs;return selectionPreview?ClipContract.sourcePosition(player.getCurrentPosition(),previewStart,previewEnd):Math.max(0,player.getCurrentPosition());}
+    private void seekSource(long at){
+        if(player==null)return;long position=Math.max(0,Math.min(at,durationMs));
+        if(selectionPreview){selectionPreview=false;rangePlaying=false;player.setMediaItem(MediaItem.fromUri(source.optString("uri")),position);player.prepare();if(sourceModeButton!=null)sourceModeButton.setVisibility(View.GONE);}
+        else player.seekTo(position);positionMs=position;
     }
     private void syncRangeFromFields() {
         if(syncingRange||rangeView==null||startInput==null||endInput==null)return;
-        try{long[] range=validatedRange(startInput.getText().toString(),endInput.getText().toString(),durationMs);rangeView.setRange(durationMs,range[0],range[1]);requestedStart=range[0];requestedEnd=range[1];updateRangeSummary(range[0],range[1]);}
+        try{long[] range=validatedRange(startInput.getText().toString(),endInput.getText().toString(),durationMs);rangeView.setRange(durationMs,range[0],range[1]);if(range[0]<rangeView.getWindowStartMs()||range[1]>rangeView.getWindowEndMs())rangeView.showFullTimeline();requestedStart=range[0];requestedEnd=range[1];updateRangeSummary(range[0],range[1]);}
         catch(IllegalArgumentException invalid){if(rangeSummary!=null)rangeSummary.setText("请检查起止时间");}
     }
     private void updateRangeSummary(long from,long to) { if(rangeSummary!=null)rangeSummary.setText(time(from)+" — "+time(to));if(feedback!=null&&!rangePlaying)feedback.setText("片段 "+time(to-from)+" · 原片保持不变"); }
     private void previewRange() {
         long[] range=readRange(); if (range==null) return;
         if (player==null) { feedback.setText("视频尚未准备好，请稍后再预览。"); return; }
-        previewEnd=range[1]; rangePlaying=true; player.seekTo(range[0]); player.play(); feedback.setText("正在预览 "+time(range[0])+" — "+time(range[1]));
+        previewStart=range[0];previewEnd=range[1];selectionPreview=true;rangePlaying=true;
+        player.setMediaItem(ClipContract.mediaItem(Uri.parse(source.optString("uri")),range[0],range[1]));player.prepare();player.play();
+        sourceModeButton.setVisibility(View.VISIBLE);feedback.setText("仅预览所选片段 · "+time(range[1]-range[0])+"，播放到终点自动停止");
     }
     private long[] readRange() {
         try { return validatedRange(startInput.getText().toString(),endInput.getText().toString(),durationMs); }
         catch (IllegalArgumentException invalid) { feedback.setText(invalid.getMessage()); return null; }
     }
+    private void reviewRangeExport(){
+        if(busy)return;long[] range=readRange();if(range==null)return;
+        EditText name=input("成片名称");String original=source.optString("title","我的片段");name.setText(original+" · 片段");name.setSelectAllOnFocus(true);
+        LinearLayout wrap=column();wrap.setPadding(dp(24),dp(4),dp(24),0);wrap.addView(text(time(range[0])+" — "+time(range[1])+"\n片长 "+time(range[1]-range[0]),14,INK,true));add(wrap,name,14);add(wrap,text("精确裁剪 · MP4 / H.264 / AAC\n重新编码可能耗时，另存新视频，不改原片。",12,MUTED,false),12);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("确认导出片段").setView(wrap).setNegativeButton("继续调整",null).setPositiveButton("开始导出",null).create();
+        dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("请输入成片名称");return;}
+            if(Build.VERSION.SDK_INT<29&&checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},28);name.setError("允许保存权限后，请再次点开始导出");return;}
+            busy=true;dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);int token=generation;long sourceId=videoId;
+            io.execute(()->{try{long id=store.createProject(title);store.addClip(id,sourceId,range[0],range[1]);main.post(()->{busy=false;if(current(token,TRIM)){dialog.dismiss();showProject(id);pendingDirectExport=id;}});}
+            catch(Exception failure){main.post(()->{busy=false;if(!destroyed){name.setError(message(failure,"草稿保存失败，请重试"));dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);}});}});
+        }));dialog.show();
+    }
+    private long pendingDirectExport;
     private void addRange() {
         if (busy) return; long[] range=readRange(); if (range==null) return; rememberRange();
         if (projectId>0) saveRange(projectId,range); else chooseProject(id->saveRange(id,range));
     }
     private void saveRange(long target,long[] range) {
-        busy=true; if (addButton!=null) addButton.setEnabled(false); final long sourceId=videoId; int token=generation;
+        busy=true; if (addButton!=null) addButton.setEnabled(false); final long sourceId=videoId,clipToUpdate=editingClipId,actualDuration=durationMs;final String sourceUri=source.optString("uri");int token=generation;
         io.execute(()->{
             try {
                 if (ExportService.isRunning(target)) throw new IllegalArgumentException("这个草稿正在导出，请结束后再添加片段。");
-                store.addClip(target,sourceId,range[0],range[1]);
+                if(clipToUpdate>0)store.updateClipRange(target,clipToUpdate,sourceUri,range[0],range[1],actualDuration);else store.addClip(target,sourceId,range[0],range[1]);
                 store.updateProjectExport(target,"draft",-1,"草稿已更新，可导出新成片。",null);
                 main.post(()->{ busy=false; if (!destroyed && token==generation) { projectId=target; showProject(target); } });
             } catch (Exception failure) { main.post(()->{ busy=false; if (!destroyed && token==generation) { addButton.setEnabled(true); feedback.setText(message(failure,"片段未能保存，请重试。")); } }); }
@@ -297,7 +350,7 @@ public final class EditorActivity extends Activity {
             try {
                 store.recoverInterruptedExports(); JSONObject item=store.project(id); List<JSONObject> parts=store.clips(id);
                 if (item==null) throw new IllegalArgumentException("这个草稿已不存在。");
-                main.post(()->{ if (current(token,PROJECT)) { project=item; clips=parts; renderProject(); schedulePoll(); } });
+                main.post(()->{ if (current(token,PROJECT)) { project=item; clips=parts; renderProject(); schedulePoll();if(pendingDirectExport==id){pendingDirectExport=0;startExport();} } });
             } catch (Exception failure) { error(token,message(failure,"草稿读取失败，请重试。")); }
         });
     }
@@ -305,10 +358,12 @@ public final class EditorActivity extends Activity {
         clearCovers();body.removeAllViews();clipMenus.clear();body.addView(text(project.optString("title","我的剪辑"),20,INK,true));
         long total=0;for(JSONObject clip:clips)total+=clip.optLong("durationMs");add(body,text(clips.size()+" 个片段 · 合计 "+time(total),13,MUTED,false),5);
         boolean running=ExportService.isRunning(projectId);
+        draftPreviewHost=new FrameLayout(this);draftPreviewHost.setVisibility(View.GONE);add(body,draftPreviewHost,14,new LinearLayout.LayoutParams(-1,dp(240)));
+        draftPreviewButton=button("预览草稿",false);draftPreviewButton.setEnabled(!running&&!clips.isEmpty());draftPreviewButton.setOnClickListener(v->previewProject());add(body,draftPreviewButton,12);
         if(clips.isEmpty())add(body,text("挑选原视频，留下精彩的那一段",14,MUTED,false),24);
         for(int i=0;i<clips.size();i++){
             JSONObject clip=clips.get(i);int index=i;LinearLayout line=row(),labels=column();line.setPadding(0,dp(4),0,dp(4));
-            ImageView cover=cover(clip.optLong("videoId"),clip.optString("uri"),"第 "+(i+1)+" 个片段封面");LinearLayout.LayoutParams poster=new LinearLayout.LayoutParams(dp(76),dp(58));poster.rightMargin=dp(12);line.addView(cover,poster);
+            ImageView cover=clipCover(clip,"第 "+(i+1)+" 个片段起点附近画面");LinearLayout.LayoutParams poster=new LinearLayout.LayoutParams(dp(76),dp(58));poster.rightMargin=dp(12);line.addView(cover,poster);
             TextView name=text((i+1)+"  "+clip.optString("title","视频片段"),14,INK,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);labels.addView(name);
             add(labels,text(time(clip.optLong("startMs"))+" — "+time(clip.optLong("endMs")),12,MUTED,false),4);line.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
             Button more=quietButton("⋯");more.setTextSize(22);more.setContentDescription("管理第 "+(i+1)+" 个片段");more.setEnabled(!running);clipMenus.add(more);
@@ -326,9 +381,9 @@ public final class EditorActivity extends Activity {
     }
     private void clipMenu(View anchor,JSONObject clip,int index) {
         if (ExportService.isRunning(projectId)) return; PopupMenu menu=new PopupMenu(this,anchor);
-        if (index>0) menu.getMenu().add("上移"); if (index<clips.size()-1) menu.getMenu().add("下移"); menu.getMenu().add("移除片段");
+        menu.getMenu().add("预览片段");menu.getMenu().add("调整范围"); if (index>0) menu.getMenu().add("上移"); if (index<clips.size()-1) menu.getMenu().add("下移"); menu.getMenu().add("移除片段");
         menu.setOnMenuItemClickListener(item->{
-            String action=item.getTitle().toString(); long id=projectId,clipId=clip.optLong("id"); int token=generation;
+            String action=item.getTitle().toString();if("预览片段".equals(action)){previewProjectClip(clip);return true;}if("调整范围".equals(action)){editingClipId=clip.optLong("id");requestedStart=clip.optLong("startMs");requestedEnd=clip.optLong("endMs");positionMs=requestedStart;startDraft=time(requestedStart);endDraft=time(requestedEnd);showTrim(clip.optLong("videoId"),true);return true;} long id=projectId,clipId=clip.optLong("id"); int token=generation;
             io.execute(()->{
                 try {
                     if (ExportService.isRunning(id)) throw new IllegalArgumentException("草稿正在导出，暂时无法调整。");
@@ -369,7 +424,8 @@ public final class EditorActivity extends Activity {
         });
     }
     private void startExport() {
-        if (clips.isEmpty() || ExportService.isRunning(projectId)) return; releasePreview();
+        if (clips.isEmpty() || ExportService.isRunning(projectId)) return;
+        if(Build.VERSION.SDK_INT<29&&checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},28);feedback.setText("允许保存权限后，请再次导出。");return;} frames.clear();releasePreview();if(draftPreviewHost!=null)draftPreviewHost.setVisibility(View.GONE);
         try {
             Intent request=new Intent(this,ExportService.class).setAction(ExportService.ENQUEUE).putExtra(ExportService.PROJECT_ID,projectId);
             if (Build.VERSION.SDK_INT>=26) startForegroundService(request); else startService(request);
@@ -388,19 +444,49 @@ public final class EditorActivity extends Activity {
         if (detail.isEmpty()) detail=clips.isEmpty()?"先添加片段，再导出。":"草稿已保存在本机，随时可以继续编辑。"; exportDetail.setText(detail);
         int progress=project.optInt("exportProgress",-1); exportProgress.setVisibility(running?View.VISIBLE:View.GONE); exportProgress.setIndeterminate(progress<0); if (progress>=0) exportProgress.setProgress(progress);
         exportButton.setEnabled(!running && !clips.isEmpty()); exportButton.setText("failed".equals(state)||"interrupted".equals(state)||"cancelled".equals(state)?"重新导出":"导出新视频");
-        addClipButton.setEnabled(!running); for (Button menu:clipMenus) menu.setEnabled(!running);
+        addClipButton.setEnabled(!running);if(draftPreviewButton!=null)draftPreviewButton.setEnabled(!running&&!clips.isEmpty()); for (Button menu:clipMenus) menu.setEnabled(!running);
         cancelButton.setVisibility(running?View.VISIBLE:View.GONE); outputButton.setVisibility(!project.optString("outputUri").isEmpty()?View.VISIBLE:View.GONE);
         outputButton.setText("completed".equals(state)?"播放成片":"播放上次成片");
     }
     private void openOutput() {
         if (project==null || project.optString("outputUri").isEmpty()) return;
-        JSONObject output=project; int token=generation; long duration=0; for (JSONObject clip:clips) duration+=clip.optLong("durationMs"); final long total=duration;
+        JSONObject output=project; int token=generation;
         io.execute(()->{
             try {
-                long id=store.addExportedVideo(output.optString("title","我的剪辑"),output.optString("outputUri"),"video/mp4",0,total);
+                Uri uri=Uri.parse(output.optString("outputUri"));MediaMetadataRetriever probe=new MediaMetadataRetriever();long actual;
+                try{probe.setDataSource(this,uri);actual=Long.parseLong(probe.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));}finally{probe.release();}
+                if(actual<=0)throw new IllegalArgumentException("成片时长不可用");
+                long size=0;try(android.content.res.AssetFileDescriptor fd=getContentResolver().openAssetFileDescriptor(uri,"r")){if(fd!=null)size=Math.max(0,fd.getLength());}
+                long id=store.addExportedVideo(output.optString("title","我的剪辑"),uri.toString(),"video/mp4",size,actual);
                 main.post(()->{ if (!destroyed && token==generation) startActivity(new Intent(this,PlayerActivity.class).putExtra("video_id",id)); });
             } catch (Exception failure) { error(token,"成片暂时无法打开，请在系统下载目录查看。"); }
         });
+    }
+    private static final class ClipFrame {
+        final ImageView image;final Uri uri;final long at;boolean requested;TimestampThumbnails.Binding binding;
+        ClipFrame(ImageView image,Uri uri,long at){this.image=image;this.uri=uri;this.at=at;}
+    }
+    private ImageView clipCover(JSONObject clip,String description){
+        ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setBackgroundColor(CONTROL);image.setContentDescription(description);
+        clipFrames.add(new ClipFrame(image,Uri.parse(clip.optString("uri")),clip.optLong("startMs")));image.post(this::bindVisibleClipFrames);return image;
+    }
+    private void bindVisibleClipFrames(){
+        if(destroyed||!resumed||screen!=PROJECT)return;int token=generation;
+        for(ClipFrame frame:clipFrames){android.graphics.Rect visible=new android.graphics.Rect();if(!frame.image.getGlobalVisibleRect(visible)){if(frame.binding!=null){frame.binding.cancel();frame.binding=null;}frame.requested=false;frame.image.setImageDrawable(null);continue;}
+            if(frame.requested)continue;frame.requested=true;frame.binding=frames.load(frame.uri,frame.at,0,bitmap->{if(current(token,PROJECT)&&clipFrames.contains(frame)){frame.binding=null;frame.requested=bitmap!=null;frame.image.setImageBitmap(bitmap);}});}
+    }
+    private void previewProject(){previewProjectItems(clips);}
+    private void previewProjectClip(JSONObject clip){previewProjectItems(java.util.Collections.singletonList(clip));}
+    private void previewProjectItems(List<JSONObject> selected){
+        if(ExportService.isRunning(projectId)||selected.isEmpty())return;releasePreview();
+        try{
+            playerView=new PlayerView(this);playerView.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);playerView.setBackgroundColor(0xFF0A0C0F);draftPreviewHost.removeAllViews();draftPreviewHost.addView(playerView,new FrameLayout.LayoutParams(-1,-1));draftPreviewHost.setVisibility(View.VISIBLE);
+            player=new ExoPlayer.Builder(this,new DefaultRenderersFactory(this).setEnableDecoderFallback(true)).build();ExoPlayer current=player;MediaWorkload.playerStarted();previewClaim=true;
+            current.setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true);current.setHandleAudioBecomingNoisy(true);
+            List<MediaItem> items=new ArrayList<>();for(JSONObject clip:selected)items.add(ClipContract.mediaItem(Uri.parse(clip.optString("uri")),clip.optLong("startMs"),clip.optLong("endMs")));
+            current.addListener(new Player.Listener(){@Override public void onPlayerError(PlaybackException error){if(player==current){releasePreview();feedback.setText("草稿预览失败，原片可能不可用；片段信息已保留。");}}});
+            playerView.setPlayer(current);current.setMediaItems(items);current.prepare();current.play();feedback.setText("按草稿顺序预览所选片段 · 导出会重新编码并统一画幅");draftPreviewHost.requestRectangleOnScreen(new android.graphics.Rect(0,0,draftPreviewHost.getWidth(),draftPreviewHost.getHeight()),true);
+        }catch(RuntimeException failure){releasePreview();feedback.setText("预览初始化失败，请返回后重试。");}
     }
     private void schedulePoll() { main.removeCallbacks(projectPoll); if (resumed && screen==PROJECT) main.postDelayed(projectPoll,300); }
     private void ensurePreview() {
@@ -410,12 +496,15 @@ public final class EditorActivity extends Activity {
             MediaWorkload.playerStarted(); previewClaim=true; ExoPlayer current=player;
             current.addListener(new Player.Listener() {
                 @Override public void onPlaybackStateChanged(int state) {
-                    if (player!=current) return; if (state==Player.STATE_READY) onMeasuredDuration(current.getDuration());
+                    if (player!=current) return; if (state==Player.STATE_READY&&!selectionPreview) onMeasuredDuration(current.getDuration());
+                    if(state==Player.STATE_ENDED&&selectionPreview){rangePlaying=false;if(feedback!=null)feedback.setText("片段预览结束 · 可重播、继续调整或导出");}
                 }
+                @Override public void onRenderedFirstFrame(){if(player==current){firstPreviewFrame=true;loadRangeFrames();}}
                 @Override public void onPlayerError(PlaybackException failure) {
                     if (player==current) { releasePreview(); if (feedback!=null) feedback.setText("预览未能播放。请确认原片可播放，或返回后重试；已保存的草稿仍保留。"); }
                 }
             });
+            current.setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true);current.setHandleAudioBecomingNoisy(true);
             playerView.setPlayer(current); current.setMediaItem(MediaItem.fromUri(source.optString("uri"))); current.seekTo(Math.max(0,positionMs));
             current.prepare(); current.setPlayWhenReady(false); main.post(previewTick);
         } catch (RuntimeException failure) { releasePreview(); if (feedback!=null) feedback.setText("预览初始化失败，请返回后重试。"); }
@@ -423,16 +512,17 @@ public final class EditorActivity extends Activity {
     void onMeasuredDuration(long actual) {
         if (actual<=0 || actual==C.TIME_UNSET) return;
         durationMs=actual;
-        if(rangeView!=null){rangeView.setRange(actual,rangeView.getStartMs(),rangeView.getEndMs());syncRangeFromFields();}
+        if(rangeView!=null){long previous=rangeView.getDurationMs();rangeView.setRange(actual,rangeView.getStartMs(),rangeView.getEndMs());syncRangeFromFields();if(previous!=actual)loadRangeFrames();}
         if(sourceMeta!=null){long bytes=source==null?-1:source.optLong("bytes",-1);sourceMeta.setText("原片 "+time(actual)+(bytes>0?" · "+MediaSize.format(bytes):""));}
         final long measuredVideoId=videoId;
         // Queue before addClip on the same worker. Download metadata may have
         // rounded away the final fraction of a second, unlike the local file.
-        io.execute(()->{ try { store.updateMetadata(measuredVideoId,actual,0,0); } catch (RuntimeException ignored) {} });
+        if(measuredVideoId>0)io.execute(()->{ try { store.updateMetadata(measuredVideoId,actual,0,0); } catch (RuntimeException ignored) {} });
     }
     private void releasePreview() {
         main.removeCallbacks(previewTick); rangePlaying=false;
-        if (player!=null) { positionMs=Math.max(0,player.getCurrentPosition()); if (playerView!=null) playerView.setPlayer(null); player.release(); player=null; }
+        if (player!=null) { positionMs=currentSourcePosition(); if (playerView!=null) playerView.setPlayer(null); player.release(); player=null; }
+        selectionPreview=false;firstPreviewFrame=false;
         if (previewClaim) { previewClaim=false; MediaWorkload.playerStopped(); }
     }
     private void rememberRange() { if (screen==TRIM && startInput!=null && endInput!=null) { startDraft=startInput.getText().toString(); endDraft=endInput.getText().toString(); } }
@@ -441,17 +531,17 @@ public final class EditorActivity extends Activity {
         else if (screen==PROJECT) showProjects(); else finish();
     }
     @Override public void onBackPressed() { back(); }
-    @Override protected void onResume() { super.onResume(); resumed=true; ensurePreview(); schedulePoll(); }
-    @Override protected void onPause() { resumed=false; rememberRange(); releasePreview(); main.removeCallbacks(projectPoll); super.onPause(); }
+    @Override protected void onResume() { super.onResume(); resumed=true; ensurePreview();if(screen==TRIM&&sourceLoaded&&firstPreviewFrame)loadRangeFrames();if(screen==PROJECT)root.post(this::bindVisibleClipFrames);schedulePoll(); }
+    @Override protected void onPause() { resumed=false;frames.clear();stripBindings.clear();for(ClipFrame frame:clipFrames){frame.requested=false;frame.binding=null;}rememberRange(); releasePreview(); main.removeCallbacks(projectPoll); super.onPause(); }
     @Override protected void onSaveInstanceState(Bundle out) {
-        rememberRange(); if (player!=null) positionMs=Math.max(0,player.getCurrentPosition()); out.putInt("screen",screen); out.putLong("project_id",projectId); out.putLong("video_id",videoId); out.putLong("position_ms",positionMs);
+        rememberRange(); if (player!=null) positionMs=currentSourcePosition(); out.putLong("editing_clip_id",editingClipId);out.putInt("screen",screen); out.putLong("project_id",projectId); out.putLong("video_id",videoId); out.putLong("position_ms",positionMs);
         out.putLong("start_ms",requestedStart); out.putLong("end_ms",requestedEnd); out.putString("start_draft",startDraft); out.putString("end_draft",endDraft);out.putBoolean("precise_open",preciseOpen); super.onSaveInstanceState(out);
     }
-    @Override protected void onDestroy() { releasePreview();if(covers!=null)covers.release(); destroyed=true; generation++; main.removeCallbacksAndMessages(null); io.execute(store::close); io.shutdown(); super.onDestroy(); }
+    @Override protected void onDestroy() { releasePreview();if(covers!=null)covers.release();frames.release(); destroyed=true; generation++; main.removeCallbacksAndMessages(null); io.execute(store::close); io.shutdown(); super.onDestroy(); }
 
     static long[] validatedRange(String start,String end,long duration) {
         long from=parseTime(start),to=parseTime(end); if (duration<=0) throw new IllegalArgumentException("尚未取得视频时长。");
-        if (to<=from) throw new IllegalArgumentException("终点必须晚于起点。"); if (to>duration || from>=duration) throw new IllegalArgumentException("起止时间不能超过原片时长。"); return new long[]{from,to};
+        ClipContract.validate(from,to,duration); return new long[]{from,to};
     }
     static long parseTime(String text) {
         try {
@@ -483,7 +573,7 @@ public final class EditorActivity extends Activity {
         value.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x18397D72),states,null));UiTheme.press(value); return value;
     }
     private Button quietButton(String label){Button value=button(label,false);value.setTextColor(MUTED);value.setBackgroundColor(android.graphics.Color.TRANSPARENT);value.setPadding(dp(8),0,dp(8),0);value.setTextSize(12);return value;}
-    private void clearCovers(){for(ImageView image:boundCovers)covers.cancel(image);boundCovers.clear();}
+    private void clearCovers(){for(ImageView image:boundCovers)covers.cancel(image);boundCovers.clear();clipFrames.clear();}
     private ImageView cover(long id,String uri,String description){
         ImageView value=new ImageView(this);value.setScaleType(ImageView.ScaleType.CENTER_CROP);value.setContentDescription(description);GradientDrawable background=new GradientDrawable();background.setColor(CONTROL);background.setCornerRadius(dp(12));value.setBackground(background);value.setClipToOutline(true);boundCovers.add(value);
         if(!uri.isEmpty())covers.load(value,id,uri,id+"-"+Integer.toHexString(uri.hashCode()),0);return value;

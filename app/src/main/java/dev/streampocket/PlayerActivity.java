@@ -85,7 +85,7 @@ public final class PlayerActivity extends Activity {
     private FrameLayout root,videoFrame,sheetOverlay,previewBubble;
     private LinearLayout sheetBody,rangePanel,markerPanel,markerList,menuPanel,errorPanel;
     private ScrollView details;
-    private TextView title,status,sheetTitle,markerHeading,rangeFeedback,speedButton,previewTime;
+    private TextView title,status,sheetTitle,markerHeading,rangeFeedback,speedButton,previewTime,markerListButton;
     private ImageView previewImage;
     private View markerOptionsButton,fullscreenButton;
     private Button bookmarkButton,clipButton,retryButton,saveRangeButton;
@@ -93,6 +93,9 @@ public final class PlayerActivity extends Activity {
     private TimeBar timeBar;
     private View timeBarView;
     private ScrubPreviewLoader previewLoader;
+    private TimestampThumbnails markerThumbnails;
+    private final List<MarkerFrame> markerFrames=new ArrayList<>();
+    private View sheetHandle;
     private long scrubPosition, previewSampleMs=-1;
     private boolean fillVideo,firstFrameRendered,coverTransition,enterTransitionReleased;
     private int coverGeneration,gestureMode;
@@ -170,7 +173,10 @@ public final class PlayerActivity extends Activity {
         markerOptionsButton=playerView.findViewById(R.id.sp_player_marks);
         markerOptionsButton.setOnClickListener(v->{ if (player!=null && !missing) addMarker(); else showMarkerOptions(v); });
         markerOptionsButton.setOnLongClickListener(v->{showMarkerOptions(v);return true;});
-        markerOptionsButton.setContentDescription("标记此刻，长按查看全部精彩标记");
+        markerOptionsButton.setContentDescription("标记此刻");
+        markerListButton=playerView.findViewById(R.id.sp_player_marker_list);
+        markerListButton.setOnClickListener(v->showSheet("markers"));
+        markerThumbnails=new TimestampThumbnails(this);
         fullscreenButton=playerView.findViewById(R.id.sp_player_rotate); fullscreenButton.setOnClickListener(v->rotateVideo());
         timeBarView=playerView.findViewById(androidx.media3.ui.R.id.exo_progress); timeBar=(TimeBar)timeBarView;
         FrameLayout progressStack=playerView.findViewById(R.id.sp_player_progress_stack);
@@ -392,23 +398,26 @@ public final class PlayerActivity extends Activity {
         sheetOverlay.setOnClickListener(v->closeSheet());
         sheetBody=column(); sheetBody.setPadding(dp(20),dp(10),dp(20),dp(16)); sheetBody.setBackground(shape(PANEL,16));
         sheetBody.setOnClickListener(v->{});
-        FrameLayout handle=new FrameLayout(this);handle.setContentDescription("向下拖动收起工具面板");View grip=new View(this);grip.setBackground(shape(0xFF73797C,3));handle.addView(grip,new FrameLayout.LayoutParams(dp(36),dp(4),Gravity.CENTER));sheetBody.addView(handle,new LinearLayout.LayoutParams(-1,dp(20)));
+        FrameLayout handle=new FrameLayout(this);sheetHandle=handle;handle.setContentDescription("向下拖动收起工具面板");View grip=new View(this);grip.setBackground(shape(0xFF73797C,3));handle.addView(grip,new FrameLayout.LayoutParams(dp(36),dp(4),Gravity.CENTER));sheetBody.addView(handle,new LinearLayout.LayoutParams(-1,dp(20)));
         LinearLayout heading=row(); sheetTitle=text("",16,WHITE,true); heading.addView(sheetTitle,new LinearLayout.LayoutParams(0,dp(48),1));
         ImageButton close=new ImageButton(this); close.setImageResource(R.drawable.sp_player_close); close.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         close.setPadding(dp(10),dp(10),dp(10),dp(10)); close.setContentDescription("关闭工具面板"); close.setOnClickListener(v->closeSheet()); heading.addView(close,new LinearLayout.LayoutParams(dp(48),dp(48))); sheetBody.addView(heading);
         details=new ToolScrollView(); details.setFillViewport(false); LinearLayout contents=column();
         menuPanel=column(); contents.addView(menuPanel);
-        markerPanel=column(); bookmarkButton=button("标记此刻",false); bookmarkButton.setOnClickListener(v->addMarker()); markerPanel.addView(bookmarkButton,new LinearLayout.LayoutParams(-1,dp(48)));
-        Button range=button("标记精彩片段",false); range.setContentDescription("标记精彩片段"); range.setOnClickListener(v->openRangePanel()); markerPanel.addView(range,new LinearLayout.LayoutParams(-1,dp(48)));
+        markerPanel=column(); LinearLayout markerActions=row();
+        bookmarkButton=button("＋ 标记此刻",true); bookmarkButton.setContentDescription("标记此刻");bookmarkButton.setOnClickListener(v->addMarker());markerActions.addView(bookmarkButton,new LinearLayout.LayoutParams(0,dp(48),1));
+        Button range=button("标记精彩片段",false);range.setContentDescription("标记精彩片段");range.setOnClickListener(v->openRangePanel());markerActions.addView(range,new LinearLayout.LayoutParams(0,dp(48),1));markerPanel.addView(markerActions);
         markerHeading=text("已保存的标记",13,MUTED,false); add(markerPanel,markerHeading,16,6); markerList=column(); markerPanel.addView(markerList); contents.addView(markerPanel);
         buildRangePanel(contents); details.addView(contents,new ScrollView.LayoutParams(-1,-2)); sheetBody.addView(details,new LinearLayout.LayoutParams(-1,-2));
         sheetOverlay.addView(sheetBody,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM)); root.addView(sheetOverlay,new FrameLayout.LayoutParams(-1,-1));
+        details.setOnScrollChangeListener((view,x,y,oldX,oldY)->bindVisibleMarkerFrames());
     }
 
     private void showSheet(String mode) { showSheet(mode,false); }
     private void showSheet(String mode,boolean dragging) {
         boolean fresh=sheetMode.isEmpty(),interrupted=sheetAnimator!=null;cancelSheetAnimation();
-        sheetMode=mode; sheetOverlay.setVisibility(View.VISIBLE); playerView.setControllerShowTimeoutMs(0); playerView.showController();
+        if(!"markers".equals(mode))clearMarkerFrames();
+        sheetMode=mode; if("markers".equals(mode)&&previewLoader!=null)previewLoader.pausePreparation(); sheetOverlay.setVisibility(View.VISIBLE); playerView.setControllerShowTimeoutMs(0); playerView.showController();
         menuPanel.setVisibility(View.GONE); markerPanel.setVisibility(View.GONE); rangePanel.setVisibility(View.GONE);
         if ("range".equals(mode)) { sheetTitle.setText("标记精彩片段"); rangePanel.setVisibility(View.VISIBLE); }
         else if ("markers".equals(mode)) { sheetTitle.setText("精彩标记"); markerPanel.setVisibility(View.VISIBLE); renderMarkers(); }
@@ -429,7 +438,7 @@ public final class PlayerActivity extends Activity {
                 info("单击","显示或隐藏控制"); info("双击左右","快退 / 快进 "+seekSeconds()+" 秒");
                 info("横向滑动","预览并调整播放位置"); info("中间上滑","打开视频信息");
                 info("两侧上下滑",getSharedPreferences("config",0).getBoolean("player_gestures",false)?"左侧亮度 · 右侧视频音量":"已关闭，可在设置开启");
-                info("精彩标记","轻点标记此刻，长按查看全部");
+                info("精彩标记","底栏标记此刻，顶栏“标记”查看列表");
             } else if ("info".equals(mode)) {
                 sheetTitle.setText("视频信息"); String name=video==null?"本地视频":video.optString("title","本地视频");
                 add(menuPanel,text(name,15,WHITE,true),10,16);
@@ -454,8 +463,9 @@ public final class PlayerActivity extends Activity {
     }
     private void info(String label,String value) { if (value.isEmpty()) return; add(menuPanel,text(label+"  "+value,13,MUTED,false),8,8); }
     private void closeSheet() { hideKeyboard();settleSheet(false,true); }
-    private float sheetTravel(){return Math.max(dp(80),sheetBody.getMeasuredHeight()+((FrameLayout.LayoutParams)sheetBody.getLayoutParams()).bottomMargin);}
-    private void setSheetOffset(float value){sheetOffset=Math.max(0,Math.min(sheetTravel(),value));sheetBody.setTranslationY(sheetOffset);sheetOverlay.setBackgroundColor(android.graphics.Color.argb(Math.round(102*(1-sheetOffset/sheetTravel())),0,0,0));}
+    private boolean sideDrawer(){return "markers".equals(sheetMode)&&getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;}
+    private float sheetTravel(){return Math.max(dp(80),sideDrawer()?sheetBody.getMeasuredWidth()+dp(12):sheetBody.getMeasuredHeight()+((FrameLayout.LayoutParams)sheetBody.getLayoutParams()).bottomMargin);}
+    private void setSheetOffset(float value){sheetOffset=Math.max(0,Math.min(sheetTravel(),value));sheetBody.setTranslationX(sideDrawer()?sheetOffset:0);sheetBody.setTranslationY(sideDrawer()?0:sheetOffset);sheetOverlay.setBackgroundColor(android.graphics.Color.argb(Math.round(102*(1-sheetOffset/sheetTravel())),0,0,0));}
     private void cancelSheetAnimation(){if(sheetAnimator!=null){ValueAnimator old=sheetAnimator;sheetAnimator=null;old.cancel();}}
     private void settleSheet(boolean open,boolean animate){
         cancelSheetAnimation();float target=open?0:sheetTravel();
@@ -466,18 +476,21 @@ public final class PlayerActivity extends Activity {
         animation.addListener(new AnimatorListenerAdapter(){@Override public void onAnimationEnd(Animator ended){if(sheetAnimator!=ended)return;sheetAnimator=null;finishSheetSettle(open);}});animation.start();
     }
     private void finishSheetSettle(boolean open){
-        if(open){sheetTitle.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);return;}
-        sheetMode="";sheetOverlay.setVisibility(View.GONE);sheetBody.setTranslationY(0);sheetOffset=0;
+        if(open){bindVisibleMarkerFrames();sheetTitle.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);return;}
+        clearMarkerFrames();sheetMode="";sheetOverlay.setVisibility(View.GONE);sheetBody.setTranslationY(0);sheetBody.setTranslationX(0);sheetOffset=0;
+        if(firstFrameRendered&&player!=null&&player.getPlaybackState()==Player.STATE_READY)previewLoader.prepare(player.getCurrentPosition());
         playerView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);resetControllerTimeout();
     }
     private void resetControllerTimeout() { playerView.setControllerShowTimeoutMs(scrubbing || !sheetMode.isEmpty()?0:2500); if (!scrubbing) playerView.showController(); }
     private void layoutSheet() {
         boolean landscape=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
-        int maxHeight=(int)(getResources().getDisplayMetrics().heightPixels*(landscape?.82f:.66f));
-        int width=landscape?Math.min(dp(440),getResources().getDisplayMetrics().widthPixels-dp(32)):-1;
-        FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(width,-2,Gravity.BOTTOM|(landscape?Gravity.END:Gravity.CENTER_HORIZONTAL));
+        boolean side=sideDrawer();
+        int maxHeight=side?getResources().getDisplayMetrics().heightPixels-dp(16):(int)(getResources().getDisplayMetrics().heightPixels*(landscape?.82f:.64f));
+        int width=landscape?Math.min(dp(side?360:440),getResources().getDisplayMetrics().widthPixels-dp(32)):-1;
+        FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(width,side?maxHeight:-2,Gravity.BOTTOM|(landscape?Gravity.END:Gravity.CENTER_HORIZONTAL));
         if (landscape) p.setMargins(dp(12),dp(8),dp(12),dp(8)); sheetBody.setLayoutParams(p);
-        ((ToolScrollView)details).maximumHeight=Math.max(dp(96),maxHeight-dp(94));
+        sheetHandle.setVisibility(side?View.GONE:View.VISIBLE);
+        ((ToolScrollView)details).maximumHeight=Math.max(dp(96),maxHeight-dp(side?74:94));
         details.setLayoutParams(new LinearLayout.LayoutParams(-1,-2)); details.requestLayout();
     }
 
@@ -598,32 +611,87 @@ public final class PlayerActivity extends Activity {
             main.post(()->{ if (!destroyed) { markers=saved; bookmarkPending=false; bookmarkButton.setEnabled(player!=null && !missing); renderMarkers(); showHint("已标记 · "+time(at)); } });
         } catch (RuntimeException failure) { main.post(()->{ if (!destroyed) { bookmarkPending=false; bookmarkButton.setEnabled(player!=null && !missing); toast("标记保存失败，请重试"); } }); } });
     }
-    private void renderMarkers() {
-        if (highlightTicks!=null) highlightTicks.setMarkers(markers,durationMs);
-        if (markerList==null) return; markerHeading.setText(markers.isEmpty()?"还没有标记":"已保存 · "+markers.size()); markerList.removeAllViews();
-        for (int i=0;i<Math.min(markers.size(),visibleMarkers);i++) {
-            JSONObject marker=markers.get(i); long at=markerStart(marker); String name=marker.optString("label");
-            String location=markerLocation(marker); LinearLayout line=row();
-            Button jump=button(location+"\n"+(name.isEmpty()?(marker.optLong("endMs")>at?"精彩片段":"精彩时刻"):name),false); jump.setGravity(Gravity.START|Gravity.CENTER_VERTICAL); jump.setMaxLines(2); jump.setTextSize(13);
-            jump.setContentDescription("跳转到 "+location+(name.isEmpty()?"":", "+name)); jump.setOnClickListener(v->{
-                if (player==null || missing) { toast("原视频当前无法打开，标记仍保留"); return; }
-                player.seekTo(at); positionMs=at; savePosition(); closeSheet();
-            }); line.addView(jump,new LinearLayout.LayoutParams(0,dp(56),1));
-            ImageButton more=new ImageButton(this); more.setImageResource(R.drawable.sp_player_more); more.setPadding(dp(10),dp(10),dp(10),dp(10)); more.setBackgroundColor(android.graphics.Color.TRANSPARENT);
-            more.setContentDescription("管理 "+location+" 的精彩标记"); more.setOnClickListener(v->markerMenu(marker)); line.addView(more,new LinearLayout.LayoutParams(dp(48),dp(56))); markerList.addView(line);
-        }
-        if (markers.size()>visibleMarkers) action(markerList,"显示更多标记",()->{ visibleMarkers+=40; renderMarkers(); });
+    private static final class MarkerFrame {
+        final ImageView image; final TextView placeholder; final long at; boolean requested;TimestampThumbnails.Binding binding;
+        MarkerFrame(ImageView image,TextView placeholder,long at){this.image=image;this.placeholder=placeholder;this.at=at;}
     }
+    private void clearMarkerFrames(){if(markerThumbnails!=null)markerThumbnails.clear();for(MarkerFrame frame:markerFrames){frame.requested=false;frame.binding=null;}}
+    private void bindVisibleMarkerFrames(){
+        if(destroyed||!resumed||!"markers".equals(sheetMode)||mediaUri==null||missing)return;
+        for(MarkerFrame frame:markerFrames){
+            android.graphics.Rect bounds=new android.graphics.Rect();
+            if(!frame.image.getGlobalVisibleRect(bounds)){
+                if(frame.binding!=null){frame.binding.cancel();frame.binding=null;}frame.requested=false;frame.image.setImageDrawable(null);frame.placeholder.setVisibility(View.VISIBLE);frame.placeholder.setText("画面待载入");continue;
+            }
+            if(frame.requested)continue;
+            frame.requested=true;frame.placeholder.setText("正在取帧");
+            frame.binding=markerThumbnails.load(mediaUri,frame.at,durationMs,bitmap->{
+                if(!markerFrames.contains(frame))return;frame.binding=null;frame.requested=bitmap!=null;
+                frame.image.setImageBitmap(bitmap);frame.placeholder.setVisibility(bitmap==null?View.VISIBLE:View.GONE);frame.placeholder.setText("暂无画面");
+            });
+        }
+    }
+    private void renderMarkers() {
+        if(highlightTicks!=null)highlightTicks.setMarkers(markers,durationMs);
+        if(markerListButton!=null){markerListButton.setText(markers.isEmpty()?"标记":"标记 "+markers.size());markerListButton.setContentDescription("打开精彩标记列表，已保存 "+markers.size()+" 个");}
+        if(markerList==null)return;clearMarkerFrames();markerFrames.clear();
+        markerHeading.setText(markers.isEmpty()?"还没有标记":"按时间排列 · "+markers.size()+" 个");markerList.removeAllViews();
+        if(markers.isEmpty())add(markerList,text("播放到喜欢的地方，点“标记此刻”。\n下次从这里直接回到那个画面。",13,MUTED,false),12,20);
+        for(int i=0;i<Math.min(markers.size(),visibleMarkers);i++){
+            JSONObject marker=markers.get(i);long at=markerStart(marker),end=marker.optLong("endMs");String name=marker.optString("label"),location=markerLocation(marker);
+            LinearLayout line=row();line.setPadding(0,dp(10),0,dp(10));
+            FrameLayout poster=new FrameLayout(this);poster.setBackground(shape(0xFF2A3035,8));poster.setClipToOutline(true);
+            ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);poster.addView(image,new FrameLayout.LayoutParams(-1,-1));
+            TextView placeholder=text("画面待载入",10,MUTED,false);placeholder.setGravity(Gravity.CENTER);poster.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));
+            LinearLayout.LayoutParams thumb=new LinearLayout.LayoutParams(dp(92),dp(56));thumb.rightMargin=dp(12);line.addView(poster,thumb);markerFrames.add(new MarkerFrame(image,placeholder,at));
+            LinearLayout labels=column();TextView clock=text(preciseTime(at)+(end>at?" — "+preciseTime(end):""),13,ACCENT,true);clock.setMaxLines(2);labels.addView(clock);
+            TextView label=text(name.isEmpty()?(end>at?"精彩片段":"精彩时刻"):name,14,WHITE,false);label.setMaxLines(1);label.setEllipsize(TextUtils.TruncateAt.END);add(labels,label,3,0);
+            TextView seconds=text(seconds(at)+" 秒"+(end>at?" · 片长 "+seconds(end-at)+" 秒":" · 时间点"),11,MUTED,false);add(labels,seconds,3,0);
+            line.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
+            Runnable jump=()->{
+                if(player==null||missing){toast("原视频当前无法打开，标记仍保留");return;}
+                player.seekTo(at);positionMs=at;savePosition();closeSheet();showHint("已跳到 "+preciseTime(at));
+            };
+            labels.setOnClickListener(v->jump.run());poster.setOnClickListener(v->jump.run());
+            labels.setFocusable(true);labels.setContentDescription("跳转到 "+preciseTime(at)+(name.isEmpty()?"":", "+name));UiTheme.press(labels);UiTheme.press(poster);
+            ImageButton more=new ImageButton(this);more.setImageResource(R.drawable.sp_player_more);more.setPadding(dp(10),dp(10),dp(10),dp(10));more.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+            more.setContentDescription("管理 "+location+" 的精彩标记");more.setOnClickListener(v->markerMenu(marker));line.addView(more,new LinearLayout.LayoutParams(dp(48),dp(56)));markerList.addView(line);
+            View divider=new View(this);divider.setBackgroundColor(0xFF30363B);markerList.addView(divider,new LinearLayout.LayoutParams(-1,dp(1)));
+        }
+        if(markers.size()>visibleMarkers)action(markerList,"显示更多标记",()->{visibleMarkers+=40;renderMarkers();});
+        if(!markers.isEmpty())add(markerList,text("画面取自标记时间附近 · 点画面或文字跳转",11,MUTED,false),12,4);
+        markerList.post(this::bindVisibleMarkerFrames);
+    }
+    private static String seconds(long ms){return java.math.BigDecimal.valueOf(ms,3).stripTrailingZeros().toPlainString();}
     private void markerMenu(JSONObject marker) {
-        String[] labels={"加入剪辑","重命名","删除标记"};
+        String[] labels={"加入剪辑","重命名","删除标记","编辑时间与名称"};
         new AlertDialog.Builder(this,android.R.style.Theme_Material_Dialog_Alert).setTitle(markerLocation(marker)).setItems(labels,(dialog,which)->{
             if (which==0) openMarkerInEditor(marker);
             else if (which==1) {
                 EditText input=new EditText(this); styleInput(input); input.setText(marker.optString("label")); input.setSelectAllOnFocus(true); input.setHint("标记名称"); input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(200)});
                 LinearLayout wrap=column(); wrap.setPadding(dp(24),dp(8),dp(24),0); wrap.addView(input,new LinearLayout.LayoutParams(-1,dp(48)));
                 new AlertDialog.Builder(this,android.R.style.Theme_Material_Dialog_Alert).setTitle("重命名标记").setView(wrap).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{ String label=input.getText().toString().trim(); updateMarker(()->store.renameMarker(marker.optLong("id"),label)); }).show();
-            } else updateMarker(()->store.deleteMarker(marker.optLong("id")));
+            } else if(which==2) new AlertDialog.Builder(this,android.R.style.Theme_Material_Dialog_Alert).setTitle("删除这个标记？").setMessage("只删除 "+markerLocation(marker)+" 的标记，原视频保持不变。").setNegativeButton("保留",null).setPositiveButton("删除标记",(d,w)->updateMarker(()->store.deleteMarker(marker.optLong("id")))).show();
+            else editMarker(marker);
         }).show();
+    }
+    private void editMarker(JSONObject marker){
+        LinearLayout fields=column();fields.setPadding(dp(24),dp(8),dp(24),0);
+        EditText name=new EditText(this),from=new EditText(this),to=new EditText(this);styleInput(name);styleInput(from);styleInput(to);
+        name.setText(marker.optString("label"));name.setHint("标记名称");name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(200)});
+        from.setText(preciseTime(markerStart(marker)));from.setSelectAllOnFocus(true);
+        boolean range=marker.optLong("endMs")>markerStart(marker);if(range)to.setText(preciseTime(marker.optLong("endMs")));
+        fields.addView(text("名称",12,MUTED,false));fields.addView(name);fields.addView(text(range?"起点（原片时间）":"时间点（原片时间）",12,MUTED,false));fields.addView(from);
+        if(range){fields.addView(text("终点",12,MUTED,false));fields.addView(to);}
+        TextView error=text("秒数或 分:秒，最多三位小数",12,MUTED,false);fields.addView(error);
+        AlertDialog dialog=new AlertDialog.Builder(this,android.R.style.Theme_Material_Dialog_Alert).setTitle("编辑标记").setView(fields).setNegativeButton("取消",null).setPositiveButton("保存",null).create();
+        dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            final long start,end;try{start=parseTime(from.getText().toString());end=range?parseTime(to.getText().toString()):0;long total=playbackDuration();if(start>total||total<=0||range&&(end<=start||end>total))throw new IllegalArgumentException();}
+            catch(IllegalArgumentException invalid){error.setText("请检查时间，不能超过原片时长。");return;}
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);String label=name.getText().toString().trim();
+            io.execute(()->{try{store.editMarker(videoId,marker.optLong("id"),start,end,label);List<JSONObject> saved=store.markers(videoId);main.post(()->{if(!destroyed){markers=saved;renderMarkers();dialog.dismiss();}});}
+            catch(RuntimeException failure){main.post(()->{if(!destroyed){error.setText("保存失败，输入已保留，请重试。");dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);}});}});
+        }));dialog.show();
     }
     private void updateMarker(Runnable operation) {
         io.execute(()->{ try { operation.run(); List<JSONObject> saved=store.markers(videoId); main.post(()->{ if (!destroyed) { markers=saved; renderMarkers(); } }); }
@@ -664,12 +732,12 @@ public final class PlayerActivity extends Activity {
             WindowInsetsController bars=getWindow().getInsetsController(); if (bars!=null) { bars.hide(WindowInsets.Type.systemBars()); bars.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE); }
         }
     }
-    @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); fullscreen=config.orientation==Configuration.ORIENTATION_LANDSCAPE; immersive(); if (!sheetMode.isEmpty()) {cancelSheetAnimation();canvasSheetDrag=false;recycleCanvasVelocity();layoutSheet();sheetBody.post(()->{if(!sheetMode.isEmpty())setSheetOffset(0);});} if (scrubbing) positionPreview(scrubPosition); }
+    @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); fullscreen=config.orientation==Configuration.ORIENTATION_LANDSCAPE; immersive(); if (!sheetMode.isEmpty()) {cancelSheetAnimation();canvasSheetDrag=false;recycleCanvasVelocity();layoutSheet();sheetBody.post(()->{if(!sheetMode.isEmpty()){setSheetOffset(0);bindVisibleMarkerFrames();}});} if (scrubbing) positionPreview(scrubPosition); }
     @Override protected void onStart() { super.onStart(); started=true; ensurePlayer(); }
-    @Override protected void onResume() { super.onResume(); resumed=true; ensurePlayer(); if (player!=null) player.setPlayWhenReady(shouldPlay); immersive(); }
+    @Override protected void onResume() { super.onResume(); resumed=true; ensurePlayer(); if (player!=null) player.setPlayWhenReady(shouldPlay); markerList.post(this::bindVisibleMarkerFrames);immersive(); }
     @Override protected void onPause() {
         cancelCanvasGesture();cancelSheetAnimation();if(!sheetMode.isEmpty())settleSheet(true,false);
-        if (player!=null) { shouldPlay=player.getPlayWhenReady(); savePosition(); } resumed=false; releasePlayer(); super.onPause();
+        clearMarkerFrames();if (player!=null) { shouldPlay=player.getPlayWhenReady(); savePosition(); } resumed=false; releasePlayer(); super.onPause();
     }
     @Override protected void onStop() { started=false; releasePlayer(); super.onStop(); }
     @Override protected void onSaveInstanceState(Bundle state) {
@@ -677,7 +745,7 @@ public final class PlayerActivity extends Activity {
         state.putBoolean("fill_video",fillVideo); state.putBoolean("should_play",resumed && player!=null?player.getPlayWhenReady():shouldPlay); state.putBoolean("range_open","range".equals(sheetMode));
         state.putString("range_start",rangeStart.getText().toString()); state.putString("range_end",rangeEnd.getText().toString()); state.putString("range_name",rangeName.getText().toString()); super.onSaveInstanceState(state);
     }
-    @Override protected void onDestroy() { cancelSheetAnimation();recycleCanvasVelocity();releasePlayer(); destroyed=true; loadGeneration++; coverGeneration++; releaseEnterTransition(); if (transitionCover!=null) {transitionCover.animate().cancel();transitionCover.setImageDrawable(null);} previewLoader.release(); main.removeCallbacksAndMessages(null); io.execute(store::close); io.shutdown(); super.onDestroy(); }
+    @Override protected void onDestroy() { cancelSheetAnimation();recycleCanvasVelocity();releasePlayer(); destroyed=true; loadGeneration++; coverGeneration++; releaseEnterTransition(); if (transitionCover!=null) {transitionCover.animate().cancel();transitionCover.setImageDrawable(null);} previewLoader.release(); markerThumbnails.release(); main.removeCallbacksAndMessages(null); io.execute(store::close); io.shutdown(); super.onDestroy(); }
     private void handleBack() { if (!sheetMode.isEmpty()) closeSheet(); else finishPlayback(); }
     @Override public void onBackPressed() { handleBack(); }
 
@@ -715,7 +783,7 @@ public final class PlayerActivity extends Activity {
         @Override public boolean dispatchTouchEvent(MotionEvent event){
             if(event.getActionMasked()==MotionEvent.ACTION_DOWN){
                 cancelSheetAnimation();downX=event.getX();downY=event.getY();startOffset=sheetOffset;dragging=false;
-                float top=sheetBody.getTop()+sheetBody.getTranslationY();inside=downY>=top&&downX>=sheetBody.getLeft()&&downX<=sheetBody.getRight();
+                float top=sheetBody.getTop()+sheetBody.getTranslationY();inside=downY>=top&&downX>=sheetBody.getLeft()+sheetBody.getTranslationX()&&downX<=sheetBody.getRight()+sheetBody.getTranslationX();
                 header=inside&&downY<top+dp(78);eligible=inside&&(header||!"range".equals(sheetMode));
                 recycle();velocity=VelocityTracker.obtain();
             }
@@ -728,6 +796,7 @@ public final class PlayerActivity extends Activity {
         @Override public boolean onInterceptTouchEvent(MotionEvent event){
             if(event.getActionMasked()==MotionEvent.ACTION_MOVE&&eligible){
                 float dx=event.getX()-downX,dy=event.getY()-downY;
+                if(sideDrawer()){if(dragging||Math.abs(dx)>ViewConfiguration.get(PlayerActivity.this).getScaledTouchSlop()&&dx>0&&Math.abs(dx)>Math.abs(dy)*1.3f){dragging=true;setSheetOffset(startOffset+dx);return true;}return false;}
                 if(dragging||Math.abs(dy)>ViewConfiguration.get(PlayerActivity.this).getScaledTouchSlop()&&Math.abs(dy)>Math.abs(dx)*1.3f&&(header||dy>0&&!details.canScrollVertically(-1))){dragging=true;setSheetOffset(startOffset+dy);return true;}
             }
             return false;
@@ -735,8 +804,8 @@ public final class PlayerActivity extends Activity {
         @Override public boolean onTouchEvent(MotionEvent event){
             if(event.getPointerCount()>1){if(dragging)settleSheet(true,true);dragging=false;eligible=false;return true;}
             if(dragging){
-                if(event.getActionMasked()==MotionEvent.ACTION_MOVE)setSheetOffset(startOffset+event.getY()-downY);
-                else if(event.getActionMasked()==MotionEvent.ACTION_UP){float vy=0;if(velocity!=null){velocity.computeCurrentVelocity(1000);vy=velocity.getYVelocity();}settleSheet(!(vy>dp(650)||(vy>-dp(650)&&sheetOffset>sheetTravel()*.32f)),true);dragging=false;}
+                if(event.getActionMasked()==MotionEvent.ACTION_MOVE)setSheetOffset(startOffset+(sideDrawer()?event.getX()-downX:event.getY()-downY));
+                else if(event.getActionMasked()==MotionEvent.ACTION_UP){float vy=0;if(velocity!=null){velocity.computeCurrentVelocity(1000);vy=sideDrawer()?velocity.getXVelocity():velocity.getYVelocity();}settleSheet(!(vy>dp(650)||(vy>-dp(650)&&sheetOffset>sheetTravel()*.32f)),true);dragging=false;}
                 else if(event.getActionMasked()==MotionEvent.ACTION_CANCEL){settleSheet(true,true);dragging=false;}
                 return true;
             }

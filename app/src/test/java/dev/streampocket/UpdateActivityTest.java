@@ -67,7 +67,7 @@ public final class UpdateActivityTest {
         View view=activity.getWindow().getDecorView();int width=824,height=1830;
         view.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY));view.layout(0,0,width,height);
         Bitmap bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);view.draw(new Canvas(bitmap));File root=new File(System.getProperty("user.dir"));while(root!=null&&!new File(root,"settings.gradle").isFile())root=root.getParentFile();
-        if(root==null)throw new java.io.IOException("Project root unavailable");File dir=new File(root,"docs/design/assets/027-update");dir.mkdirs();
+        if(root==null)throw new java.io.IOException("Project root unavailable");File dir=new File(root,"docs/evidence/028/regression/027-update");dir.mkdirs();
         try(FileOutputStream output=new FileOutputStream(new File(dir,name))){assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG,100,output));}finally{bitmap.recycle();}
     }
 }
