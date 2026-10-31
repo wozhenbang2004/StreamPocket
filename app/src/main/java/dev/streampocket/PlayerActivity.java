@@ -64,14 +64,15 @@ import java.util.concurrent.Executors;
 @androidx.annotation.OptIn(markerClass=androidx.media3.common.util.UnstableApi.class)
 public final class PlayerActivity extends Activity {
     private static final int BLACK=0xFF0A0C0F, WHITE=0xFFFAFAFA, MUTED=0xFFA1A1AA, ACCENT=0xFF70B8A8,
-            PANEL=0xFF1C1C1E, LINE=0xFF3F3F46;
+            PANEL=0xFF17191D, LINE=0xFF343E43;
     private static final float[] SPEEDS={.5f,.75f,1f,1.25f,1.5f,2f};
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private LibraryStore store;
     private long videoId,positionMs,durationMs,lastQueuedPosition=Long.MIN_VALUE,measuredDuration;
     private int videoWidth,videoHeight,measuredWidth,measuredHeight,loadGeneration,visibleMarkers=40;
-    private float speed=1f;
+    private float speed=1f,heldSpeed=1f;
+    private boolean pressBoost;
     private boolean started,resumed,destroyed,loaded,missing,fullscreen,bookmarkPending,rangePending;
     private boolean shouldPlay=true,restoredPosition,playbackResourceClaimed,scrubbing;
     private String sheetMode="";
@@ -301,12 +302,14 @@ public final class PlayerActivity extends Activity {
         gestures=new GestureDetector(this,new GestureDetector.SimpleOnGestureListener() {
             @Override public boolean onDown(MotionEvent event) { return true; }
             @Override public boolean onSingleTapConfirmed(MotionEvent event) { if (sheetMode.isEmpty()) playerView.performClick(); return true; }
+            @Override public void onLongPress(MotionEvent event){if(gestureMode==0&&sheetMode.isEmpty()&&player!=null&&!missing&&player.getPlayWhenReady()){heldSpeed=player.getPlaybackParameters().speed;pressBoost=true;player.setPlaybackSpeed(2f);showHint("临时 2× · 松手恢复");}}
             @Override public boolean onDoubleTap(MotionEvent event) { seekRelative(event.getX()>=playerView.getWidth()/2f);return true; }
         });
         playerView.setOnTouchListener((view,event)->{
             if (!sheetMode.isEmpty()&&!canvasSheetDrag) return false;
             if (event.getPointerCount()>1) { cancelCanvasGesture(); return true; }
             int action=event.getActionMasked();
+            if(pressBoost){if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){endPressBoost();cancelCanvasGesture();gestures.onTouchEvent(event);}return true;}
             if (action==MotionEvent.ACTION_DOWN) {
                 recycleCanvasVelocity();canvasVelocity=VelocityTracker.obtain();canvasVelocity.addMovement(event);
                 gestureMode=0;gestureDownX=event.getX();gestureDownY=event.getY();gesturePosition=player==null?0:player.getCurrentPosition();gestureTarget=gesturePosition;
@@ -345,7 +348,8 @@ public final class PlayerActivity extends Activity {
         });
     }
     private void recycleCanvasVelocity(){if(canvasVelocity!=null){canvasVelocity.recycle();canvasVelocity=null;}}
-    private void cancelCanvasGesture() { if(canvasSheetDrag&&gestureMode==3&&sheetAnimator==null)settleSheet(false,true);canvasSheetDrag=false;recycleCanvasVelocity();gestureMode=0; if(scrubbing){scrubbing=false;hidePreview();resetControllerTimeout();} }
+    private void endPressBoost(){if(pressBoost){pressBoost=false;if(player!=null)player.setPlaybackSpeed(heldSpeed);}}
+    private void cancelCanvasGesture() { endPressBoost(); if(canvasSheetDrag&&gestureMode==3&&sheetAnimator==null)settleSheet(false,true);canvasSheetDrag=false;recycleCanvasVelocity();gestureMode=0; if(scrubbing){scrubbing=false;hidePreview();resetControllerTimeout();} }
     /** Highlight ticks are a visual overlay only; they never change media/ad state. */
     private final class HighlightTicks extends View {
         private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -418,7 +422,7 @@ public final class PlayerActivity extends Activity {
         menuPanel=column(); contents.addView(menuPanel);
         markerPanel=column(); LinearLayout markerActions=row();
         bookmarkButton=button("＋ 标记此刻",true); bookmarkButton.setContentDescription("标记此刻");bookmarkButton.setOnClickListener(v->addMarker());markerActions.addView(bookmarkButton,new LinearLayout.LayoutParams(0,dp(48),1));
-        Button range=button("标记精彩片段",false);range.setContentDescription("标记精彩片段");range.setOnClickListener(v->openRangePanel());markerActions.addView(range,new LinearLayout.LayoutParams(0,dp(48),1));markerPanel.addView(markerActions);
+        Button range=button("标记精彩片段",false);range.setContentDescription("标记精彩片段");range.setOnClickListener(v->openRangePanel());LinearLayout.LayoutParams rangeParams=new LinearLayout.LayoutParams(0,dp(48),1);rangeParams.leftMargin=dp(8);markerActions.addView(range,rangeParams);markerPanel.addView(markerActions);
         markerHeading=text("已保存的标记",13,MUTED,false); add(markerPanel,markerHeading,16,6); markerList=column(); markerPanel.addView(markerList); contents.addView(markerPanel);
         buildRangePanel(contents); details.addView(contents,new ScrollView.LayoutParams(-1,-2)); sheetBody.addView(details,new LinearLayout.LayoutParams(-1,-2));
         sheetOverlay.addView(sheetBody,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM)); root.addView(sheetOverlay,new FrameLayout.LayoutParams(-1,-1));
@@ -437,9 +441,7 @@ public final class PlayerActivity extends Activity {
             menuPanel.setVisibility(View.VISIBLE); menuPanel.removeAllViews();
             if ("speed".equals(mode)) {
                 sheetTitle.setText("播放倍速");
-                for (float option:SPEEDS) action(menuPanel,speedLabel(option)+(option==speed?"    当前":""),()->{
-                    speed=option; if (player!=null) player.setPlaybackSpeed(speed); speedButton.setText(speedLabel(speed)); closeSheet();
-                });
+                LinearLayout speeds=null;for(int n=0;n<SPEEDS.length;n++){if(n%3==0){speeds=row();add(menuPanel,speeds,8,0);}final float option=SPEEDS[n];Button choose=PocketButton.dark(this,speedLabel(option),option==speed?PocketButton.Role.PRIMARY:PocketButton.Role.QUIET);choose.setSelected(option==speed);choose.setContentDescription(speedLabel(option)+(option==speed?"，当前倍速":""));choose.setOnClickListener(v->{speed=option;if(player!=null)player.setPlaybackSpeed(speed);speedButton.setText(speedLabel(speed));closeSheet();});LinearLayout.LayoutParams cell=new LinearLayout.LayoutParams(0,dp(48),1);if(n%3>0)cell.leftMargin=dp(8);speeds.addView(choose,cell);}
             } else if ("aspect".equals(mode)) {
                 sheetTitle.setText("画面比例");
                 action(menuPanel,"完整显示"+(!fillVideo?"    当前":""),()->{fillVideo=false;applyAspect();closeSheet();});
@@ -448,7 +450,7 @@ public final class PlayerActivity extends Activity {
             } else if ("gestures".equals(mode)) {
                 sheetTitle.setText("播放手势");
                 info("单击","显示或隐藏控制"); info("双击左右","快退 / 快进 "+seekSeconds()+" 秒");
-                info("横向滑动","预览并调整播放位置"); info("中间上滑","打开视频信息");
+                info("横向滑动","预览并调整播放位置");info("按住画面","临时 2×，松手恢复原倍速"); info("中间上滑","打开视频信息");
                 info("两侧上下滑",getSharedPreferences("config",0).getBoolean("player_gestures",false)?"左侧亮度 · 右侧视频音量":"已关闭，可在设置开启");
                 info("精彩标记","底栏标记此刻，顶栏“标记”查看列表");
             } else if ("info".equals(mode)) {
@@ -459,11 +461,12 @@ public final class PlayerActivity extends Activity {
                 info("画面",videoWidth>0 && videoHeight>0?videoWidth+" × "+videoHeight:"未知");
                 if (video!=null) { info("文件名",video.optString("fileName","")); info("来源",sourceLabel(video.optString("source"))); }
             } else {
-                sheetTitle.setText("更多"); action(menuPanel,"精彩标记",()->showSheet("markers"));
-                clipButton=action(menuPanel,"截取片段",this::openEditor); clipButton.setEnabled(player!=null && !missing);
-                action(menuPanel,"视频信息",()->showSheet("info"));
-                action(menuPanel,"画面比例 · "+(fillVideo?"填充裁切":"完整显示"),()->showSheet("aspect"));
-                action(menuPanel,"播放手势",()->showSheet("gestures"));
+                sheetTitle.setText("更多操作");LinearLayout creative=actionGroup(menuPanel);
+                actionRow(creative,"精彩标记","查看、跳转和管理已保存的时间点","bookmark",()->showSheet("markers"));
+                clipButton=actionRow(creative,"截取片段","选择时间范围并导出","scissors",this::openEditor);clipButton.setEnabled(player!=null&&!missing);
+                LinearLayout viewing=actionGroup(menuPanel);actionRow(viewing,"视频信息","来源、画面与本地文件","info",()->showSheet("info"));
+                actionRow(viewing,"画面比例 · "+(fillVideo?"填充裁切":"完整显示"),"保留完整画幅，按需切换","crop",()->showSheet("aspect"));
+                actionRow(viewing,"播放手势","点击、滑动与按住倍速","gesture",()->showSheet("gestures"));
             }
         }
         layoutSheet(); details.scrollTo(0,0);
@@ -472,6 +475,13 @@ public final class PlayerActivity extends Activity {
         playerView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         if(fresh)setSheetOffset(sheetTravel());
         if(!dragging)settleSheet(true,fresh||interrupted);
+    }
+    private LinearLayout actionGroup(LinearLayout parent){LinearLayout group=column();group.setBackground(shape(0xFF24282D,16));add(parent,group,12,0);return group;}
+    private Button actionRow(LinearLayout parent,String label,String subtitle,String icon,Runnable run){
+        FrameLayout row=new FrameLayout(this);Button hit=PocketButton.dark(this,label,PocketButton.Role.QUIET);hit.setGravity(Gravity.TOP|Gravity.START);hit.setPadding(dp(58),dp(14),dp(36),dp(30));hit.setTextSize(14);hit.setContentDescription(label+"，"+subtitle);hit.setOnClickListener(v->run.run());row.addView(hit,new FrameLayout.LayoutParams(-1,-1));
+        ImageView glyph=new ImageView(this);glyph.setImageDrawable(new PocketIcon(icon,0xFFD8DFE2));glyph.setPadding(dp(8),dp(8),dp(8),dp(8));glyph.setBackground(shape(0xFF30363B,10));glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams gp=new FrameLayout.LayoutParams(dp(34),dp(34),Gravity.CENTER_VERTICAL|Gravity.START);gp.leftMargin=dp(12);row.addView(glyph,gp);
+        TextView hint=text(subtitle,12,MUTED,false);hint.setSingleLine(true);hint.setEllipsize(TextUtils.TruncateAt.END);hint.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams hp=new FrameLayout.LayoutParams(-1,dp(24),Gravity.BOTTOM);hp.leftMargin=dp(58);hp.rightMargin=dp(32);hp.bottomMargin=dp(9);row.addView(hint,hp);
+        ImageView arrow=new ImageView(this);arrow.setImageDrawable(new PocketIcon("chevron",MUTED));arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams ap=new FrameLayout.LayoutParams(dp(16),dp(16),Gravity.END|Gravity.CENTER_VERTICAL);ap.rightMargin=dp(14);row.addView(arrow,ap);parent.addView(row,new LinearLayout.LayoutParams(-1,dp(72)));return hit;
     }
     private void info(String label,String value) { if (value.isEmpty()) return; add(menuPanel,text(label+"  "+value,13,MUTED,false),8,8); }
     private void closeSheet() { hideKeyboard();settleSheet(false,true); }
@@ -734,7 +744,7 @@ public final class PlayerActivity extends Activity {
         if (player!=null) positionMs=Math.max(0,player.getCurrentPosition()); if (videoId<=0 || !loaded || missing || destroyed || lastQueuedPosition==positionMs) return;
         final long at=positionMs; lastQueuedPosition=at; io.execute(()->{ try { store.savePlayback(videoId,at); } catch (RuntimeException ignored) {} });
     }
-    private void releasePlayer() {
+    private void releasePlayer() { endPressBoost();
         main.removeCallbacks(checkpoint);main.removeCallbacks(videoStartupCheck); scrubbing=false; hidePreview(); if(previewLoader!=null) previewLoader.pausePreparation();
         if (transitionCover!=null && transitionCover.getDrawable()!=null) {transitionCover.animate().cancel();transitionCover.setAlpha(1f);transitionCover.setVisibility(View.VISIBLE);}
         if (player!=null) { savePosition(); playerView.setPlayer(null); ExoPlayer old=player; player=null; old.release(); }

@@ -83,6 +83,12 @@ public final class MarkerEditor028RenderTest {
             capture(a.getWindow().getDecorView(),915,412,"02-marker-drawer-landscape-native-view-reference-stills");
         }finally{call(session,"close",new Class<?>[0]);RuntimeEnvironment.setQualifiers("w412dp-h915dp-xhdpi");}
     }
+    @Test public void groupedPlaybackToolsAndCompactSpeedChoicesUseTheCurrentProductionViews()throws Exception{
+        Player022UiTest fixture=new Player022UiTest();fixture.setup();Object session=call(fixture,"open",new Class<?>[0]);PlayerActivity a=get(session,"a",PlayerActivity.class);
+        try{FrameLayout root=get(a,"root",FrameLayout.class);for(int i=root.getChildCount()-1;i>=0;i--){View child=root.getChildAt(i);if(child instanceof TextView&&((TextView)child).getText().toString().startsWith("界面时钟夹具"))root.removeView(child);}TextView referenceNote=note(a,"界面预览 · 参考静态帧 · 非真机");FrameLayout.LayoutParams noteParams=new FrameLayout.LayoutParams(-1,dp(a,24),Gravity.TOP);noteParams.topMargin=dp(a,60);root.addView(referenceNote,noteParams);referenceSurface(get(a,"playerView",PlayerView.class),5000);call(a,"showSheet",new Class<?>[]{String.class},"more");layout(a.getWindow().getDecorView(),412,915);idle();assertEquals(2,get(a,"menuPanel",ViewGroup.class).getChildCount());capture(a.getWindow().getDecorView(),412,915,"035-grouped-player-tools-reference-stills");
+            call(a,"showSheet",new Class<?>[]{String.class},"speed");layout(a.getWindow().getDecorView(),412,915);idle();assertEquals(2,get(a,"menuPanel",ViewGroup.class).getChildCount());capture(a.getWindow().getDecorView(),412,915,"035-compact-speed-reference-stills");
+        }finally{call(session,"close",new Class<?>[0]);}
+    }
     @Test public void editorPinsFinalActionsRendersFilmstripAndProvidesReviewBeforeExport()throws Exception{
         Context app=RuntimeEnvironment.getApplication();app.deleteDatabase("media-library.db");app.getSharedPreferences("config",0).edit().putBoolean("motion_enabled",false).putString("appearance_theme","light").commit();
         File media=new File(project(),"test-media/bbb-licensed-20s.mp4");assertTrue(media.isFile());

@@ -107,13 +107,16 @@ public final class LibraryStore implements Closeable {
 
     /** Sort is a fixed whitelist; user text is always a bound query parameter. */
     public List<JSONObject> listVideos(String query, String source, long collectionId, int limit, int offset, String order) {
+        return listVideosFromSources(query,source==null||source.isEmpty()||source.equals("all")?java.util.Collections.emptyList():java.util.Collections.singletonList(source),collectionId,limit,offset,order);
+    }
+    public List<JSONObject> listVideosFromSources(String query,List<String> sources,long collectionId,int limit,int offset,String order){
         StringBuilder where = new StringBuilder("1=1"); List<String> args = new ArrayList<>();
         if (query != null && !query.trim().isEmpty()) {
             where.append(" AND (title LIKE ? ESCAPE '\\' OR author LIKE ? ESCAPE '\\')");
             String pattern = "%" + query.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
             args.add(pattern); args.add(pattern);
         }
-        if (source != null && !source.isEmpty() && !source.equals("all")) { where.append(" AND source=?"); args.add(source); }
+        if(sources!=null&&!sources.isEmpty()){where.append(" AND source IN (");for(int n=0;n<sources.size();n++){if(n>0)where.append(',');where.append('?');args.add(sources.get(n));}where.append(')');}
         if (collectionId > 0) { where.append(" AND id IN (SELECT video_id FROM collection_video WHERE collection_id=?)"); args.add(String.valueOf(collectionId)); }
         List<JSONObject> videos = new ArrayList<>();
         try (Cursor c = helper.getReadableDatabase().query("video", null, where.toString(), args.toArray(new String[0]), null, null,

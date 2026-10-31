@@ -169,6 +169,16 @@ public final class PlayerHighlightUiTest {
         }
     }
 
+    @Test public void canvasHoldTemporarilyBoostsAndUpOrCancelRestoresTheExactSpeed()throws Exception{
+        ClockFixture clock=new ClockFixture(10000,100000);clock.speed=1.25f;
+        try(Session session=clockSession(null,clock)){
+            PlayerActivity a=session.activity;clock.requestedPlay=true;View canvas=field(a,"playerView",View.class);int w=824,h=1830;canvas.measure(View.MeasureSpec.makeMeasureSpec(w,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(h,View.MeasureSpec.EXACTLY));canvas.layout(0,0,w,h);
+            for(int end:new int[]{android.view.MotionEvent.ACTION_CANCEL,android.view.MotionEvent.ACTION_UP}){
+                long now=android.os.SystemClock.uptimeMillis();android.view.MotionEvent down=android.view.MotionEvent.obtain(now,now,android.view.MotionEvent.ACTION_DOWN,300,500,0);canvas.dispatchTouchEvent(down);down.recycle();Shadows.shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(700));assertEquals(2f,clock.speed,.001f);
+                android.view.MotionEvent finish=android.view.MotionEvent.obtain(now,android.os.SystemClock.uptimeMillis(),end,300,500,0);canvas.dispatchTouchEvent(finish);finish.recycle();assertEquals(1.25f,clock.speed,.001f);assertEquals(10000,clock.positionMs);
+            }
+        }
+    }
     @Test public void actualMissingFileStateUsesNeutralDisabledButtonsAndKeepsExitAvailable() throws Exception {
         provider.readable=false;
         ActivityController<PlayerActivity> controller=Robolectric.buildActivity(PlayerActivity.class,intent());
@@ -270,9 +280,11 @@ public final class PlayerHighlightUiTest {
         @Override public Object invoke(Object proxy,Method method,Object[] args) {
             assertEquals("All player controls must remain on main",Looper.getMainLooper(),Looper.myLooper());
             switch (method.getName()) {
+                case "getVolume": return 1f;
                 case "getCurrentPosition": return positionMs;
                 case "getDuration": return durationMs;
                 case "setPlaybackSpeed": speed=(Float)args[0]; return null;
+                case "getPlaybackParameters": return new androidx.media3.common.PlaybackParameters(speed);
                 case "seekTo": positionMs=(Long)args[args.length-1]; return null;
                 case "getPlayWhenReady": return requestedPlay;
                 case "setPlayWhenReady": requestedPlay=(Boolean)args[0]; return null;

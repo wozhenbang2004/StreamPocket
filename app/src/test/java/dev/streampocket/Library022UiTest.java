@@ -65,6 +65,18 @@ public final class Library022UiTest {
         for(File file:files)file.delete(); app.deleteDatabase("media-library.db");
     }
 
+    @Test public void multipleSourceFiltersApplyAtomicallySurviveReturnAndCanBeCleared()throws Exception{
+        seed("x","X 样例","https://x.com/a/status/1",1024,1920,1080);seed("b","B站样例","https://www.bilibili.com/video/BV1test",2048,1080,1920);seed("d","抖音样例","https://v.douyin.com/sample",3072,1080,1920);open();
+        field(library,"sourceButton",TextView.class).performClick();PocketDialog cancel=(PocketDialog)ShadowDialog.getLatestDialog();cancel.getListView().performItemClick(null,0,0);assertEquals(3,field(library,"grid",GridView.class).getAdapter().getCount());cancel.getButton(PocketDialog.BUTTON_NEGATIVE).performClick();await();assertEquals(3,field(library,"grid",GridView.class).getAdapter().getCount());
+        field(library,"sourceButton",TextView.class).performClick();PocketDialog apply=(PocketDialog)ShadowDialog.getLatestDialog();apply.getListView().performItemClick(null,0,0);apply.getListView().performItemClick(null,1,1);apply.getButton(PocketDialog.BUTTON_POSITIVE).performClick();await();assertEquals(2,field(library,"grid",GridView.class).getAdapter().getCount());assertEquals("2 个来源",field(library,"sourceButton",TextView.class).getText().toString());
+        Bundle saved=library.saveUiState();assertEquals(2,saved.getStringArrayList("sources").size());library.release();library=new VideoLibraryView(activity);library.restoreUiState(saved);activity.setContentView(library);library.refresh();await();assertEquals(2,field(library,"grid",GridView.class).getAdapter().getCount());
+        described(library,"清除视频库筛选条件").performClick();await();assertEquals(3,field(library,"grid",GridView.class).getAdapter().getCount());assertEquals(View.GONE,field(library,"clearFilters",TextView.class).getVisibility());
+    }
+    @Test public void coverFirstGridWithReferenceStillsKeepsPortraitAndLandscapeFrames()throws Exception{
+        seed("wide","Big Buck Bunny · 清晨的草地与溪流","https://x.com/reference/status/10",2216913,1920,1080);seed("tall","Big Buck Bunny · 竖屏裁切参考片段","https://www.bilibili.com/video/BVreference",1900000,1080,1920);open();
+        File project=new File(System.getProperty("user.dir"));while(project!=null&&!new File(project,"settings.gradle").isFile())project=project.getParentFile();assertNotNull(project);Bitmap frame=android.graphics.BitmapFactory.decodeFile(new File(project,"test-media/marker-editor-028/ref20-5000.png").getPath());assertNotNull(frame);
+        Bitmap portrait=Bitmap.createBitmap(frame,frame.getWidth()/3,0,Math.max(1,frame.getWidth()/3),frame.getHeight());capture("035-cover-first-reference-stills-not-device",Arrays.asList(portrait,frame));
+    }
     @Test public void mediaMetadataViewModeAndSearchAreCompactAndPersistent() throws Exception {
         seed("one","界面样例 · 山间一百秒的日落与云海，这是一条真实长度的中文标题","https://x.com/fixture/status/1",36L*1048576,1920,1080);
         seed("two","界面样例 · 安静房间的光线","https://www.bilibili.com/video/BV1fixture",268L*1048576,1080,1920);
@@ -171,8 +183,10 @@ public final class Library022UiTest {
         layout();
     }
     private void layout(){int w=Math.round(412*activity.getResources().getDisplayMetrics().density),h=Math.round(780*activity.getResources().getDisplayMetrics().density);library.measure(View.MeasureSpec.makeMeasureSpec(w,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(h,View.MeasureSpec.EXACTLY));library.layout(0,0,w,h);Shadows.shadowOf(Looper.getMainLooper()).idle();}
-    private void capture(String name) throws Exception {
+    private void capture(String name)throws Exception{capture(name,null);}
+    private void capture(String name,List<Bitmap> referenceStills) throws Exception {
         layout();java.util.concurrent.ThreadPoolExecutor thumbnailWorker=field(field(library,"covers",ThumbnailRepository.class),"worker",java.util.concurrent.ThreadPoolExecutor.class);thumbnailWorker.submit(()->{}).get(10,TimeUnit.SECONDS);Shadows.shadowOf(Looper.getMainLooper()).idle();File base=new File(System.getProperty("user.dir"));while(base!=null&&!new File(base,"settings.gradle").exists())base=base.getParentFile();File dir=new File(base,"docs/design/assets/022-library");dir.mkdirs();
+        if(referenceStills!=null){GridView grid=field(library,"grid",GridView.class);for(int n=0;n<grid.getChildCount()&&n<referenceStills.size();n++){ImageView cover=field(grid.getChildAt(n).getTag(),"cover",ImageView.class);field(library,"covers",ThumbnailRepository.class).cancel(cover);cover.setImageBitmap(referenceStills.get(n));assertEquals(ImageView.ScaleType.FIT_CENTER,cover.getScaleType());}}
         Bitmap bitmap=Bitmap.createBitmap(library.getWidth(),library.getHeight(),Bitmap.Config.ARGB_8888);library.draw(new Canvas(bitmap));try(FileOutputStream out=new FileOutputStream(new File(dir,name+".png"))){assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG,100,out));}bitmap.recycle();
     }
     private static View described(View root,String value){if(value.equals(String.valueOf(root.getContentDescription())))return root;if(root instanceof ViewGroup)for(int i=0;i<((ViewGroup)root).getChildCount();i++){View found=described(((ViewGroup)root).getChildAt(i),value);if(found!=null)return found;}return null;}

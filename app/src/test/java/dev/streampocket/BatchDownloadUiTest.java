@@ -46,6 +46,12 @@ public final class BatchDownloadUiTest {
         app.getSharedPreferences("config",0).edit().clear().putBoolean("app_update_auto_check",false).putBoolean("motion_enabled",false).commit();
         Field initialized=TaskStore.class.getDeclaredField("initialized");initialized.setAccessible(true);initialized.setBoolean(null,false);
     }
+    @Test public void liveLinkRecognitionKeepsTheDraftAndDoesNotStartParsing()throws Exception{
+        try(ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()){
+            MainActivity a=controller.get();String draft="分享 https://x.com/u/status/1 与 https://www.bilibili.com/video/BVtest";field(a,"input",EditText.class).setText(draft);Shadows.shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200));
+            assertTrue(field(a,"linkHint",TextView.class).getText().toString().contains("识别到 2 个链接"));assertEquals(draft,field(a,"input",EditText.class).getText().toString());assertTrue(inbox(a).jobs.isEmpty());assertNull(field(a,"activeInspection",Object.class));
+        }
+    }
     @Test public void batchContinuesAfterFailureClearsConsumedInputAndEnqueuesAllInOrder() throws Exception {
         ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class);
         try {

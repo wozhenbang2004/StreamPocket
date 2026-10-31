@@ -2,7 +2,14 @@
 
 Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下载到手机，再播放、整理、标记和剪辑。
 
-**当前版本：0.3.0** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.0/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.0)
+**当前版本：0.3.1** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.1/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.1)
+
+## 0.3.1 更新
+
+- 视频库突出封面，完整显示横竖画面；统一标题、时长、续播状态和辅助信息，减少画面上的操作干扰。
+- 来源筛选改为可多选的胶囊入口，支持应用、取消、清除及返回恢复；搜索、排序和视图切换统一在顶栏。
+- 播放器采用渐隐控制层，更多操作按标记剪辑与观看设置分组；倍速选择更紧凑，按住画面可临时 2×，松手恢复。
+- 新建下载压缩重复标题与间距，粘贴、解析操作并列，输入时显示识别到的链接数量；保留草稿、解析顺序和待下载结果。
 
 ## 0.3.0 更新
 
@@ -38,7 +45,7 @@ Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下
 
 ## 安装与更新
 
-1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.0) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
+1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.1) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
 2. 已安装拾流时直接覆盖更新，**不要卸载或清除数据**。新版沿用原安装身份和签名，保留账号、下载记录、视频库、标记与草稿。
 3. 应用内打开 **设置 → 高级与关于 → 应用更新**。确认下载后，本页显示进度，校验完成自动进入系统安装确认；最后一步由你确认。
 

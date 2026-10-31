@@ -109,7 +109,7 @@ public final class MediaWorkspaceUiTest {
 
             field(library,"sourceButton",TextView.class).performClick(); idle();
             PocketDialog filter=latestAlert(); capture(filter.getWindow().getDecorView(),"03-source-filter");
-            filter.getListView().performItemClick(null,1,1); awaitWorker(library);
+            filter.getListView().performItemClick(null,0,0);filter.getButton(PocketDialog.BUTTON_POSITIVE).performClick(); awaitWorker(library);
             grid=field(library,"grid",GridView.class);
             assertEquals(1,grid.getAdapter().getCount());
             JSONObject chosen=(JSONObject)grid.getAdapter().getItem(0);
