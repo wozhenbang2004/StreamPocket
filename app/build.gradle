@@ -1,0 +1,55 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'dev.streampocket'
+    compileSdk 35
+    buildToolsVersion '35.0.0'
+    defaultConfig {
+        applicationId 'dev.streampocket'
+        minSdk 24
+        targetSdk 35
+        versionCode 13
+        versionName '0.2.7-test'
+        manifestPlaceholders = [appLabel: '拾流']
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    packaging { jniLibs { useLegacyPackaging = true } }
+    buildFeatures { buildConfig true }
+    testOptions { unitTests { includeAndroidResources = true } }
+    buildTypes {
+        debug {
+            applicationIdSuffix '.localtest'
+            manifestPlaceholders = [appLabel: '拾流测试版']
+        }
+        release { minifyEnabled false }
+    }
+    lint { abortOnError true }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+    implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'
+    implementation 'io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1'
+    implementation 'io.github.junkfood02.youtubedl-android:aria2c:0.18.1'
+    implementation 'androidx.media3:media3-exoplayer:1.9.4'
+    implementation 'androidx.media3:media3-ui:1.9.4'
+    implementation 'androidx.media3:media3-transformer:1.9.4'
+    implementation 'androidx.media3:media3-effect:1.9.4'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+    testImplementation 'org.robolectric:robolectric:4.16.1'
+}
+
+// Keep test-only SDK artifact downloads on the active runtime's proxy and CA.
+// Values come from the build invocation; no machine-specific port is stored.
+tasks.withType(Test).configureEach {
+    ['http.proxyHost', 'http.proxyPort', 'https.proxyHost', 'https.proxyPort',
+     'javax.net.ssl.trustStore', 'javax.net.ssl.trustStorePassword'].each { key ->
+        def value = System.getProperty(key)
+        if (value != null) systemProperty key, value
+    }
+}

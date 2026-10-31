@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original compact layout using Media3's public controller ID contract. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent" android:layout_height="match_parent">
+    <LinearLayout android:id="@id/exo_top_controls"
+        android:layout_width="match_parent" android:layout_height="56dp"
+        android:layout_gravity="top" android:background="#66000000"
+        android:gravity="center_vertical" android:paddingStart="8dp" android:paddingEnd="8dp">
+        <ImageButton android:id="@+id/sp_player_back" android:layout_width="48dp" android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless" android:padding="10dp"
+            android:src="@drawable/sp_player_back" android:contentDescription="返回视频库" />
+        <TextView android:id="@+id/sp_player_title" android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:paddingStart="8dp" android:paddingEnd="8dp"
+            android:ellipsize="end" android:maxLines="1" android:textColor="#FAFAFA" android:textSize="14sp" />
+        <ImageButton android:id="@+id/sp_player_more" android:layout_width="48dp" android:layout_height="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless" android:padding="10dp"
+            android:src="@drawable/sp_player_more" android:contentDescription="更多播放操作" />
+    </LinearLayout>
+    <ImageButton android:id="@id/exo_play_pause" android:layout_width="56dp" android:layout_height="56dp"
+        android:layout_gravity="center" android:background="@drawable/sp_player_control_bg" android:padding="14dp"
+        android:src="@drawable/exo_styled_controls_play" android:contentDescription="播放或暂停" />
+    <LinearLayout android:id="@id/exo_bottom_bar" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_gravity="bottom" android:orientation="vertical" android:paddingStart="12dp"
+        android:paddingEnd="12dp" android:paddingBottom="8dp" android:background="#88000000">
+        <FrameLayout android:id="@+id/sp_player_progress_stack" android:layout_width="match_parent" android:layout_height="48dp">
+        <androidx.media3.ui.DefaultTimeBar android:id="@id/exo_progress" android:layout_width="match_parent"
+            android:layout_height="48dp" android:contentDescription="播放进度，拖动可预览"
+            app:bar_height="3dp" app:touch_target_height="48dp" app:scrubber_enabled_size="10dp"
+            app:scrubber_dragged_size="14dp" app:played_color="#70B8A8" app:scrubber_color="#70B8A8"
+            app:buffered_color="#99FFFFFF" app:unplayed_color="#4DFFFFFF" />
+        </FrameLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:gravity="center_vertical">
+            <LinearLayout android:id="@id/exo_time" android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:gravity="center_vertical" android:layoutDirection="ltr">
+                <TextView android:id="@id/exo_position" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="00:00" android:textSize="12sp" android:textColor="#FAFAFA" android:fontFeatureSettings="tnum" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text=" / " android:textSize="12sp" android:textColor="#A1A1AA" />
+                <TextView android:id="@id/exo_duration" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="00:00" android:textSize="12sp" android:textColor="#A1A1AA" android:fontFeatureSettings="tnum" />
+            </LinearLayout>
+            <TextView android:id="@+id/sp_player_speed" android:layout_width="60dp" android:layout_height="48dp"
+                android:gravity="center" android:text="1×" android:textSize="14sp" android:textColor="#FAFAFA"
+                android:background="?android:attr/selectableItemBackgroundBorderless" android:contentDescription="播放倍速" />
+            <ImageButton android:id="@+id/sp_player_marks" android:layout_width="48dp" android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless" android:padding="10dp"
+                android:src="@drawable/sp_player_bookmark" android:contentDescription="标记此刻，长按查看全部精彩标记" />
+            <ImageButton android:id="@+id/sp_player_rotate" android:layout_width="48dp" android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless" android:padding="10dp"
+                android:src="@drawable/sp_player_rotate" android:contentDescription="旋转屏幕" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>
