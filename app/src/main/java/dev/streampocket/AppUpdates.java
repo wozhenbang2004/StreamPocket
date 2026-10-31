@@ -71,6 +71,22 @@ final class AppUpdates {
     void notified(long code){prefs.edit().putLong("notified_code",code).apply();}
     boolean shouldNotifyReady(long code){return prefs.getLong("ready_notified_code",0)<code;}
     void notifiedReady(long code){prefs.edit().putLong("ready_notified_code",code).apply();}
+    static String installKey(UpdateOffer offer){return offer.code+":"+offer.sha256;}
+    boolean installerLaunched(UpdateOffer offer){return installKey(offer).equals(prefs.getString("installer_offer",""));}
+    boolean sourcePrompted(UpdateOffer offer){return installKey(offer).equals(prefs.getString("source_prompted",""));}
+    void markSourcePrompted(UpdateOffer offer){prefs.edit().putString("source_prompted",installKey(offer)).apply();}
+    boolean claimInstaller(UpdateOffer offer){
+        synchronized(lock){
+            if(busy||state.phase!=Phase.READY||state.offer!=offer||installerLaunched(offer))return false;
+            if(!prefs.edit().putString("installer_offer",installKey(offer)).commit()){
+                publish(new Snapshot(Phase.ERROR,offer,"无法保存安装状态，请重试更新",0));return false;
+            }
+            return true;
+        }
+    }
+    void retryInstaller(UpdateOffer offer){synchronized(lock){if(state.offer==offer)prefs.edit().remove("installer_offer").apply();}}
+    boolean ownsDownload(long id){synchronized(lock){return id>=0&&id==downloadId&&state.offer!=null;}}
+    void clearDownloadReminder(){UpdateDownloadReceiver.clearReminder(app);}
     void checkIfDue(){if(automatic()&&System.currentTimeMillis()-prefs.getLong("last_check",0)>24*60*60*1000L)check();}
 
     void check(){
@@ -108,13 +124,14 @@ final class AppUpdates {
                 File destination=new File(external,"app-updates/update-"+offer.code+".download");
                 if(destination.exists()&&!destination.delete())throw new IOException("无法准备更新下载目录");
                 DownloadManager.Request request=new DownloadManager.Request(Uri.parse(offer.url)).setTitle("拾流更新 "+offer.version)
-                        .setDescription("下载完成后，回到拾流确认覆盖安装")
+                        .setDescription("点此查看进度；完成后自动校验并进入系统安装确认")
                         .setMimeType("application/octet-stream")
                         .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
                         .setDestinationInExternalFilesDir(app,null,"app-updates/update-"+offer.code+".download");
                 id=downloads.enqueue(request);
                 synchronized(lock){if(token!=generation){downloads.remove(id);return;}
-                    if(!prefs.edit().putString("offer",offer.json().toString()).putLong("download_id",id).putBoolean("ready",false).commit())throw new IOException("无法保存更新下载状态");
+                    if(!prefs.edit().putString("offer",offer.json().toString()).putLong("download_id",id).putBoolean("ready",false)
+                            .remove("installer_offer").remove("source_prompted").commit())throw new IOException("无法保存更新下载状态");
                     downloadId=id;busy=false;publish(new Snapshot(Phase.DOWNLOADING,offer,"系统下载中；离开本页也会继续",0));}
             }catch(Exception failure){if(id>=0)downloads.remove(id);fail(token,offer,message(failure,"无法开始更新下载"));}
         });
@@ -130,7 +147,7 @@ final class AppUpdates {
                 long bytes=cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
                 if(bytes>offer.size){downloads.remove(id);throw new IOException("下载内容超过发布大小，已拒绝");}
                 if(status==DownloadManager.STATUS_SUCCESSFUL){
-                    publishIfCurrent(token,new Snapshot(Phase.VERIFYING,offer,"正在校验完整性、包名、版本与签名证书…",offer.size));
+                    publishIfCurrent(token,new Snapshot(Phase.VERIFYING,offer,"正在校验安装包，请稍候…",offer.size));
                     File stage=new File(app.getFilesDir(),"app-updates/staged.apk");stage.getParentFile().mkdirs();
                     try(InputStream input=new ParcelFileDescriptor.AutoCloseInputStream(downloads.openDownloadedFile(id))){copyAndHash(input,stage,offer,()->token!=generation);}
                     verifyArchive(stage,offer);if(token!=generation){stage.delete();return;}
@@ -138,7 +155,7 @@ final class AppUpdates {
                     if(!stage.renameTo(ready))throw new IOException("无法保存已校验安装包");
                     synchronized(lock){if(token!=generation){ready.delete();return;}downloadId=-1;
                         if(!prefs.edit().putLong("download_id",-1).putBoolean("ready",true).commit())throw new IOException("无法保存安装状态");}
-                    downloads.remove(id);finish(token,new Snapshot(Phase.READY,offer,"文件完整性与身份检查通过；最终验签由系统完成",offer.size));
+                    downloads.remove(id);finish(token,new Snapshot(Phase.READY,offer,"校验完成，将进入系统安装确认",offer.size));
                 }else if(status==DownloadManager.STATUS_FAILED){downloads.remove(id);throw new IOException("系统下载失败，请重新检查后下载");}
                 else finish(token,new Snapshot(status==DownloadManager.STATUS_PAUSED?Phase.PAUSED:Phase.DOWNLOADING,offer,
                         status==DownloadManager.STATUS_PAUSED?"系统等待网络或重试；可取消":"系统下载中；离开本页也会继续",Math.max(0,bytes)));
@@ -148,17 +165,18 @@ final class AppUpdates {
 
     void cancel(){
         final long id;
-        synchronized(lock){generation++;id=downloadId;downloadId=-1;busy=false;prefs.edit().remove("offer").remove("download_id").remove("ready").apply();publish(new Snapshot(Phase.IDLE,null,"已取消更新；现有应用与视频不受影响",0));}
+        synchronized(lock){generation++;id=downloadId;downloadId=-1;busy=false;prefs.edit().remove("offer").remove("download_id").remove("ready").remove("installer_offer").remove("source_prompted").apply();publish(new Snapshot(Phase.IDLE,null,"已取消更新；现有应用与视频不受影响",0));}
+        clearDownloadReminder();
         worker.execute(()->{if(id>=0)downloads.remove(id);discardFiles();});
     }
 
-    void prepareInstall(InstallReady callback){
+    void prepareInstall(UpdateOffer expected,InstallReady callback){
         final long token;final UpdateOffer offer;
-        synchronized(lock){if(busy||state.phase!=Phase.READY||state.offer==null)return;busy=true;token=generation;offer=state.offer;publish(new Snapshot(Phase.VERIFYING,offer,"安装前复核完整性与身份…",offer.size));}
+        synchronized(lock){if(busy||state.phase!=Phase.READY||state.offer==null||state.offer!=expected)return;busy=true;token=generation;offer=state.offer;publish(new Snapshot(Phase.VERIFYING,offer,"正在复核安装包…",offer.size));}
         worker.execute(()->{
             try {File file=readyFile();hashFile(file,offer,()->token!=generation);verifyArchive(file,offer);
                 if(token!=generation)return;finish(token,new Snapshot(Phase.READY,offer,"交由系统确认覆盖安装；不会卸载或清除数据",offer.size));
-                main.post(()->{if(token==generation&&state.phase==Phase.READY)callback.ready(file);});
+                main.post(()->{if(token==generation&&state.phase==Phase.READY&&state.offer==offer)callback.ready(file);});
             }catch(Exception failure){if(token==generation)discardFiles();fail(token,offer,message(failure,"安装包复核失败，请重新下载"));}
         });
     }

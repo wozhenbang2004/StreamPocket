@@ -34,6 +34,13 @@
         <activity android:name=".EditorActivity" android:exported="false"
             android:windowSoftInputMode="adjustResize" />
         <activity android:name=".UpdateActivity" android:exported="false" />
+        <receiver android:name=".UpdateDownloadReceiver" android:exported="true"
+            android:permission="android.permission.SEND_DOWNLOAD_COMPLETED_INTENTS">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_NOTIFICATION_CLICKED" />
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+            </intent-filter>
+        </receiver>
         <provider android:name=".UpdateFileProvider" android:authorities="${applicationId}.updates"
             android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_paths" />

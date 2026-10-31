@@ -31,7 +31,8 @@ public final class UpdateActivity extends Activity {
     private TextView status,version,notes,detail;
     private Button primary,cancel;
     private ProgressBar progress;
-    private boolean visible;
+    private boolean visible,preparingInstall;
+    private AlertDialog sourceDialog;
     private final AppUpdates.Listener listener=this::render;
     private final Runnable poll=new Runnable(){@Override public void run(){if(!visible)return;updates.refresh();main.postDelayed(this,1000);}};
 
@@ -51,7 +52,7 @@ public final class UpdateActivity extends Activity {
                 .setNegativeButton("保留",null).setPositiveButton("确认取消",(d,w)->updates.cancel()).show());
         notes=text("",14,false);notes.setTextIsSelectable(true);add(body,notes,24);
         Switch automatic=new Switch(this);automatic.setText("打开应用时检查更新");automatic.setTextColor(palette.ink);automatic.setTextSize(14);automatic.setMinHeight(dp(56));automatic.setChecked(updates.automatic());automatic.setOnCheckedChangeListener((v,checked)->updates.automatic(checked));add(body,automatic,28);
-        add(body,text("每天最多自动检查一次，只读取 GitHub 公开发布。不会自动下载、静默安装，也不是系统推送；安装由你在系统界面确认。",12,false),4);
+        add(body,text("每天最多自动检查一次。确认下载后，本页显示进度，完成校验后自动打开系统安装确认；最后一步仍由你确认。",12,false),4);
         Button source=button("查看 GitHub 发布页 ↗",false);add(body,source,14);source.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(UpdateOffer.REPO+"/releases")));}catch(RuntimeException unavailable){new AlertDialog.Builder(this).setMessage("没有可打开网页的应用").setPositiveButton("知道了",null).show();}});
         setContentView(root);UiTheme.systemBars(this);root.requestApplyInsets();render(updates.snapshot());
     }
@@ -59,21 +60,34 @@ public final class UpdateActivity extends Activity {
         AppUpdates.Snapshot state=updates.snapshot();
         if(state.phase==AppUpdates.Phase.AVAILABLE&&state.offer!=null){
             new AlertDialog.Builder(this).setTitle("下载 "+state.offer.version+"？")
-                    .setMessage("安装包 "+size(state.offer.size)+"，使用当前网络（可能产生移动流量）。下载完成后仍需确认覆盖安装，现有数据保留。")
+                    .setMessage("完整安装包 "+size(state.offer.size)+"，使用当前网络（可能产生移动流量）。本页显示下载进度，完成校验后自动打开手机系统安装确认，现有数据保留。")
                     .setNegativeButton("暂不下载",null).setPositiveButton("下载更新",(d,w)->updates.download()).show();
-        }else if(state.phase==AppUpdates.Phase.READY)install();
+        }else if(state.phase==AppUpdates.Phase.READY&&state.offer!=null){
+            if(updates.installerLaunched(state.offer))updates.retryInstaller(state.offer);
+            if(needsSourcePermission())requestSourcePermission(state.offer);else continueInstall(state);
+        }
         else if(!state.active()&&state.phase!=AppUpdates.Phase.CHECKING)updates.check();
     }
-    private void install(){
-        if(Build.VERSION.SDK_INT>=26&&!getPackageManager().canRequestPackageInstalls()){
-            new AlertDialog.Builder(this).setTitle("允许拾流请求安装更新")
-                    .setMessage("需要在系统设置中允许此来源。不会自动安装；返回本页后请再次点击安装。不要卸载旧版本。")
-                    .setNegativeButton("暂不",null).setPositiveButton("打开系统设置",(d,w)->{
-                        try{startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+getPackageName())));}
-                        catch(RuntimeException unavailable){showInstallError();}
-                    }).show();return;
-        }
-        updates.prepareInstall(file->{if(!visible||isFinishing()||isDestroyed())return;launchInstaller(file);});
+    private boolean needsSourcePermission(){return Build.VERSION.SDK_INT>=26&&!getPackageManager().canRequestPackageInstalls();}
+    private void requestSourcePermission(UpdateOffer offer){
+        if(sourceDialog!=null||!visible)return;updates.markSourcePrompted(offer);
+        sourceDialog=new AlertDialog.Builder(this).setTitle("允许拾流请求安装更新")
+                .setMessage("请在系统设置中允许此来源。开启后返回，本页会继续校验并打开系统安装确认，不必再点安装。最终仍由你确认，不要卸载旧版本。")
+                .setNegativeButton("暂不",null).setPositiveButton("打开系统设置",(d,w)->{
+                    try{startActivityForResult(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+getPackageName())),72);}
+                    catch(RuntimeException unavailable){showInstallError();}
+                }).create();
+        sourceDialog.setOnDismissListener(d->{sourceDialog=null;render(updates.snapshot());});sourceDialog.show();
+    }
+    private void continueInstall(AppUpdates.Snapshot state){
+        if(!visible||isFinishing()||isDestroyed()||preparingInstall||state.phase!=AppUpdates.Phase.READY||state.offer==null||updates.installerLaunched(state.offer))return;
+        if(needsSourcePermission()){if(!updates.sourcePrompted(state.offer))requestSourcePermission(state.offer);return;}
+        UpdateOffer offer=state.offer;preparingInstall=true;
+        updates.prepareInstall(offer,file->{
+            preparingInstall=false;
+            if(!visible||isFinishing()||isDestroyed())return;
+            if(updates.claimInstaller(offer))launchInstaller(file);
+        });
     }
     private void launchInstaller(File file){
         try{
@@ -87,19 +101,27 @@ public final class UpdateActivity extends Activity {
             .setMessage("安装包已保留，可返回后重试或检查此来源的安装权限。现有应用和数据未删除。")
             .setPositiveButton("知道了",null).show();}
     private void render(AppUpdates.Snapshot state){
-        if(status==null)return;if(visible&&state.phase==AppUpdates.Phase.READY&&state.offer!=null)updates.notifiedReady(state.offer.code);status.setText(state.message);boolean offered=state.offer!=null;
+        if(status==null)return;if(!state.active())preparingInstall=false;if(visible)updates.clearDownloadReminder();
+        if(visible&&state.phase==AppUpdates.Phase.READY&&state.offer!=null)updates.notifiedReady(state.offer.code);status.setText(state.message);boolean offered=state.offer!=null;
         version.setVisibility(offered?View.VISIBLE:View.GONE);detail.setVisibility(offered?View.VISIBLE:View.GONE);notes.setVisibility(offered?View.VISIBLE:View.GONE);
-        if(offered){version.setText(state.offer.version+" · "+size(state.offer.size));detail.setText("GitHub 正式发布 · arm64 · 同包名、同签名覆盖升级");notes.setText("更新内容\n\n"+(state.offer.notes.isEmpty()?"此版本未提供更新说明。":state.offer.notes));}
+        if(offered){version.setText(state.offer.version+" · "+size(state.offer.size));detail.setText("完整安装包 · 覆盖更新，保留现有数据");notes.setText("更新内容\n\n"+(state.offer.notes.isEmpty()?"此版本未提供更新说明。":state.offer.notes));}
         boolean downloading=state.phase==AppUpdates.Phase.DOWNLOADING||state.phase==AppUpdates.Phase.PAUSED;
         progress.setVisibility(downloading||state.phase==AppUpdates.Phase.VERIFYING||state.phase==AppUpdates.Phase.CHECKING?View.VISIBLE:View.GONE);
-        progress.setIndeterminate(!downloading||!offered);if(downloading&&offered){progress.setProgress((int)Math.min(1000,state.downloaded*1000/state.offer.size));detail.setText(size(state.downloaded)+" / "+size(state.offer.size));}
+        progress.setIndeterminate(!downloading||!offered);if(downloading&&offered){int percent=(int)Math.min(100,state.downloaded*100/state.offer.size);progress.setProgress((int)Math.min(1000,state.downloaded*1000/state.offer.size));progress.setContentDescription("更新下载 "+percent+"%");detail.setText(percent+"% · "+size(state.downloaded)+" / "+size(state.offer.size));}
+        boolean ready=state.phase==AppUpdates.Phase.READY&&offered;
+        boolean launched=ready&&updates.installerLaunched(state.offer),permission=ready&&needsSourcePermission();
+        if(ready)status.setText(launched?"已打开系统安装确认；取消后可在这里重新打开":permission?"需要允许此来源，开启后返回会自动继续":"校验完成，正在衔接系统安装确认…");
+        primary.setVisibility(ready&&!launched&&!permission?View.GONE:View.VISIBLE);
         primary.setEnabled(!downloading&&state.phase!=AppUpdates.Phase.CHECKING&&state.phase!=AppUpdates.Phase.VERIFYING);
         primary.setAlpha(primary.isEnabled()?1f:.5f);
-        primary.setText(state.phase==AppUpdates.Phase.AVAILABLE?"下载更新":state.phase==AppUpdates.Phase.READY?"交给系统安装":state.phase==AppUpdates.Phase.CHECKING?"正在检查…":state.phase==AppUpdates.Phase.VERIFYING?"正在校验…":downloading?"等待下载完成":"检查更新");
+        primary.setText(state.phase==AppUpdates.Phase.AVAILABLE?"下载更新":launched?"重新打开系统确认":permission?"允许此来源":state.phase==AppUpdates.Phase.CHECKING?"正在检查…":state.phase==AppUpdates.Phase.VERIFYING?"正在校验…":downloading?"下载完成后自动继续":"检查更新");
         cancel.setVisibility(state.active()?View.VISIBLE:View.GONE);cancel.setText(state.phase==AppUpdates.Phase.READY?"删除安装包":"取消下载");
+        continueInstall(state);
     }
-    @Override protected void onResume(){super.onResume();visible=true;updates.listen(listener);main.post(poll);}
+    @Override protected void onResume(){super.onResume();visible=true;updates.clearDownloadReminder();updates.listen(listener);main.post(poll);}
     @Override protected void onPause(){visible=false;updates.unlisten(listener);main.removeCallbacks(poll);super.onPause();}
+    @Override protected void onDestroy(){if(sourceDialog!=null)sourceDialog.dismiss();super.onDestroy();}
+    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==71||request==72)render(updates.snapshot());}
     private TextView text(String value,int size,boolean bold){TextView view=new TextView(this);view.setText(value);view.setTextSize(size);view.setTextColor(bold?palette.ink:palette.muted);view.setLineSpacing(dp(3),1);if(bold)view.setTypeface(null,Typeface.BOLD);return view;}
     private Button button(String label,boolean primary){Button b=new Button(this);b.setText(label);b.setAllCaps(false);b.setTextSize(14);b.setTextColor(primary?palette.surface:palette.ink);b.setMinHeight(dp(48));GradientDrawable shape=new GradientDrawable();shape.setColor(primary?palette.accent:palette.surface);shape.setCornerRadius(dp(12));b.setBackground(shape);UiTheme.press(b);return b;}
     private void add(LinearLayout parent,View child,int top){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,child instanceof Button?dp(50):-2);p.topMargin=dp(top);parent.addView(child,p);}

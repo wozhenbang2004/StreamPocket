@@ -16,6 +16,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONObject;
 import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -34,6 +35,7 @@ import static org.junit.Assert.*;
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @LooperMode(LooperMode.Mode.PAUSED)
 public final class UpdateActivityTest {
+    @Before public void resetManager()throws Exception{Field f=AppUpdates.class.getDeclaredField("instance");f.setAccessible(true);f.set(null,null);Field cache=FileProvider.class.getDeclaredField("sCache");cache.setAccessible(true);((java.util.Map<?,?>)cache.get(null)).clear();}
     @After public void closeWorker()throws Exception{AppUpdates u=AppUpdates.get(RuntimeEnvironment.getApplication());ExecutorService worker=(ExecutorService)field(u,"worker");worker.shutdown();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));}
     @Test public void noReleaseShowsHonestStateAndNeverOffersInstallation()throws Exception{
         Context app=RuntimeEnvironment.getApplication();app.getSharedPreferences("app_updates",0).edit().clear().commit();
@@ -61,13 +63,28 @@ public final class UpdateActivityTest {
             try{FileProvider.getUriForFile(app,app.getPackageName()+".updates",new File(app.getFilesDir(),"accounts/private-fixture"));fail("Private accounts must never be shared");}catch(IllegalArgumentException expected){}
         }
     }
+    @Test public void visibleDownloadProgressExplainsAutomaticVerificationAndSystemConfirmation()throws Exception{
+        Context app=RuntimeEnvironment.getApplication();app.getSharedPreferences("app_updates",0).edit().clear().putBoolean("automatic",false).commit();
+        JSONObject manifest=new JSONObject().put("schemaVersion",1).put("versionCode",900).put("versionName","0.2.11 · 界面示例").put("packageName",BuildConfig.APPLICATION_ID)
+                .put("abi","arm64-v8a").put("minSdk",24).put("apkAssetName",UpdateOffer.APK).put("apkSize",67000000).put("apkSha256","a".repeat(64)).put("signingCertificateSha256","b".repeat(64));
+        UpdateOffer offer=new UpdateOffer(manifest,"v0.2.11","下载更新时在应用内显示进度；校验完成后进入系统安装确认。\n\n此处为界面示例数据，不代表已发布更新。",UpdateOffer.REPO+"/releases/download/v0.2.11/"+UpdateOffer.APK);
+        AppUpdates updates=AppUpdates.get(app);set(updates,"state",new AppUpdates.Snapshot(AppUpdates.Phase.DOWNLOADING,offer,"正在下载更新 · 72%",48240000));
+        try(ActivityController<UpdateActivity> controller=Robolectric.buildActivity(UpdateActivity.class).create().start().resume()){
+            UpdateActivity activity=controller.get();Shadows.shadowOf(Looper.getMainLooper()).idle();
+            assertEquals(720,((android.widget.ProgressBar)field(activity,"progress")).getProgress());
+            assertEquals("下载完成后自动继续",((Button)field(activity,"primary")).getText());
+            assertFalse(((Button)field(activity,"primary")).isEnabled());assertEquals(View.VISIBLE,((Button)field(activity,"cancel")).getVisibility());
+            render(activity,"030-update-progress-native-view.png");
+        }
+    }
     private static Object field(Object target,String name)throws Exception{Field f=target.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(target);}
     private static void set(Object target,String name,Object value)throws Exception{Field f=target.getClass().getDeclaredField(name);f.setAccessible(true);f.set(target,value);}
     private static void render(UpdateActivity activity,String name)throws Exception{
         View view=activity.getWindow().getDecorView();int width=824,height=1830;
         view.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY));view.layout(0,0,width,height);
         Bitmap bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);view.draw(new Canvas(bitmap));File root=new File(System.getProperty("user.dir"));while(root!=null&&!new File(root,"settings.gradle").isFile())root=root.getParentFile();
-        if(root==null)throw new java.io.IOException("Project root unavailable");File dir=new File(root,"docs/evidence/028/regression/027-update");dir.mkdirs();
+        if(root==null)throw new java.io.IOException("Project root unavailable");File dir=new File(root,"app/build/reports/view-fixtures/030-update");dir.mkdirs();
+        android.graphics.Paint label=new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);label.setColor(0xFF64716F);label.setTextSize(22);new Canvas(bitmap).drawText("Android View 渲染 · 示例状态 · 非真机",40,height-34,label);
         try(FileOutputStream output=new FileOutputStream(new File(dir,name))){assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG,100,output));}finally{bitmap.recycle();}
     }
 }

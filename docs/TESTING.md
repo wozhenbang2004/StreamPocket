@@ -1,56 +1,19 @@
-# Testing
-
-## Android checks
+# 开发检查
 
 ```bash
-./gradlew testDebugUnitTest lintDebug assembleDebug
+./gradlew testDebugUnitTest lintDebug
 ```
 
-JUnit 4.13.2, JSON-java 20240303 and Robolectric 4.16.1 are test-only dependencies. Robolectric/native View rendering is not proof of physical-device decoding, account login, installation or complete functional acceptance. No final all-green full regression or end-to-end public-update installation is claimed for this snapshot.
-
-Focused update checks:
+可按修改范围运行指定测试：
 
 ```bash
 ./gradlew testDebugUnitTest \
   --tests dev.streampocket.AppUpdatesTest \
-  --tests dev.streampocket.UpdateActivityTest
+  --tests dev.streampocket.UpdateActivityTest \
+  --tests dev.streampocket.UpdateFlow030Test \
+  --tests dev.streampocket.LibraryPlaybackUiTest
 ```
 
-## Python plugins
+Robolectric 使用隔离文件、PackageManager / DownloadManager fixture 与原生 View 触摸分发，渲染输出在 `app/build/reports/view-fixtures/`。参考媒体来自 `test-media/`，保留署名，不写入生产库或 APK；测试参考帧不代表设备解码。`app/src/androidTest` 提供可选设备验收入口。
 
-Use a dedicated virtual environment:
-
-```bash
-python3 -m venv .venv
-# Activate .venv for your platform, then:
-python -m pip install yt-dlp==2026.10.26
-python tools/test_douyin_plugin.py
-python tools/test_transfer_plugin.py
-python tools/test_bili_transfer_plugin.py
-python tools/test_metadata_cli.py
-```
-
-These tests use synthetic metadata and mocked network methods. Passing them does not prove that a platform will accept a particular account or URL.
-
-## Pure Java rules
-
-Compile app/src/main/java/dev/streampocket/CoreRules.java and app/src/test/java/dev/streampocket/CoreRulesSelfTest.java with javac, then run dev.streampocket.CoreRulesSelfTest. This check does not require the Android SDK.
-
-## Optional isolated device runner
-
-app/src/androidTest/java/dev/streampocket/UiAcceptanceInstrumentation.java is an optional real-media runner. tools/qa-x86.init.gradle targets an x86_64 emulator and adds licensed test-media assets to the test APK only.
-
-**Use only a disposable emulator or dedicated test profile without personal data.** The runner intentionally writes synthetic library/task/preferences records into dev.streampocket.localtest. Never run it on an existing personal library. Its presence is not a claim that device scenarios passed. The isolated emulator build is not an upgrade APK.
-
-## Marker / clipping checks
-
-```bash
-./gradlew testDebugUnitTest \
-  --tests dev.streampocket.MarkerEditor028Test \
-  --tests dev.streampocket.MarkerEditor028RenderTest
-```
-
-The render test reads licensed stills from test-media/marker-editor-028 and the
-licensed excerpt from test-media. Its new images are written to
-app/build/reports/view-fixtures/028. Injected reference stills are visibly labeled
-as layout fixtures, not real-phone decode/playback/export evidence.
+插件测试需要 Python 3.9+ 与对应 yt-dlp 版本，命令及固定来源见 [DOUYIN_PATCH](DOUYIN_PATCH.md)。

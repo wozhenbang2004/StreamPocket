@@ -334,7 +334,8 @@ public final class MainActivity extends Activity {
             String error=task.optString("userError"),summary=error.isEmpty()?taskCompactDetail(task,known):error;
             if(!summary.isEmpty()){TextView detail=text(summary,12,error.isEmpty()?MUTED:palette.danger,false);detail.setMaxLines(2);detail.setEllipsize(android.text.TextUtils.TruncateAt.END);add(content,detail,5,0);}
             Button more=quietButton("⋯");more.setTextSize(22);more.setContentDescription("任务更多操作："+task.optString("title"));more.setPadding(0,0,0,0);more.setMinWidth(0);more.setOnClickListener(v->showTaskActions(v,task));item.addView(more,new LinearLayout.LayoutParams(dp(48),dp(48)));
-            item.setOnClickListener(v->{JSONObject current=TaskStore.get(this,id);if(current!=null)showTask(current);});item.setOnLongClickListener(v->{showTaskActions(v,task);return true;});
+            item.setContentDescription(task.optString("title")+("completed".equals(status)?"，点按播放，更多查看任务详情":"，点按查看进度及详情"));
+            item.setOnClickListener(v->{JSONObject current=TaskStore.get(this,id);if(current!=null){if("completed".equals(current.optString("status")))openFile(current,false);else showTask(current);}});item.setOnLongClickListener(v->{showTaskActions(v,task);return true;});
             if(pauseable||"paused".equals(status)){
                 final String expected="paused".equals(status)?"paused":"pauseable";
                 Button swipe=button("paused".equals(status)?"继续":"暂停",false);swipe.setTextColor(ACCENT);swipe.setBackground(shape(palette.accentSoft,12,0));swipe.setContentDescription("侧滑"+swipe.getText()+"："+task.optString("title"));
@@ -781,7 +782,7 @@ public final class MainActivity extends Activity {
         if(ready){if(!updates.shouldNotifyReady(state.offer.code))return;updates.notifiedReady(state.offer.code);}
         else{if(!updates.shouldNotify(state.offer.code))return;updates.notified(state.offer.code);}
         new AlertDialog.Builder(this).setTitle(ready?"拾流更新已下载":"拾流有新版本 "+state.offer.version)
-                .setMessage(ready?"可返回更新页确认覆盖安装，不会自动安装或清除数据。":"安装包 "+UpdateActivity.size(state.offer.size)+"。可查看更新内容后决定下载，不会自动安装。")
+                .setMessage(ready?"打开更新页后会自动复核并进入系统安装确认，最后一步由你确认。现有数据保留。":"安装包 "+UpdateActivity.size(state.offer.size)+"。可查看更新内容后决定下载，完成后进入系统安装确认。")
                 .setNegativeButton("稍后",null).setPositiveButton("查看更新",(d,w)->startActivity(new Intent(this,UpdateActivity.class))).show();
     };
     private final Runnable appUpdateCheck=()->AppUpdates.get(this).checkIfDue();

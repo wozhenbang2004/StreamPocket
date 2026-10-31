@@ -31,6 +31,7 @@ import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 import org.json.JSONObject;
@@ -39,8 +40,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.LinkedHashSet;
 import java.util.Set;
-import java.util.Date;
-import java.text.SimpleDateFormat;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -120,11 +119,11 @@ public final class VideoLibraryView extends LinearLayout {
         grid.setClipToPadding(false); grid.setPadding(0, dp(4), 0, dp(20)); grid.setSelector(android.R.color.transparent); grid.setAdapter(adapter);
         grid.setOnItemClickListener((parent, view, position, id) -> {
             if(position<0||position>=videos.size())return;
-            if(selectionMode) toggleSelected(videos.get(position)); else openPlayer(videos.get(position),view);
+            activateVideo(videos.get(position),view);
         });
         grid.setOnItemLongClickListener((parent, view, position, id) -> {
             if(position<0||position>=videos.size())return false;
-            if(!writing){selectionMode=true;toggleSelected(videos.get(position));} return true;
+            selectVideo(videos.get(position)); return true;
         });
         grid.setOnScrollListener(new AbsListView.OnScrollListener() {
             @Override public void onScrollStateChanged(AbsListView view, int scrollState) {}
@@ -258,11 +257,20 @@ public final class VideoLibraryView extends LinearLayout {
         }).setPositiveButton("新建合集", (dialog, which) -> createCollection(null)).setNegativeButton("取消", null).show();
     }
 
+    private void activateVideo(JSONObject video,View cell) {
+        if(released||writing)return;
+        if(selectionMode)toggleSelected(video);else openPlayer(video,cell);
+    }
+    private void selectVideo(JSONObject video) {
+        if(released||writing)return;selectionMode=true;toggleSelected(video);
+    }
     private void openPlayer(JSONObject video) { openPlayer(video,null); }
     private void openPlayer(JSONObject video,View cell) {
-        if (video.optBoolean("missing")) { message("文件已移动、删除或无法读取，库中的整理信息仍然保留。"); return; }
+        long id=video.optLong("id");if(id<=0){message("视频记录不存在，请刷新视频库。");return;}
         try {
-            Intent intent=new Intent().setClassName(activity,"dev.streampocket.PlayerActivity").putExtra("video_id",video.optLong("id"));
+            // The player re-reads this stable ID and its current local URI/access.
+            // A stale catalogue 'missing' snapshot must not block a restored file.
+            Intent intent=new Intent(activity,PlayerActivity.class).putExtra("video_id",id);
             ImageView cover=cell!=null&&cell.getTag() instanceof Holder?((Holder)cell.getTag()).cover:null;
             String path=covers.cachedCoverPath(video);
             if(cover!=null&&cover.getDrawable()!=null&&path!=null&&UiTheme.motionEnabled(activity)){
@@ -464,6 +472,10 @@ public final class VideoLibraryView extends LinearLayout {
                 LinearLayout cell=new LinearLayout(activity);cell.setOrientation(listMode?HORIZONTAL:VERTICAL);cell.setGravity(Gravity.CENTER_VERTICAL);cell.setPadding(dp(3),dp(3),dp(3),dp(3));
                 FrameLayout media=new FrameLayout(activity);media.setBackground(shape(palette.dark?0xff232b2d:0xffe6eae6,false,12));media.setClipToOutline(true);
                 ImageView cover=new ImageView(activity);cover.setScaleType(ImageView.ScaleType.FIT_CENTER);cover.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);media.addView(cover,new FrameLayout.LayoutParams(-1,-1));
+                ImageView play=new ImageView(activity);play.setImageDrawable(new LibraryIcon("play",Color.WHITE));play.setPadding(dp(9),dp(9),dp(9),dp(9));play.setBackground(shape(0xA6171a1c,false,20));play.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                media.addView(play,new FrameLayout.LayoutParams(dp(40),dp(40),Gravity.CENTER));
+                ProgressBar progress=new ProgressBar(activity,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);progress.setPadding(0,0,0,0);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(palette.accent));progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x66383E3C));progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                media.addView(progress,new FrameLayout.LayoutParams(-1,dp(3),Gravity.BOTTOM));
                 TextView time=text("",11,Color.WHITE,true);time.setGravity(Gravity.CENTER);time.setPadding(dp(6),dp(2),dp(6),dp(2));time.setBackground(shape(0xc2171a1c,false,5));
                 FrameLayout.LayoutParams overlay=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.END);overlay.setMargins(dp(6),dp(6),dp(6),dp(6));media.addView(time,overlay);
                 TextView checked=text("✓",13,Color.WHITE,true);checked.setGravity(Gravity.CENTER);checked.setBackground(shape(palette.accent,false,12));
@@ -480,32 +492,42 @@ public final class VideoLibraryView extends LinearLayout {
                 else {menu.setImageDrawable(new LibraryIcon("more",Color.WHITE));menu.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x44ffffff),new android.graphics.drawable.InsetDrawable(shape(0xB3171a1c,false,16),dp(8)),null));FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.END);media.addView(menu,mp);}
                 body.addView(top,new LinearLayout.LayoutParams(-1,-2));
                 TextView meta=text("",12,MUTED,false);meta.setMaxLines(2);meta.setEllipsize(TextUtils.TruncateAt.END);body.addView(meta,new LinearLayout.LayoutParams(-1,-2));
-                TextView context=text("",11,MUTED,false);context.setSingleLine(true);context.setEllipsize(TextUtils.TruncateAt.END);body.addView(context,new LinearLayout.LayoutParams(-1,listMode?dp(24):0));
+                TextView context=text("",12,MUTED,false);context.setSingleLine(true);context.setEllipsize(TextUtils.TruncateAt.END);body.addView(context,new LinearLayout.LayoutParams(-1,dp(24)));
                 cell.addView(body,new LinearLayout.LayoutParams(listMode?0:-1,-2,listMode?1:0));
-                holder=new Holder(cover,time,title,meta,context,menu,checked,listMode);cell.setTag(holder);recycled=cell;
+                holder=new Holder(cover,play,progress,time,title,meta,context,menu,checked,listMode);cell.setTag(holder);cell.setFocusable(true);UiTheme.press(cell);recycled=cell;
             }else holder=(Holder)recycled.getTag();
             JSONObject video=videos.get(position);long id=video.optLong("id");holder.title.setText(video.optString("title","视频"));
             holder.time.setText(video.optBoolean("missing")?"文件不可用":video.optLong("durationMs")>0?duration(video.optLong("durationMs")):"视频");
             int resolution=Math.min(video.optInt("width"),video.optInt("height"));
             holder.meta.setText(sourceLabel(video.optString("source"))+(resolution>0?" · "+resolution+"P":"")+" · "+(video.optLong("bytes")>0?MediaSize.format(video.optLong("bytes")):"大小待获取"));
-            holder.context.setText(video.optLong("playbackMs")>0?"看到 "+duration(video.optLong("playbackMs")):video.optLong("createdAt")>0?new SimpleDateFormat("yyyy年M月d日",Locale.getDefault()).format(new Date(video.optLong("createdAt"))):"本机保存");
+            long at=Math.max(0,video.optLong("playbackMs")),total=Math.max(0,video.optLong("durationMs"));boolean missing=video.optBoolean("missing");
+            boolean watched=total>0&&at>=total-500,resume=at>0&&!watched;
+            holder.context.setText(missing?"文件不可用 · 点按查看":watched?"已看完 · 点按重播":resume?"继续播放 · "+duration(at):"点按播放");
+            holder.play.setVisibility(!selectionMode&&!missing?VISIBLE:GONE);holder.progress.setVisibility(!missing&&at>0&&total>0?VISIBLE:GONE);
+            holder.progress.setProgress(total>0?(int)Math.min(1000,at*1000d/total):0);
             boolean selected=selectedIds.contains(id);holder.checked.setVisibility(selectionMode?VISIBLE:GONE);holder.checked.setText(selected?"✓":"");holder.checked.setTextColor(palette.dark&&selected?palette.bg:Color.WHITE);holder.checked.setBackground(shape(selected?palette.accent:0x99242a2b,false,12));
             recycled.setBackground(shape(selected?palette.accentSoft:Color.TRANSPARENT,false,16));
+            // A focusable overflow child suppresses GridView.onItemClick for the
+            // whole row. Own the actual row touch/keyboard action, leaving the
+            // overflow independent; keep AdapterView callbacks for accessibility.
+            final View cell=recycled;recycled.setOnClickListener(v->activateVideo(video,cell));
+            recycled.setOnLongClickListener(v->{selectVideo(video);return true;});
             holder.menu.setContentDescription("视频更多操作："+video.optString("title","视频"));holder.menu.setVisibility(selectionMode?GONE:VISIBLE);holder.menu.setOnClickListener(v->showActions(video));
             holder.cover.setTransitionName("sp-video-"+id);covers.load(holder.cover,id,video.optString("uri"),video.optString("thumbnailKey"),video.optLong("durationMs"));
-            recycled.setContentDescription(video.optString("title")+"，"+holder.meta.getText()+(selectionMode?(selected?"，已选择":"，未选择"):"，点按播放，长按多选"));return recycled;
+            recycled.setContentDescription(video.optString("title")+"，"+holder.meta.getText()+"，"+holder.context.getText()+(selectionMode?(selected?"，已选择":"，未选择"):"，长按多选"));return recycled;
         }
     }
     private static final class Holder {
-        final ImageView cover,menu;final TextView time,title,meta,context,checked;final boolean list;
-        Holder(ImageView cover,TextView time,TextView title,TextView meta,TextView context,ImageView menu,TextView checked,boolean list){this.cover=cover;this.time=time;this.title=title;this.meta=meta;this.context=context;this.menu=menu;this.checked=checked;this.list=list;}
+        final ImageView cover,play,menu;final ProgressBar progress;final TextView time,title,meta,context,checked;final boolean list;
+        Holder(ImageView cover,ImageView play,ProgressBar progress,TextView time,TextView title,TextView meta,TextView context,ImageView menu,TextView checked,boolean list){this.cover=cover;this.play=play;this.progress=progress;this.time=time;this.title=title;this.meta=meta;this.context=context;this.menu=menu;this.checked=checked;this.list=list;}
     }
     /** Small native line icons; glyph rendering never depends on an emoji font. */
     private static final class LibraryIcon extends Drawable {
         final String type;final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
         LibraryIcon(String type,int color){this.type=type;paint.setColor(color);paint.setStrokeWidth(1.7f);paint.setStrokeCap(Paint.Cap.ROUND);paint.setStyle(Paint.Style.STROKE);}
         @Override public void draw(Canvas canvas){int saved=canvas.save();canvas.translate(getBounds().left,getBounds().top);canvas.scale(getBounds().width()/24f,getBounds().height()/24f);
-            if(type.equals("search")){canvas.drawCircle(10,10,6.5f,paint);canvas.drawLine(15,15,21,21,paint);}
+            if(type.equals("play")){paint.setStyle(Paint.Style.FILL);android.graphics.Path triangle=new android.graphics.Path();triangle.moveTo(8,4);triangle.lineTo(21,12);triangle.lineTo(8,20);triangle.close();canvas.drawPath(triangle,paint);paint.setStyle(Paint.Style.STROKE);}
+            else if(type.equals("search")){canvas.drawCircle(10,10,6.5f,paint);canvas.drawLine(15,15,21,21,paint);}
             else if(type.equals("list")){for(int i=0;i<3;i++){float y=5+i*7;canvas.drawRoundRect(3,y,7,y+3,1,1,paint);canvas.drawLine(11,y+1.5f,21,y+1.5f,paint);}}
             else if(type.equals("grid")){for(int y=0;y<2;y++)for(int x=0;x<2;x++)canvas.drawRoundRect(3+x*11,3+y*11,10+x*11,10+y*11,1.5f,1.5f,paint);}
             else{paint.setStyle(Paint.Style.FILL);for(int i=0;i<3;i++)canvas.drawCircle(5+i*7,12,1.4f,paint);paint.setStyle(Paint.Style.STROKE);}canvas.restoreToCount(saved);}

@@ -1,44 +1,45 @@
 # 拾流 · StreamPocket
 
-Android 本地视频下载与媒体工作区：粘贴链接、选择可用画质、下载到手机，再播放、整理、标记和轻剪辑。
+Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下载到手机，再播放、整理、标记和剪辑。
 
-Local-first Android video downloader and media workspace. Parsing, downloading and media processing run on the device; no hosted resolver or application account is required.
-
-> **当前源码：0.2.9-test / versionCode 15。** 这是早期测试项目。自有源码使用 GPL-3.0-or-later。**测试 APK 与对应第三方源码材料见 [0.2.9 测试版 Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.9-test)（资产实际发布后可用）。** 保留官方 0.18.1 原生组件；固定源码、构建配方、补丁、许可和核对范围见 [发行说明](docs/RELEASE_STATUS.md)。这是 debuggable 测试包，不是生产稳定版；未完成真机安装、播放或剪辑成片验收。
+**当前版本：0.2.10** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.2.10/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.10)
 
 ## 功能
 
-- 链接与分享文本解析、源站实际可用画质、多视频逐项选择；使用 yt-dlp，抖音为[实验插件](docs/DOUYIN_PATCH.md)。
-- 本地 FIFO 下载队列、前台通知、暂停/继续、取消和同任务重试；1 / 4 / 8 路配置，实际连接数取决于协议与源站。
-- 区分视频、音频、合并、保存阶段；未知或估算大小明确标注，文件保存成功才显示完成。
-- 视频库：封面、搜索、来源/合集、网格/列表、多选分享与实际文件重命名；移除库记录不等于删除原文件。
-- Media3 播放器：完整画幅 FIT、横屏、倍速、上次位置、拖动缩略图；明确的标记列表入口、时间点/片段名称与附近的本地时间缩略图，竖屏底部面板、横屏侧抽屉。
-- 轻剪辑：可放大的双端时间轴、精确范围、与导出共享的真实选区预览；单片段确认后直接导出、草稿预览和按原片段身份调整范围、多片段排序与后台导出。成片另存，原片保留。
-- 本机账号会话：平台官方网页登录，分平台启用/暂停/清除；AndroidKeyStore AES/GCM 加密保存，任务使用临时快照，不读取其他应用 Cookie。
-- 跟随系统/浅色/深色、关闭动效、播放偏好、解析器更新与诊断。
-- [应用内更新](docs/APP_UPDATES.md)：前台检查 GitHub 稳定 Release、提示后下载、校验并交给系统确认安装。只有实际发布完整资产后才有可用更新；端到端手机安装尚未验证，不是系统推送或静默安装。
+- **本地下载**：支持 X/Twitter、哔哩哔哩、抖音及 yt-dlp 支持的网站；显示源站实际可用画质，多视频可逐项选择。
+- **下载管理**：队列、通知、真实进度、暂停/继续、取消和重试；支持 1 / 4 / 8 路配置，音视频分轨自动合并后保存。
+- **视频库**：封面与标题点按播放，网格/列表切换、搜索、来源和合集筛选；续播位置、播放进度、多选分享、文件重命名。
+- **本地播放**：完整画幅、横屏、倍速、上次位置、拖动缩略预览；时间点和片段标记可命名、跳转或送入剪辑。
+- **轻剪辑**：双端范围时间轴、选区放大、精确输入、片段预览、草稿排序与后台导出；成片另存，原片保留。
+- **账号管理**：在平台官方网页完成登录，分平台保存和启停；本机会话加密，不读取其他应用的 Cookie。
+- **应用内更新**：设置中检查新版本，在应用内查看下载百分比和大小；完成校验后自动打开手机系统安装确认。
+- **外观与偏好**：跟随系统/浅色/深色、动效开关、播放手势、快进秒数及下载内核更新。
 
-## 兼容性与限制
+解析、下载和媒体处理在本机运行，不需要应用账号或自建解析服务器。
 
-| 项目 | 范围 |
-| --- | --- |
-| 系统 | Android 7.0+，minSdk 24；compile/target SDK 35 |
-| ABI | 正常构建仅 arm64-v8a |
-| 测试包名 | dev.streampocket.localtest |
-| 维护者测试包 | debuggable=true；非生产稳定版，未做真机验收 |
-| 来源 | X/Twitter、哔哩哔哩及 yt-dlp 支持站点；不保证每个链接有效 |
-| 不包含 | DRM/付费权限绕过、验证码绕过、直播录制、主页批量、图片合集、边下边看 |
-| 设备限制 | 部分 WebP 原生依赖为 4 KB LOAD 对齐，16 KB 页面设备未验证 |
+## 安装与更新
 
-最高可用画质取决于源站、账号权限、地区、网络和编解码器，不能恢复平台压缩前的原片。并发数不是速度倍增保证。拖动小图来自附近关键帧，不保证帧精确或固定帧率；真实手机解码性能与完整账号登录仍需设备验证。实际剪辑成片、音画同步与手机硬件性能尚未验收。自动化测试不等于真机验收，见 [测试说明](docs/TESTING.md)。
+1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.10) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
+2. 已安装拾流时直接覆盖更新，**不要卸载或清除数据**。新版沿用原安装身份和签名，保留账号、下载记录、视频库、标记与草稿。
+3. 应用内打开 **设置 → 高级与关于 → 应用更新**。确认下载后，本页显示进度，校验完成自动进入系统安装确认；最后一步由你确认。
 
-## 构建
+更新使用完整安装包，不是差分补丁。需要开启安装来源权限时，开启后返回即可自动继续。可取消下载；取消系统安装不会删除现有应用。
 
-需要 JDK 17、Python 3.9+、Android SDK Platform 35 和 Build Tools 35.0.0。AGP 8.7.3、Gradle 8.9。
+## 使用
 
-1. 在 Android Studio 的 SDK Manager 安装上述 SDK。
-2. 设置 ANDROID_HOME，或在不提交的 local.properties 中设置 sdk.dir。
-3. 在仓库根目录执行：
+1. 复制视频链接或分享文案，打开“新建 → 粘贴 → 解析视频”，选择画质后下载；也可直接从其他应用分享文本到拾流。
+2. 完整视频保存到系统 `Download/StreamPocket`。在“视频库”点封面或标题播放，更多菜单中整理、重命名或分享。
+3. 需要账号时，进入“设置 → 账号管理”，在对应平台官方网页完成自己的登录后保存；登录页支持用户自行截屏扫码，请勿分享含私人信息的截图。
+4. 播放器的“标记”可查看与跳转时间点；剪辑中选择起止范围、预览片段，再确认名称并导出。
+
+源站、网络、地区与账号权限决定可下载内容和最高画质；不包含 DRM/付费权限绕过、验证码绕过、直播录制或主页批量。并发连接不等于速度倍增；预览小图和剪辑边界受关键帧、帧与音频采样影响。仅下载自己有权保存的内容，并遵守来源条款。
+
+## 从源码构建
+
+需要 JDK 17、Python 3.9+、Android SDK Platform 35 和 Build Tools 35.0.0；使用 AGP 8.7.3、Gradle 8.9。
+
+1. 在 Android Studio SDK Manager 安装 SDK；设置 `ANDROID_HOME`，或在不提交的 `local.properties` 中填写 `sdk.dir`。
+2. 在项目目录执行：
 
 ```bash
 # Linux / macOS
@@ -54,29 +55,12 @@ chmod +x gradlew
 .\gradlew.bat assembleDebug
 ```
 
-输出：app/build/outputs/apk/debug/app-debug.apk。自行构建使用本机 debug key，不能覆盖签名不同的既有测试包；不要为解决签名冲突直接卸载含有需要保留数据的应用。仓库不含维护者签名私钥、密码或个人会话。
+开发包输出为 `app/build/outputs/apk/debug/app-debug.apk`。发行构建为 `./gradlew assembleRelease`，需要配置自己的签名；仓库不包含签名私钥、密码或个人会话。包名 `dev.streampocket.localtest` 为已有安装保留，自行签名的包不能覆盖签名不同的官方包。
 
-gradlew 是短 Python 启动器，不是官方 Gradle Wrapper 二进制；它从 Gradle 官方下载 8.9 并核验固定 SHA-256。也可使用官方 Gradle 8.9。构建需访问 Google Maven、Maven Central 和 Gradle 官方分发地址。二进制再分发前请核对[第三方义务](THIRD_PARTY_NOTICES.md)。
+`gradlew` 是 Python 启动器，从 Gradle 官方下载固定版本并校验 SHA-256。更多开发检查见 [TESTING](docs/TESTING.md)。
 
-## 使用
+## 开源与第三方源码
 
-1. 复制链接，打开“新建 → 粘贴 → 解析视频”，选择画质并下载；也可从其他应用分享文本。
-2. 文件保存到系统 Download/StreamPocket，在视频库打开、整理或分享。
-3. 需要账号时，在“设置 → 账号管理”进入对应平台官方网页，完成自己的登录后保存。“已保存”不等于源站确认会话有效。官方登录页允许用户自行截屏扫码；请勿分享包含私人账号信息的截图。
-4. 播放器中点击“标记”查看列表，点缩略图/文字跳转，更多菜单可命名、调整、加入剪辑或确认后删除。
-5. 剪辑中选择起止点，必要时放大选区或精确输入；先预览片段，再确认范围/名称并导出。导出会重新编码，实际边界取决于帧/采样，不承诺任意毫秒帧精确；原片保留。
+自有部分使用 **GPL-3.0-or-later**，见 [LICENSE](LICENSE)。第三方依赖保留原许可与署名，见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。
 
-Android 10+ 保存自己的下载无需“所有文件”权限；Android 7–9 需要公共目录写入权限。通知被拒绝时，下载页仍展示状态。系统强制结束进程或限制后台运行后，可能需要重新打开应用手动重试。
-
-仅使用自己的账号和有权下载的内容，遵守来源条款与适用法律。应用直接访问源站/CDN，不提供远程代理解析或账号提权。
-
-## 目录与许可
-
-- app/src/main：应用、插件与固定官方 yt-dlp zipapp。
-- app/src/test、app/src/androidTest：回归测试与可选设备验收 runner。
-- tools：构建启动器和插件测试。
-- docs：使用、测试、依赖来源与发行说明。
-- test-media：获许可的测试媒体，仅用于隔离测试，不进入生产 APK。
-- licenses：第三方许可文本。
-
-自有部分使用 **GPL-3.0-or-later**，见 [LICENSE](LICENSE)。抖音插件保留上游 Unlicense；第三方材料保留各自条款，见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。感谢 yt-dlp、youtubedl-android、AndroidX Media3、Termux 及其依赖维护者。《Big Buck Bunny》测试素材由 Blender Foundation 提供，CC BY 3.0，见[署名和衍生说明](test-media/README.md)。本项目不使用 Seal / YTDLnis 品牌或复制其应用源码。
+本版本原生组件与 0.2.9 相同，对应源码、构建配方、补丁和许可证继续使用 [固定的八分片来源](docs/THIRD_PARTY_SOURCES.md)。应用源码为本 Release 标签的 GitHub Source code 归档；获许可的测试媒体及署名位于 [test-media](test-media/README.md)，不进入应用资源。

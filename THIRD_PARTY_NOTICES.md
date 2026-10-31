@@ -48,7 +48,7 @@ Direct inspection found:
 - QuickJS: binary identifies 2025-04-26; upstream uses MIT. Exact downstream build/source revision remains to be documented.
 - aria2: 1.37.0, GPL-2.0-or-later; its archive includes GnuTLS, Nettle, GMP, libxml2, c-ares, libiconv, libunistring and others.
 
-The [companion third-party source archive](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.2.9-test/StreamPocket-0.2.9-third-party-sources-arm64-20261031.zip) for the
+The [companion third-party source materials](docs/THIRD_PARTY_SOURCES.md) for the
 [v0.2.9-test Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.9-test) supplies the identified source releases,
 fixed Termux recipe archive, package patches, original wrapper source, captured
 configuration, build/archive-assembly instructions and license texts for these
@@ -68,5 +68,5 @@ licenses/ and SHA256SUMS for the material inventory and exact scope.
 The application-source tag and this companion archive must remain accessible
 with clear source directions beside the APK. A moving upstream link or this Java
 repository alone is not a substitute for the bundled source/build/notice material.
-Links are usable only after the corresponding Release assets are published.
-See [RELEASE_STATUS](docs/RELEASE_STATUS.md) for the test-build and device limits.
+The eight contiguous source parts remain available at the fixed Release URLs in the source guide.
+See [RELEASE_STATUS](docs/RELEASE_STATUS.md) for installation and source access.
