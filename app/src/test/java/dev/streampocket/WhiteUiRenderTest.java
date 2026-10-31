@@ -94,9 +94,15 @@ public final class WhiteUiRenderTest {
                     field(activity, "input", EditText.class).getText().toString());
             capture(activity.getWindow().getDecorView(), "05-home-with-link");
 
-            setField(activity, "parsing", true);
+            setField(activity, "inspector", (InspectionBatch.Inspector)(url, progress, cancelled) -> {
+                while (!cancelled.getAsBoolean()) Thread.sleep(10);
+                throw new InterruptedException();
+            });
+            invoke(activity, "analyze", new Class<?>[0]);
+            field(activity, "input", EditText.class).setText(draft);
             tab(activity, "new");
-            field(activity, "cancel", Button.class).performClick();
+            invoke(activity, "cancelAnalysis", new Class<?>[0]);
+            field(activity, "io", java.util.concurrent.ExecutorService.class).submit(() -> {}).get(5, java.util.concurrent.TimeUnit.SECONDS);
             idle();
             assertEquals("Cancellation must preserve the original link", draft,
                     field(activity, "input", EditText.class).getText().toString());
@@ -126,7 +132,8 @@ public final class WhiteUiRenderTest {
             AlertDialog choices = (AlertDialog) choice;
             choices.getListView().performItemClick(null, 1, 1);
             idle();
-            assertTrue("Selected quality must be shown without reopening choices", quality.getText().toString().contains("1080"));
+            assertNotNull("Selected quality must be shown on the current result without reopening choices",
+                    findButton(activity.getWindow().getDecorView(), "1080"));
             tab(activity,"settings");tab(activity,"new");
             assertNotNull("Inline quality survives navigation",findButton(activity.getWindow().getDecorView(),"1080"));
             assertEquals("Returning to the inline result must preserve the link", draft,

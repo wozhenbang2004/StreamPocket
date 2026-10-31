@@ -45,6 +45,7 @@ import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.Tracks;
 import androidx.media3.common.VideoSize;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -61,7 +62,7 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Full video canvas, one Media3 SurfaceView player, and tools disclosed in dark overlays. */
+/** Full video canvas, a window-composited Media3 player, and tools disclosed in dark overlays. */
 @androidx.annotation.OptIn(markerClass=androidx.media3.common.util.UnstableApi.class)
 public final class PlayerActivity extends Activity {
     private static final int BLACK=0xFF0A0C0F, WHITE=0xFFFAFAFA, MUTED=0xFFA1A1AA, ACCENT=0xFF70B8A8,
@@ -110,6 +111,11 @@ public final class PlayerActivity extends Activity {
     private boolean canvasSheetDrag;
     private float sheetOffset;
     private final Runnable clearHint=()->{ if (gestureHint!=null) gestureHint.setVisibility(View.GONE); };
+
+    private final Runnable videoStartupCheck=()->{
+        if(player==null||!resumed||firstFrameRendered||player.getPlaybackState()!=Player.STATE_READY||!player.getPlayWhenReady())return;
+        player.pause();shouldPlay=false;showError("视频画面未能启动，已暂停播放。请点击重试，或检查视频文件是否完整。",true);
+    };
 
     private final Runnable checkpoint=new Runnable() {
         @Override public void run() {
@@ -257,10 +263,18 @@ public final class PlayerActivity extends Activity {
         if (enterTransitionReleased) return; enterTransitionReleased=true; startPostponedEnterTransition();
     }
     private void revealVideo() {
-        releaseEnterTransition(); if (transitionCover==null) return; transitionCover.animate().cancel();
-        if (UiTheme.motionEnabled(this) && transitionCover.getVisibility()==View.VISIBLE)
-            transitionCover.animate().alpha(0f).setDuration(160).withEndAction(()->{transitionCover.setVisibility(View.GONE);transitionCover.setAlpha(1f);}).start();
-        else transitionCover.setVisibility(View.GONE);
+        releaseEnterTransition();main.removeCallbacks(videoStartupCheck);
+        // The first decoded frame owns visibility immediately. Shared-element and
+        // property animations must never keep a still image above a playing video.
+        if(transitionCover!=null){transitionCover.animate().cancel();transitionCover.setVisibility(View.GONE);transitionCover.setAlpha(1f);}
+    }
+    private void refreshPreviewPreparation() {
+        if(previewLoader==null)return;
+        // A ready/playing player already owns the native video decoder. Optional
+        // storyboard warming is allowed while paused, never on the first live frame.
+        if(player!=null&&resumed&&firstFrameRendered&&player.getPlaybackState()==Player.STATE_READY&&!player.getPlayWhenReady())
+            previewLoader.prepare(player.getCurrentPosition());
+        else previewLoader.pausePreparation();
     }
     private void finishPlayback() {
         savePosition(); releaseEnterTransition();
@@ -478,7 +492,7 @@ public final class PlayerActivity extends Activity {
     private void finishSheetSettle(boolean open){
         if(open){bindVisibleMarkerFrames();sheetTitle.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);return;}
         clearMarkerFrames();sheetMode="";sheetOverlay.setVisibility(View.GONE);sheetBody.setTranslationY(0);sheetBody.setTranslationX(0);sheetOffset=0;
-        if(firstFrameRendered&&player!=null&&player.getPlaybackState()==Player.STATE_READY)previewLoader.prepare(player.getCurrentPosition());
+        refreshPreviewPreparation();
         playerView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);resetControllerTimeout();
     }
     private void resetControllerTimeout() { playerView.setControllerShowTimeoutMs(scrubbing || !sheetMode.isEmpty()?0:2500); if (!scrubbing) playerView.showController(); }
@@ -571,24 +585,38 @@ public final class PlayerActivity extends Activity {
             current.addListener(new Player.Listener() {
                 @Override public void onPlaybackStateChanged(int state) {
                     if (player!=current) return;
-                    if (state==Player.STATE_READY) { persistActualMetadata(); setMediaActions(true); errorPanel.setVisibility(View.GONE); if(firstFrameRendered) previewLoader.prepare(current.getCurrentPosition()); }
+                    if (state==Player.STATE_READY) {
+                        if(rejectUnrenderableTracks(current.getCurrentTracks()))return;
+                        persistActualMetadata();setMediaActions(true);errorPanel.setVisibility(View.GONE);refreshPreviewPreparation();
+                        if(!firstFrameRendered){main.removeCallbacks(videoStartupCheck);main.postDelayed(videoStartupCheck,8000);}
+                    }
                     else if (state==Player.STATE_BUFFERING) previewLoader.pausePreparation();
                     else if (state==Player.STATE_ENDED) { shouldPlay=false; savePosition(); playerView.showController(); }
                 }
                 @Override public void onIsPlayingChanged(boolean playing) {
                     if (player!=current) return; main.removeCallbacks(checkpoint);
+                    refreshPreviewPreparation();
                     if (playing && resumed) { getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); main.postDelayed(checkpoint,5000); }
                     else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 }
-                @Override public void onRenderedFirstFrame() { if (player==current) { firstFrameRendered=true; revealVideo(); previewLoader.prepare(current.getCurrentPosition()); } }
+                @Override public void onPlayWhenReadyChanged(boolean playWhenReady,int reason) { if(player==current){
+                    main.removeCallbacks(videoStartupCheck);if(playWhenReady&&!firstFrameRendered)main.postDelayed(videoStartupCheck,8000);refreshPreviewPreparation();
+                } }
+                @Override public void onRenderedFirstFrame() { if (player==current) { firstFrameRendered=true; revealVideo(); refreshPreviewPreparation(); } }
+                @Override public void onTracksChanged(Tracks tracks) { if(player==current)rejectUnrenderableTracks(tracks); }
                 @Override public void onVideoSizeChanged(VideoSize size) { if (player==current) { videoWidth=size.width; videoHeight=size.height; persistActualMetadata(); } }
                 @Override public void onPlayerError(PlaybackException error) { if (player==current) {
                     main.removeCallbacks(checkpoint); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); showError(playbackError(error),true);
                 } }
             });
             firstFrameRendered=false; playerView.setPlayer(current); current.setMediaItem(MediaItem.fromUri(mediaUri)); current.setPlaybackSpeed(speed);
-            positionMs=durationMs>0 && positionMs>=durationMs-500?0:positionMs; current.seekTo(Math.max(0,positionMs)); current.prepare(); current.setPlayWhenReady(resumed && shouldPlay); playerView.showController();
+            positionMs=durationMs>0 && positionMs>=durationMs-500?0:positionMs; current.seekTo(Math.max(0,positionMs)); current.prepare(); current.setPlayWhenReady(resumed && shouldPlay); main.removeCallbacks(videoStartupCheck);main.postDelayed(videoStartupCheck,8000);playerView.showController();
         } catch (RuntimeException error) { releasePlayer(); showError("播放器初始化失败，请重试或返回视频库。",true); }
+    }
+    private boolean rejectUnrenderableTracks(Tracks tracks) {
+        if(tracks.isEmpty()||tracks.containsType(C.TRACK_TYPE_VIDEO)&&tracks.isTypeSelected(C.TRACK_TYPE_VIDEO))return false;
+        if(player!=null)player.pause();shouldPlay=false;
+        showError(tracks.containsType(C.TRACK_TYPE_VIDEO)?"当前设备无法选择此文件的视频轨，已暂停播放。":"此文件没有可播放的视频轨，已暂停播放。",true);return true;
     }
     private String playbackError(PlaybackException error) {
         if (error.errorCode==PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND || error.errorCode==PlaybackException.ERROR_CODE_IO_NO_PERMISSION) return "原视频无法读取，可能已删除或权限失效。精彩标记仍保留。";
@@ -596,7 +624,7 @@ public final class PlayerActivity extends Activity {
     }
     private void persistActualMetadata() {
         if (player==null) return; long previousDuration=durationMs,actual=player.getDuration(); if (actual!=C.TIME_UNSET && actual>0) durationMs=actual;
-        if (durationMs!=previousDuration && mediaUri!=null) { previewLoader.setSource(mediaUri,durationMs); if(firstFrameRendered && player.getPlaybackState()==Player.STATE_READY) previewLoader.prepare(player.getCurrentPosition()); }
+        if (durationMs!=previousDuration && mediaUri!=null) { previewLoader.setSource(mediaUri,durationMs); refreshPreviewPreparation(); }
         if (highlightTicks!=null) highlightTicks.setMarkers(markers,durationMs);
         if (durationMs==measuredDuration && videoWidth==measuredWidth && videoHeight==measuredHeight) return;
         measuredDuration=durationMs; measuredWidth=videoWidth; measuredHeight=videoHeight;
@@ -708,7 +736,7 @@ public final class PlayerActivity extends Activity {
         final long at=positionMs; lastQueuedPosition=at; io.execute(()->{ try { store.savePlayback(videoId,at); } catch (RuntimeException ignored) {} });
     }
     private void releasePlayer() {
-        main.removeCallbacks(checkpoint); scrubbing=false; hidePreview(); if(previewLoader!=null) previewLoader.pausePreparation();
+        main.removeCallbacks(checkpoint);main.removeCallbacks(videoStartupCheck); scrubbing=false; hidePreview(); if(previewLoader!=null) previewLoader.pausePreparation();
         if (transitionCover!=null && transitionCover.getDrawable()!=null) {transitionCover.animate().cancel();transitionCover.setAlpha(1f);transitionCover.setVisibility(View.VISIBLE);}
         if (player!=null) { savePosition(); playerView.setPlayer(null); ExoPlayer old=player; player=null; old.release(); }
         if (playbackResourceClaimed) { playbackResourceClaimed=false; MediaWorkload.playerStopped(); }

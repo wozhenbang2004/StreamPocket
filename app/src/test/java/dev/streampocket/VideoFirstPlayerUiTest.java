@@ -49,6 +49,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -192,6 +193,36 @@ public final class VideoFirstPlayerUiTest {
             assertEquals("A late worker frame cannot reopen the tooltip",View.GONE,bubble.getVisibility());
             assertNull(image.getDrawable());
         } finally { frames.finish.countDown(); }
+    }
+
+    @Test public void decodedFrameRemovesStillCoverWithoutDependingOnAnAnimationEnd() throws Exception {
+        try(Session session=openClockSession()){
+            PlayerActivity activity=session.activity;PlayerView surface=field(activity,"playerView",PlayerView.class);
+            assertTrue("Video composes in the same window as navigation/overlays",surface.getVideoSurfaceView() instanceof android.view.TextureView);
+            ImageView cover=field(activity,"transitionCover",ImageView.class);cover.setImageDrawable(new ColorDrawable(Color.RED));cover.setVisibility(View.VISIBLE);cover.setAlpha(1f);
+            activity.getSharedPreferences("config",0).edit().putBoolean("motion_enabled",true).commit();
+            invoke(activity,"revealVideo",new Class<?>[0]);cover.animate().cancel();
+            assertEquals("A still frame cannot cover the video even if an animation is cancelled",View.GONE,cover.getVisibility());assertEquals(1f,cover.getAlpha(),0);
+        }
+    }
+    @Test public void activePlaybackDoesNotAutomaticallyStartASecondNativeDecoder() throws Exception {
+        try(Session session=openClockSession()){
+            PlayerActivity activity=session.activity;ExoPlayer clock=field(activity,"player",ExoPlayer.class);ScrubPreviewLoader loader=field(activity,"previewLoader",ScrubPreviewLoader.class);
+            set(activity,"firstFrameRendered",true);clock.setPlayWhenReady(true);invoke(activity,"refreshPreviewPreparation",new Class<?>[0]);
+            assertFalse(field(loader,"preparationEnabled",Boolean.class));
+            clock.setPlayWhenReady(false);invoke(activity,"refreshPreviewPreparation",new Class<?>[0]);assertTrue(field(loader,"preparationEnabled",Boolean.class));
+            clock.setPlayWhenReady(true);invoke(activity,"refreshPreviewPreparation",new Class<?>[0]);assertFalse(field(loader,"preparationEnabled",Boolean.class));
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(600));drainPreview(loader);assertNull(field(loader,"decoder",Object.class));
+        }
+    }
+    @Test public void audioWithoutAVideoTrackNeverMasqueradesAsAPausedVideoFrame() throws Exception {
+        try(Session session=openClockSession()){
+            PlayerActivity activity=session.activity;ExoPlayer clock=field(activity,"player",ExoPlayer.class);clock.setPlayWhenReady(true);
+            androidx.media3.common.TrackGroup audio=new androidx.media3.common.TrackGroup(new androidx.media3.common.Format.Builder().setSampleMimeType("audio/mp4a-latm").build());
+            Tracks tracks=new Tracks(Collections.singletonList(new Tracks.Group(audio,false,new int[]{androidx.media3.common.C.FORMAT_HANDLED},new boolean[]{true})));
+            assertTrue((Boolean)invoke(activity,"rejectUnrenderableTracks",new Class<?>[]{Tracks.class},tracks));assertFalse(clock.getPlayWhenReady());
+            assertTrue(field(activity,"status",TextView.class).getText().toString().contains("没有可播放的视频轨"));assertEquals(View.GONE,field(activity,"transitionCover",ImageView.class).getVisibility());
+        }
     }
 
     private Session openClockSession() throws Exception {

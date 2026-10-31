@@ -30,7 +30,9 @@ public final class MainActivity extends Activity {
     private FrameLayout navigationFrame;
     private View navigationPill;
     private final Button[] destinations=new Button[4];
-    private final List<Engine.Media> inspectedMedia=new ArrayList<>();
+    private final InspectionInbox inspectionInbox=new InspectionInbox();
+    private final List<Engine.Media> inspectedMedia=inspectionInbox.media;
+    private InspectionInbox.Job activeInspection;
     private final Map<String,Integer> qualitySelections=new HashMap<>();
     private final Map<String,JSONObject> pendingRemoval=new LinkedHashMap<>();
     private Bundle libraryState;
@@ -51,7 +53,6 @@ public final class MainActivity extends Activity {
     private List<String> clipboardUrls=Collections.emptyList();
     private boolean foreground=false,clipboardCheckPending=false;
     private final Runnable checkClipboard=()->checkClipboardOffer();
-    private final ArrayList<String> failedInspectionUrls=new ArrayList<>();
     private InspectionBatch.Inspector inspector;
     private final ArrayList<Engine.Media> pendingBatch=new ArrayList<>();
     private boolean parsing=false, loginOpening=false, taskMenuOpen=false;
@@ -70,18 +71,19 @@ public final class MainActivity extends Activity {
         UiTheme.apply(this); super.onCreate(state);
         palette=UiTheme.get(this); BG=palette.bg;INK=palette.ink;MUTED=palette.muted;ACCENT=palette.accent;SURFACE=palette.surface;LINE=palette.line;
         artwork=new MediaArtwork(this); engine=new Engine(this);inspector=engine::inspect;
+        inspectionInbox.restore(getPreferences(0).getString("inspection_inbox",""));
+        try{JSONObject selections=new JSONObject(getPreferences(0).getString("inspection_quality","{}"));Iterator<String> keys=selections.keys();while(keys.hasNext()){String key=keys.next();qualitySelections.put(key,selections.optInt(key));}}catch(Exception ignored){}
         if(state!=null){
-            ArrayList<String> failed=state.getStringArrayList("inspection_failed");if(failed!=null)failedInspectionUrls.addAll(failed);
             lastInspectionMessage=state.getString("inspection_message","");lastInspectionDetails=state.getString("inspection_details","");
             libraryState=state.getBundle("library_state");queueFilter=state.getString("queue_filter","all");
             try{JSONObject selections=new JSONObject(state.getString("quality_selection","{}"));Iterator<String> keys=selections.keys();while(keys.hasNext()){String key=keys.next();qualitySelections.put(key,selections.optInt(key));}}catch(Exception ignored){}
-            try{org.json.JSONArray saved=new org.json.JSONArray(state.getString("inspection_media","[]"));for(int n=0;n<saved.length();n++)inspectedMedia.add(Engine.Media.fromJson(saved.getJSONObject(n)));}catch(Exception ignored){}
+            if(inspectedMedia.isEmpty())try{org.json.JSONArray saved=new org.json.JSONArray(state.getString("inspection_media","[]"));for(int n=0;n<saved.length();n++)inspectedMedia.add(Engine.Media.fromJson(saved.getJSONObject(n)));}catch(Exception ignored){}
         }
         draft=state==null?getPreferences(0).getString("draft",""):state.getString("draft","");
         tab=state==null?"new":state.getString("tab","new");
         UiTheme.systemBars(this);
         buildShell();
-        readShare(getIntent());
+        readShare(getIntent());main.post(this::startNextInspection);
     }
 
     private void buildShell() {
@@ -151,16 +153,16 @@ public final class MainActivity extends Activity {
         LinearLayout form=column();form.setPadding(dp(16),dp(12),dp(16),dp(16));form.setBackground(shape(SURFACE,16,0));
         linkEditor=column();form.addView(linkEditor,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout label=row();label.addView(text("视频链接",14,INK,true),new LinearLayout.LayoutParams(0,-2,1));
-        paste=quietButton("粘贴");paste.setMinWidth(0);paste.setTextColor(ACCENT);paste.setEnabled(!parsing);paste.setOnClickListener(v->pasteLink());label.addView(paste,new LinearLayout.LayoutParams(dp(60),dp(48)));linkEditor.addView(label);
+        paste=quietButton("粘贴");paste.setMinWidth(0);paste.setTextColor(ACCENT);paste.setEnabled(true);paste.setOnClickListener(v->pasteLink());label.addView(paste,new LinearLayout.LayoutParams(dp(60),dp(48)));linkEditor.addView(label);
         input=new EditText(this);input.setTextSize(14);input.setTextColor(INK);input.setHintTextColor(MUTED);
         input.setHint("粘贴一个或多个链接，也支持整段分享文案");input.setGravity(Gravity.TOP);
         input.setSingleLine(false);input.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_VARIATION_URI);input.setMinLines(2);input.setMaxLines(4);
-        input.setBackground(fieldBackground());input.setPadding(dp(12),dp(12),dp(12),dp(12));input.setText(draft);input.setEnabled(!parsing);input.setLineSpacing(dp(3),1);
-        input.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence a,int b,int c,int d){}public void onTextChanged(CharSequence a,int b,int c,int d){}public void afterTextChanged(android.text.Editable value){if(!parsing&&!value.toString().equals(draft)){draft=value.toString();if(parse!=null)parse.setEnabled(!draft.trim().isEmpty());}}});add(linkEditor,input,4,12);
-        parse=button(parsing?"正在解析…":"解析视频",true);parse.setEnabled(!parsing&&!draft.trim().isEmpty());parse.setOnClickListener(v->analyze());linkEditor.addView(parse,new LinearLayout.LayoutParams(-1,dp(48)));
-        cancel=quietButton("取消解析");cancel.setVisibility(parsing?View.VISIBLE:View.GONE);cancel.setOnClickListener(v->cancelAnalysis());linkEditor.addView(cancel,new LinearLayout.LayoutParams(-1,dp(48)));
-        feedback=text(parsing?"正在读取视频信息与可用画质…":lastInspectionMessage,12,MUTED,false);feedback.setTextIsSelectable(true);
-        feedback.setVisibility(parsing||!lastInspectionMessage.isEmpty()?View.VISIBLE:View.GONE);add(form,feedback,10,0);
+        input.setBackground(fieldBackground());input.setPadding(dp(12),dp(12),dp(12),dp(12));input.setText(draft);input.setEnabled(true);input.setLineSpacing(dp(3),1);
+        input.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence a,int b,int c,int d){}public void onTextChanged(CharSequence a,int b,int c,int d){}public void afterTextChanged(android.text.Editable value){if(!value.toString().equals(draft)){draft=value.toString();updateInspectionControls();}}});add(linkEditor,input,4,12);
+        parse=button(parsing?"加入解析队列":"解析链接",true);parse.setEnabled(!draft.trim().isEmpty());parse.setOnClickListener(v->analyze());linkEditor.addView(parse,new LinearLayout.LayoutParams(-1,dp(48)));
+        cancel=quietButton("取消解析");cancel.setVisibility(View.GONE);cancel.setOnClickListener(v->cancelAnalysis());linkEditor.addView(cancel,new LinearLayout.LayoutParams(-1,dp(48)));
+        feedback=text(lastInspectionMessage,12,MUTED,false);feedback.setTextIsSelectable(true);
+        feedback.setVisibility(!lastInspectionMessage.isEmpty()?View.VISIBLE:View.GONE);add(form,feedback,10,0);
         failureDetails=quietButton("查看 / 复制错误详情");failureDetails.setVisibility(!parsing&&!lastInspectionDetails.isEmpty()?View.VISIBLE:View.GONE);
         failureDetails.setOnClickListener(v->showInspectionDetails());form.addView(failureDetails,new LinearLayout.LayoutParams(-1,dp(48)));c.addView(form);
         inspectionResults=column();add(c,inspectionResults,16,0);renderInspection();
@@ -184,35 +186,51 @@ public final class MainActivity extends Activity {
 
     private void renderInspection() {
         if(inspectionResults==null)return;
-        boolean resolved=!inspectedMedia.isEmpty();if(linkEditor!=null)linkEditor.setVisibility(View.VISIBLE);if(homeExtras!=null)homeExtras.setVisibility(resolved?View.GONE:View.VISIBLE);
         clearArtwork(inspectionResults);inspectionResults.removeAllViews();
-        if(!failedInspectionUrls.isEmpty()&&!parsing){
-            Button retry=button("重试失败的 "+failedInspectionUrls.size()+" 个链接",false);
-            retry.setOnClickListener(v->analyzeUrls(new ArrayList<>(failedInspectionUrls),true));add(inspectionResults,retry,0,12);
+        boolean resolved=!inspectedMedia.isEmpty();if(homeExtras!=null)homeExtras.setVisibility(resolved||!inspectionInbox.jobs.isEmpty()?View.GONE:View.VISIBLE);
+        int waiting=inspectionInbox.count("queued"),failed=inspectionInbox.count("failed");
+        if(parsing||waiting>0||failed>0){
+            LinearLayout queue=row();TextView summary=text(parsing?(activeInspection!=null&&activeInspection.cancelled?"正在取消当前解析":"正在解析 · "+waiting+" 个等待")
+                    :waiting>0?waiting+" 个链接等待解析":failed+" 个链接解析失败",13,INK,true);
+            queue.addView(summary,new LinearLayout.LayoutParams(0,-2,1));
+            Button inspect=quietButton("查看队列");inspect.setTextSize(12);inspect.setTextColor(ACCENT);inspect.setOnClickListener(v->showInspectionQueue());queue.addView(inspect,new LinearLayout.LayoutParams(dp(88),dp(48)));add(inspectionResults,queue,0,4);
+            if(activeInspection!=null&&!activeInspection.message.isEmpty())add(inspectionResults,text(activeInspection.message,12,MUTED,false),0,8);
+            if(failed>0){LinearLayout retry=row();retry.addView(text(failed+" 个失败，可单独重试",12,MUTED,false),new LinearLayout.LayoutParams(0,-2,1));
+                Button all=quietButton("重试失败");all.setTextSize(12);all.setTextColor(ACCENT);all.setOnClickListener(v->{inspectionInbox.retryFailed();persistInspectionInbox();startNextInspection();renderInspection();});retry.addView(all,new LinearLayout.LayoutParams(dp(88),dp(48)));add(inspectionResults,retry,0,8);}
         }
         if(inspectedMedia.isEmpty())return;
-        LinearLayout heading=row();heading.addView(text("解析结果",14,INK,true),new LinearLayout.LayoutParams(0,-2,1));heading.addView(text(inspectedMedia.size()+" 个视频",12,MUTED,false));add(inspectionResults,heading,0,10);
-        if(inspectedMedia.size()>1){
-            Button all=button("全部加入队列（"+inspectedMedia.size()+"）",true);
-            all.setOnClickListener(v->enqueueBatch(new ArrayList<>(inspectedMedia)));add(inspectionResults,all,0,12);
-        }
+        LinearLayout heading=row();heading.addView(text("待下载 · "+inspectedMedia.size()+" 个视频",14,INK,true),new LinearLayout.LayoutParams(0,-2,1));
+        if(inspectedMedia.size()>1){Button all=quietButton("全部加入队列");all.setTextSize(12);all.setTextColor(ACCENT);all.setOnClickListener(v->enqueueBatch(new ArrayList<>(inspectedMedia)));heading.addView(all,new LinearLayout.LayoutParams(dp(112),dp(48)));}add(inspectionResults,heading,6,8);
         for(Engine.Media m:inspectedMedia){
-            LinearLayout item=column();item.setPadding(dp(14),dp(14),dp(14),dp(14));item.setBackground(shape(SURFACE,16,0));
-            LinearLayout media=row();ImageView image=cover(m.thumbnail,"inspect:"+m.url+":"+m.id,88,66);media.addView(image,new LinearLayout.LayoutParams(dp(88),dp(66)));
+            LinearLayout item=column();item.setPadding(dp(12),dp(12),dp(12),dp(12));item.setBackground(shape(SURFACE,12,0));
+            LinearLayout media=row();media.addView(cover(m.thumbnail,"inspect:"+m.url+":"+m.id,64,64),new LinearLayout.LayoutParams(dp(64),dp(64)));
             LinearLayout words=column();TextView name=text(m.title==null||m.title.isEmpty()?"未命名视频":m.title,14,INK,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);words.addView(name);
-            String metadata=m.platform+(m.duration>0?" · "+duration(m.duration):"");add(words,text(metadata,12,MUTED,false),5,0);
-            if(m.uploader!=null&&!m.uploader.isEmpty()){TextView author=text(m.uploader,12,MUTED,false);author.setSingleLine();author.setEllipsize(android.text.TextUtils.TruncateAt.END);add(words,author,3,0);}
-            LinearLayout.LayoutParams info=new LinearLayout.LayoutParams(0,-2,1);info.leftMargin=dp(12);media.addView(words,info);item.addView(media);
-            String key=InspectionBatch.key(m);int[] selection={Math.min(Math.max(0,qualitySelections.getOrDefault(key,0)),m.qualities.size()-1)};
-            TextView qualityDetails=text(mediaSummary(m,selection[0]),12,MUTED,false);
-            Button quality=button("画质："+m.qualities.get(selection[0]).label+"  ▾",false);quality.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);
-            quality.setOnClickListener(v->{String[] options=new String[m.qualities.size()];for(int i=0;i<options.length;i++)options[i]=m.qualities.get(i).label;
-                AlertDialog panel=new AlertDialog.Builder(this).setTitle("选择画质").setSingleChoiceItems(options,selection[0],(d,which)->{selection[0]=which;qualitySelections.put(key,which);quality.setText("画质："+options[which]+"  ▾");qualityDetails.setText(mediaSummary(m,which));d.dismiss();}).setNegativeButton("返回",null).show();bottom(panel);
-            });add(item,quality,12,0);
-            add(item,qualityDetails,7,0);
-            Button save=button("加入队列",inspectedMedia.size()==1);save.setOnClickListener(v->enqueue(m,m.qualities.get(selection[0])));add(item,save,12,0);
-            add(inspectionResults,item,0,12);UiTheme.enter(item);
+            add(words,text(m.platform+(m.duration>0?" · "+duration(m.duration):""),12,MUTED,false),5,0);LinearLayout.LayoutParams info=new LinearLayout.LayoutParams(0,-2,1);info.leftMargin=dp(12);media.addView(words,info);item.addView(media);
+            String key=InspectionBatch.key(m);int chosen=Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),m.qualities.size()-1));
+            TextView details=text(mediaSummary(m,chosen),12,MUTED,false);add(item,details,8,0);
+            LinearLayout actions=row();Button quality=quietButton("画质："+m.qualities.get(chosen).label+"  ▾");quality.setTextSize(12);quality.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);quality.setMinWidth(0);
+            quality.setOnClickListener(v->{String[] options=new String[m.qualities.size()];for(int n=0;n<options.length;n++)options[n]=m.qualities.get(n).label;
+                AlertDialog panel=new AlertDialog.Builder(this).setTitle("选择画质").setSingleChoiceItems(options,chosen,(d,which)->{qualitySelections.put(key,which);persistInspectionInbox();d.dismiss();renderInspection();}).setNegativeButton("返回",null).show();bottom(panel);});
+            actions.addView(quality,new LinearLayout.LayoutParams(0,dp(48),1));Button save=button("加入队列",true);save.setTextSize(12);save.setMinWidth(0);save.setOnClickListener(v->enqueue(m,m.qualities.get(Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),m.qualities.size()-1)))));actions.addView(save,new LinearLayout.LayoutParams(dp(94),dp(48)));add(item,actions,6,0);add(inspectionResults,item,0,10);
         }
+    }
+
+    private void showInspectionQueue() {
+        LinearLayout content=column();content.setPadding(dp(20),dp(8),dp(20),dp(12));
+        ScrollView scroll=new ScrollView(this);scroll.addView(content);
+        AlertDialog panel=new AlertDialog.Builder(this).setTitle("解析队列").setView(scroll).setNegativeButton("返回",null).create();
+        for(InspectionInbox.Job job:new ArrayList<>(inspectionInbox.jobs)){
+            LinearLayout line=row();LinearLayout labels=column();TextView link=text(job.url,13,INK,false);link.setMaxLines(2);link.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);labels.addView(link);
+            String state=job.state.equals("failed")?job.message:job.state.equals("parsing")?"正在解析":job.state.equals("cancelling")?"正在取消":"等待解析";
+            add(labels,text(state,12,job.state.equals("failed")?palette.danger:MUTED,false),4,0);line.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
+            Button action=quietButton(job.state.equals("failed")?"重试":job==activeInspection?"取消":"移除");action.setTextSize(12);action.setTextColor(ACCENT);action.setEnabled(!job.cancelled);action.setOnClickListener(v->{
+                if(job==activeInspection)cancelAnalysis();else if(job.state.equals("failed"))inspectionInbox.retry(job);else inspectionInbox.remove(job);
+                persistInspectionInbox();panel.dismiss();startNextInspection();renderInspection();
+            });line.addView(action,new LinearLayout.LayoutParams(dp(64),dp(48)));add(content,line,8,12);
+            if(job.state.equals("failed")&&!job.details.isEmpty()){Button details=quietButton("查看错误详情");details.setTextSize(12);details.setOnClickListener(v->showMessage("解析错误详情",job.details));add(content,details,0,8);}
+        }
+        if(inspectionInbox.jobs.isEmpty())content.addView(text("解析队列为空，已解析的视频仍在待下载列表。",13,MUTED,false));
+        panel.show();bottom(panel);
     }
 
     @Override public void onWindowFocusChanged(boolean focused) {
@@ -246,25 +264,17 @@ public final class MainActivity extends Activity {
 
     private void renderClipboardOffer() {
         if(clipboardNotice==null||clipboardUrls.isEmpty())return;
-        clipboardNotice.removeAllViews();clipboardNotice.setPadding(dp(20),dp(8),dp(20),dp(8));clipboardNotice.setBackgroundColor(palette.control);
-        clipboardNotice.addView(text("剪贴板中发现 "+clipboardUrls.size()+" 个视频链接",14,INK,true));
-        LinearLayout actions=row();TextView note=text(parsing?"当前解析结束后可继续处理":"查看画质后再加入下载队列",12,MUTED,false);
-        actions.addView(note,new LinearLayout.LayoutParams(0,-2,1));
-        Button dismiss=quietButton("忽略");dismiss.setTextSize(12);dismiss.setMinWidth(0);dismiss.setOnClickListener(v->{rememberClipboard(clipboardUrls);hideClipboardOffer();});actions.addView(dismiss,new LinearLayout.LayoutParams(dp(56),dp(48)));
-        Button open=quietButton("查看并下载");open.setTextColor(ACCENT);open.setTextSize(12);open.setMinWidth(0);open.setEnabled(!parsing);
-        open.setOnClickListener(v->acceptClipboardOffer());actions.addView(open,new LinearLayout.LayoutParams(dp(100),dp(48)));
-        clipboardNotice.addView(actions);clipboardNotice.setVisibility(View.VISIBLE);
-        clipboardNotice.announceForAccessibility("发现 "+clipboardUrls.size()+" 个剪贴板视频链接，可查看并下载");
+        clipboardNotice.removeAllViews();clipboardNotice.setPadding(dp(16),dp(6),dp(16),dp(8));clipboardNotice.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        LinearLayout card=row();card.setPadding(dp(14),dp(8),dp(4),dp(8));card.setBackground(shape(SURFACE,14,LINE));
+        LinearLayout labels=column();labels.addView(text("发现 "+clipboardUrls.size()+" 个新链接",14,INK,true));add(labels,text("追加解析，下载由你决定",12,MUTED,false),4,0);card.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
+        Button open=button("加入解析",true);open.setTextSize(12);open.setMinWidth(0);open.setOnClickListener(v->acceptClipboardOffer());card.addView(open,new LinearLayout.LayoutParams(dp(88),dp(42)));
+        Button dismiss=quietButton("×");dismiss.setTextSize(20);dismiss.setMinWidth(0);dismiss.setContentDescription("忽略剪贴板链接提醒");dismiss.setOnClickListener(v->{rememberClipboard(clipboardUrls);hideClipboardOffer();});card.addView(dismiss,new LinearLayout.LayoutParams(dp(44),dp(48)));
+        clipboardNotice.addView(card);clipboardNotice.setVisibility(View.VISIBLE);clipboardNotice.announceForAccessibility("发现 "+clipboardUrls.size()+" 个新链接，可加入解析队列");
     }
 
     private void acceptClipboardOffer() {
-        if(parsing||clipboardUrls.isEmpty())return;
-        final List<String> accepted=new ArrayList<>(clipboardUrls);
-        Runnable proceed=()->{rememberClipboard(accepted);hideClipboardOffer();draft=android.text.TextUtils.join("\n",accepted);showTab("new");input.setText(draft);analyzeUrls(accepted,false);};
-        if(!draft.trim().isEmpty()||!inspectedMedia.isEmpty()||!failedInspectionUrls.isEmpty())new AlertDialog.Builder(this).setTitle("处理剪贴板链接？")
-                .setMessage("将替换当前输入、未加入队列的解析结果和待重试链接。已在下载队列中的任务会继续按顺序下载。")
-                .setNegativeButton("保留当前内容",null).setPositiveButton("处理新链接",(d,w)->proceed.run()).show();
-        else proceed.run();
+        if(clipboardUrls.isEmpty())return;
+        List<String> accepted=new ArrayList<>(clipboardUrls);rememberClipboard(accepted);hideClipboardOffer();queueInspections(accepted);showTab("new");
     }
     private void rememberClipboard(List<String> urls){getPreferences(0).edit().putString("clipboard_seen",ClipboardOffer.fingerprint(urls)).apply();}
     private void hideClipboardOffer(){clipboardUrls=Collections.emptyList();if(clipboardNotice!=null){clipboardNotice.setVisibility(View.GONE);clipboardNotice.removeAllViews();}}
@@ -279,53 +289,44 @@ public final class MainActivity extends Activity {
 
     private void analyze() {
         try {
-            LinkBatch.Result links=LinkBatch.parse(input.getText().toString());
-            rememberClipboard(links.urls);analyzeUrls(links.urls,false);
+            LinkBatch.Result links=LinkBatch.parse(input.getText().toString());rememberClipboard(links.urls);
+            queueInspections(links.urls);draft="";input.setText("");lastInspectionMessage="";lastInspectionDetails="";
+            if(feedback!=null)feedback.setVisibility(View.GONE);if(failureDetails!=null)failureDetails.setVisibility(View.GONE);updateInspectionControls();
             if(links.duplicates>0||!links.invalid.isEmpty())toast("已合并 "+links.duplicates+" 个重复链接，忽略 "+links.invalid.size()+" 个无效链接");
-        } catch(IllegalArgumentException bad) {feedback.setText(bad.getMessage());feedback.setVisibility(View.VISIBLE);}
+        } catch(IllegalArgumentException bad){feedback.setText(bad.getMessage());feedback.setVisibility(View.VISIBLE);}
     }
 
-    private void analyzeUrls(List<String> urls,boolean append) {
-        if(parsing||urls.isEmpty())return;hideClipboardOffer();
-        final String submittedDraft=input.getText().toString();draft=submittedDraft;input.setEnabled(false);if(paste!=null)paste.setEnabled(false);
-        parsing=true;final int generation=++parseGeneration;
-        if(!append){inspectedMedia.clear();qualitySelections.clear();failedInspectionUrls.clear();}
-        lastInspectionMessage="";lastInspectionDetails="";
-        renderInspection();failureDetails.setVisibility(View.GONE);feedback.setVisibility(View.VISIBLE);
-        parse.setEnabled(false);parse.setText("正在解析…");cancel.setVisibility(View.VISIBLE);
-        feedback.setText("准备按顺序解析 "+urls.size()+" 个链接…");
+    private void queueInspections(List<String> urls) {
+        int added=inspectionInbox.add(urls);persistInspectionInbox();
+        toast(added>0?"已添加 "+added+" 个链接，按顺序解析":"链接已在解析队列或待下载列表中");startNextInspection();renderInspection();
+    }
+    private void startNextInspection() {
+        if(parsing||isDestroyed())return;
+        InspectionInbox.Job job=inspectionInbox.next();if(job==null){updateInspectionControls();return;}
+        parsing=true;activeInspection=job;job.state="parsing";job.message="正在读取视频信息…";job.cancelled=false;
+        int generation=++parseGeneration;persistInspectionInbox();updateInspectionControls();if("new".equals(tab))renderInspection();
         io.execute(()->{
-            try {
-                InspectionBatch.Result result=InspectionBatch.run(urls,inspector,()->generation!=parseGeneration||isDestroyed(),stage->main.post(()->{
-                    if(!isDestroyed()&&generation==parseGeneration&&parsing&&"new".equals(tab)&&feedback!=null)feedback.setText(stage);
-                }));
-                main.post(()->{
-                    if(isDestroyed()||generation!=parseGeneration)return;
-                    // The source is retained separately from the editor. Never erase a later share or edit.
-                    if(!append&&!result.media.isEmpty()&&submittedDraft.equals(draft)){draft="";if(input!=null)input.setText("");}
-                    finishAnalysis();
-                    LinkedHashMap<String,Engine.Media> merged=new LinkedHashMap<>();
-                    for(Engine.Media m:inspectedMedia)merged.put(InspectionBatch.key(m),m);
-                    for(Engine.Media m:result.media)merged.putIfAbsent(InspectionBatch.key(m),m);
-                    inspectedMedia.clear();inspectedMedia.addAll(merged.values());failedInspectionUrls.clear();failedInspectionUrls.addAll(result.failed);
-                    lastInspectionDetails=result.details.toString();
-                    lastInspectionMessage=result.failed.isEmpty()?"已解析 "+urls.size()+" 个链接，找到 "+result.media.size()+" 个视频。可继续粘贴下一批。"
-                            :result.succeeded==0&&urls.size()==1?result.message:"成功 "+result.succeeded+"/"+urls.size()+" 个链接，"+result.failed.size()+" 个失败，可单独重试。";
-                    if("new".equals(tab))showTab("new");else toast("解析完成，回到新建查看视频");
-                });
-            }catch(InterruptedException stopped){ /* Cancellation keeps the editable input and invalidates callbacks. */ }
+            List<Engine.Media> found=null;Exception problem=null;
+            try {found=inspector.inspect(job.url,stage->main.post(()->{if(!isDestroyed()&&generation==parseGeneration&&activeInspection==job&&!job.cancelled){job.message=stage;if("new".equals(tab))renderInspection();}}),()->job.cancelled||generation!=parseGeneration||isDestroyed());}
+            catch(Exception failure){problem=failure;}
+            final List<Engine.Media> result=found;final Exception failure=problem;
+            main.post(()->{
+                if(isDestroyed()||generation!=parseGeneration)return;
+                if(job.cancelled||failure instanceof InterruptedException)inspectionInbox.fail(job,new InterruptedException("解析已取消"));
+                else if(failure!=null)inspectionInbox.fail(job,failure);
+                else if(result==null||result.isEmpty())inspectionInbox.fail(job,new IOException("源站没有返回可用视频"));
+                else inspectionInbox.complete(job,result);
+                parsing=false;activeInspection=null;persistInspectionInbox();updateInspectionControls();if("new".equals(tab))renderInspection();startNextInspection();
+            });
         });
     }
-
-    private void finishAnalysis() {
-        parsing=false;if(!clipboardUrls.isEmpty())renderClipboardOffer();
-        if("new".equals(tab)&&parse!=null) {if(input!=null)input.setEnabled(true);if(paste!=null)paste.setEnabled(true);parse.setEnabled(!draft.trim().isEmpty());parse.setText("解析视频"); cancel.setVisibility(View.GONE);}
+    private void updateInspectionControls() {
+        if(parse!=null){parse.setText(parsing?"加入解析队列":"解析链接");parse.setEnabled(!draft.trim().isEmpty());}
+        if(input!=null)input.setEnabled(true);if(paste!=null)paste.setEnabled(true);if(cancel!=null)cancel.setVisibility(View.GONE);
     }
+    private void persistInspectionInbox(){getPreferences(0).edit().putString("inspection_inbox",inspectionInbox.json()).putString("inspection_quality",new JSONObject(qualitySelections).toString()).apply();}
     private void cancelAnalysis() {
-        ++parseGeneration; parsing=false; engine.cancelInspect(); finishAnalysis();renderInspection();
-        lastInspectionMessage="已取消，链接已保留。";lastInspectionDetails="";
-        if(failureDetails!=null)failureDetails.setVisibility(View.GONE);
-        if(feedback!=null){feedback.setVisibility(View.VISIBLE);feedback.setText("已取消，链接已保留。");}
+        if(activeInspection==null)return;activeInspection.cancelled=true;activeInspection.state="cancelling";engine.cancelInspect();persistInspectionInbox();if("new".equals(tab))renderInspection();
     }
 
     private void showInspectionDetails() {
@@ -340,10 +341,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showMedia(List<Engine.Media> media) {
-        if(media.isEmpty()){lastInspectionMessage="没有找到可用视频；请检查链接或平台登录状态。";if(feedback!=null){feedback.setText(lastInspectionMessage);feedback.setVisibility(View.VISIBLE);}return;}
-        inspectedMedia.clear();inspectedMedia.addAll(media);lastInspectionMessage="已找到 "+media.size()+" 个视频";
-        if("new".equals(tab)){if(feedback!=null){feedback.setText(lastInspectionMessage);feedback.setVisibility(View.VISIBLE);}renderInspection();}
-        else toast("解析完成，回到新建查看视频");
+        inspectionInbox.complete(null,media);persistInspectionInbox();if("new".equals(tab))renderInspection();
     }
 
     private void enqueue(Engine.Media media,Engine.Quality quality) {
@@ -364,7 +362,7 @@ public final class MainActivity extends Activity {
             try {if(Build.VERSION.SDK_INT>=26)startForegroundService(request);else startService(request);}
             catch(Exception failure){for(String id:ids)TaskStore.markStopped(this,id,"interrupted","未能启动下载，点击重试");throw failure;}
             Set<String> added=new HashSet<>();for(Engine.Media m:media)added.add(InspectionBatch.key(m));
-            inspectedMedia.removeIf(m->added.contains(InspectionBatch.key(m)));for(String key:added)qualitySelections.remove(key);
+            inspectedMedia.removeIf(m->added.contains(InspectionBatch.key(m)));for(String key:added)qualitySelections.remove(key);persistInspectionInbox();
             toast("已加入 "+ids.size()+" 个任务，按顺序下载");showTab("queue");
             if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},NOTIFY_REQUEST);
@@ -864,7 +862,7 @@ public final class MainActivity extends Activity {
     private void readShare(Intent intent) {
         if(intent!=null&&Intent.ACTION_SEND.equals(intent.getAction())) {
             String value=intent.getStringExtra(Intent.EXTRA_TEXT);
-            if(value!=null&&!value.isEmpty()){if(parsing)cancelAnalysis();draft=value;showTab("new");input.setText(value);feedback.setVisibility(View.VISIBLE);feedback.setText("已接收分享链接，点击解析即可。");intent.setAction(null);}
+            if(value!=null&&!value.isEmpty()){try{queueInspections(LinkBatch.parse(value).urls);showTab("new");}catch(IllegalArgumentException invalid){toast(invalid.getMessage());}intent.setAction(null);}
         }
     }
     private final AppUpdates.Listener appUpdateListener=state->{
@@ -879,9 +877,9 @@ public final class MainActivity extends Activity {
     };
     private final Runnable appUpdateCheck=()->AppUpdates.get(this).checkIfDue();
     @Override protected void onResume(){super.onResume();foreground=true;clipboardCheckPending=true;main.post(checkClipboard);AppUpdates.get(this).listen(appUpdateListener);main.postDelayed(appUpdateCheck,1500);main.removeCallbacks(poll);main.post(poll);if(libraryView!=null)libraryView.refresh();}
-    @Override protected void onPause(){foreground=false;main.removeCallbacks(checkClipboard);hideClipboardOffer();AppUpdates.get(this).unlisten(appUpdateListener);main.removeCallbacks(appUpdateCheck);if(openSwipeRow!=null)openSwipeRow.close(false);queueTouchActive=false;super.onPause();main.removeCallbacks(poll);if(input!=null)draft=input.getText().toString();getPreferences(0).edit().putString("draft",draft).apply();}
+    @Override protected void onPause(){foreground=false;main.removeCallbacks(checkClipboard);hideClipboardOffer();AppUpdates.get(this).unlisten(appUpdateListener);main.removeCallbacks(appUpdateCheck);if(openSwipeRow!=null)openSwipeRow.close(false);queueTouchActive=false;super.onPause();main.removeCallbacks(poll);if(input!=null)draft=input.getText().toString();getPreferences(0).edit().putString("draft",draft).apply();persistInspectionInbox();}
     @Override protected void onSaveInstanceState(Bundle state){
-        super.onSaveInstanceState(state);state.putStringArrayList("inspection_failed",new ArrayList<>(failedInspectionUrls));state.putString("inspection_message",lastInspectionMessage);state.putString("inspection_details",lastInspectionDetails);state.putString("draft",input!=null?input.getText().toString():draft);state.putString("tab",tab);state.putString("queue_filter",queueFilter);state.putString("quality_selection",new JSONObject(qualitySelections).toString());
+        super.onSaveInstanceState(state);state.putString("inspection_message",lastInspectionMessage);state.putString("inspection_details",lastInspectionDetails);state.putString("draft",input!=null?input.getText().toString():draft);state.putString("tab",tab);state.putString("queue_filter",queueFilter);state.putString("quality_selection",new JSONObject(qualitySelections).toString());
         if(libraryView!=null)libraryState=libraryView.saveUiState();if(libraryState!=null)state.putBundle("library_state",libraryState);
         try{org.json.JSONArray media=new org.json.JSONArray();for(Engine.Media m:inspectedMedia)media.put(m.toJson());state.putString("inspection_media",media.toString());}catch(Exception ignored){}
     }

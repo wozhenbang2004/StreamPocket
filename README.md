@@ -2,15 +2,15 @@
 
 Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下载到手机，再播放、整理、标记和剪辑。
 
-**当前版本：0.2.11** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.2.11/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.11)
+**当前版本：0.2.12** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.2.12/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.12)
 
-## 0.2.11 更新
+## 0.2.12 更新
 
-- 一次粘贴多个视频链接或分享文案，按顺序解析、去重，单条失败可独立重试；可分别选画质后全部加入队列。
-- 解析成功自动清空输入；新下载追加至队尾，当前下载及通知保持对应。
-- X、B站、抖音共用本地请求间隔、退避与限流冷却；匿名 X 使用已有接口轮换。
-- 返回应用时提示新的剪贴板视频链接，点击“查看并下载”后再解析；支持批量与设置开关。
-- 修复网络超时被附加 Cookie 说明误报为登录问题。
+- 解析改为独立的持久队列。多次粘贴、分享和接受剪贴板链接都追加处理，保留正在重试的任务、失败项、草稿与已有结果。
+- 解析结果留在“待下载”，可逐项选画质、单独加入下载或全部加入队列；关闭再打开仍可继续。
+- 剪贴板提醒缩为底部轻提示，点击“加入解析”后才处理，不自动下载或询问替换现有内容。
+- 优化视频库播放的画面衔接与视频绘制，减少播放和缩略预览之间的资源竞争；补充画面启动失败时的重试提示。
+- 保留 0.2.11 的下载顺序、批量识别、平台请求间隔与限流冷却；修正 CI 的 Android SDK 安装配置。
 
 行为、边界和测试范围见 [下载流程](docs/DOWNLOAD_FLOW.md)。
 
@@ -29,7 +29,7 @@ Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下
 
 ## 安装与更新
 
-1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.11) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
+1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.12) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
 2. 已安装拾流时直接覆盖更新，**不要卸载或清除数据**。新版沿用原安装身份和签名，保留账号、下载记录、视频库、标记与草稿。
 3. 应用内打开 **设置 → 高级与关于 → 应用更新**。确认下载后，本页显示进度，校验完成自动进入系统安装确认；最后一步由你确认。
 

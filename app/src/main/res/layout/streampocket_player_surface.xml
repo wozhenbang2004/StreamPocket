@@ -7,7 +7,7 @@
     android:background="#0A0C0F"
     app:controller_layout_id="@layout/streampocket_player_controls"
     app:resize_mode="fit"
-    app:surface_type="surface_view"
+    app:surface_type="texture_view"
     app:show_timeout="2500"
     app:auto_show="false"
     app:animation_enabled="false" />
