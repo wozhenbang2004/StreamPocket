@@ -1,7 +1,6 @@
 package dev.streampocket;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.Intent;
 import android.graphics.Color;
@@ -32,7 +31,6 @@ import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.List;
@@ -77,7 +75,7 @@ public final class VideoLibraryView extends LinearLayout {
         store = new LibraryStore(host); covers = new ThumbnailRepository(host);
         listMode = "list".equals(host.getSharedPreferences("config",0).getString("library_view","grid"));
         order = "source".equals(host.getSharedPreferences("config",0).getString("library_order","date")) ? "source" : "date";
-        setOrientation(VERTICAL); setBackgroundColor(palette.bg); setPadding(dp(18), dp(4), dp(18), 0);
+        setOrientation(VERTICAL); setBackgroundColor(palette.bg); setPadding(dp(20), dp(8), dp(20), 0);
         LinearLayout heading = new LinearLayout(host); heading.setGravity(Gravity.CENTER_VERTICAL);
         headingTitle = text("视频库", 24, INK, true);
         heading.addView(headingTitle, new LinearLayout.LayoutParams(0, dp(56), 1));
@@ -88,7 +86,7 @@ public final class VideoLibraryView extends LinearLayout {
         View menu = iconControl("more", "视频库更多操作"); menu.setOnClickListener(v -> showLibraryMenu());
         heading.addView(menu, new LinearLayout.LayoutParams(dp(48), dp(48))); addView(heading);
 
-        search = new EditText(host); search.setSingleLine(true); search.setTextSize(14); search.setTextColor(INK); search.setHintTextColor(MUTED);
+        search = new PocketEditText(host); search.setSingleLine(true); search.setTextSize(14); search.setTextColor(INK); search.setHintTextColor(MUTED);
         search.setHint("搜索标题或作者"); search.setContentDescription("搜索视频标题或作者");
         search.setPadding(dp(14), 0, dp(14), 0); search.setBackground(shape(palette.surface, false, 12)); search.setVisibility(GONE);
         LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, dp(48)); searchParams.bottomMargin = dp(8); addView(search, searchParams);
@@ -114,7 +112,7 @@ public final class VideoLibraryView extends LinearLayout {
         shareSelection=selectionAction("分享",this::shareSelected); collectSelection=selectionAction("合集",this::collectSelected); removeSelection=selectionAction("移除",this::removeSelected);
         addView(selectionBar,new LinearLayout.LayoutParams(-1,dp(48)));
 
-        grid = new GridView(host); configureColumns(); grid.setHorizontalSpacing(dp(12)); grid.setVerticalSpacing(dp(16)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+        grid = new GridView(host); configureColumns(); grid.setHorizontalSpacing(dp(12)); grid.setVerticalSpacing(dp(18)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
         grid.setClipToPadding(false); grid.setPadding(0, dp(4), 0, dp(20)); grid.setSelector(android.R.color.transparent); grid.setAdapter(adapter);
         grid.setOnItemClickListener((parent, view, position, id) -> {
             if(position<0||position>=videos.size())return;
@@ -148,7 +146,7 @@ public final class VideoLibraryView extends LinearLayout {
     }
     private void showLibraryMenu() {
         String[] actions={"剪辑草稿", "按日期排序", "按来源排序", selectionMode?"全选已加载的视频":"多选整理"};
-        new AlertDialog.Builder(activity).setTitle("视频库").setItems(actions,(dialog,which)->{
+        new PocketDialog.Builder(activity).setTitle("视频库").setItems(actions,(dialog,which)->{
             if(which==0)openEditor(0);
             else if(which==1||which==2){endSelection();order=which==2?"source":"date";activity.getSharedPreferences("config",0).edit().putString("library_order",order).apply();load(true);}
             else if(selectionMode){for(JSONObject video:videos)selectedIds.add(video.optLong("id"));updateSelection();adapter.notifyDataSetChanged();}
@@ -243,14 +241,14 @@ public final class VideoLibraryView extends LinearLayout {
         String[] labels = {"全部来源", "X", "哔哩哔哩", "抖音", "其他平台", "我的导出"};
         String[] values = {"", "x", "bilibili", "douyin", "other", "export"};
         int selected = 0; for (int i = 0; i < values.length; i++) if (source.equals(values[i])) selected = i;
-        new AlertDialog.Builder(activity).setTitle("按来源筛选").setSingleChoiceItems(labels, selected, (dialog, which) -> {
+        new PocketDialog.Builder(activity).setTitle("按来源筛选").setSingleChoiceItems(labels, selected, (dialog, which) -> {
             endSelection(); restoreFirst=-1; source = values[which]; sourceButton.setText("来源：" + (which == 0 ? "全部" : labels[which]) + "  ▾"); dialog.dismiss(); load(true);
         }).setNegativeButton("取消", null).show();
     }
     private void chooseCollection() {
         String[] labels = new String[collections.size() + 1]; labels[0] = "全部视频"; int selected = 0;
         for (int i = 0; i < collections.size(); i++) { JSONObject group = collections.get(i); labels[i + 1] = group.optString("name") + " · " + group.optLong("count"); if (group.optLong("id") == collection) selected = i + 1; }
-        new AlertDialog.Builder(activity).setTitle("我的合集").setSingleChoiceItems(labels, selected, (dialog, which) -> {
+        new PocketDialog.Builder(activity).setTitle("我的合集").setSingleChoiceItems(labels, selected, (dialog, which) -> {
             endSelection(); restoreFirst=-1; collection = which == 0 ? 0 : collections.get(which - 1).optLong("id");
             collectionButton.setText("合集：" + (which == 0 ? "全部" : collections.get(which - 1).optString("name")) + "  ▾"); dialog.dismiss(); load(true);
         }).setPositiveButton("新建合集", (dialog, which) -> createCollection(null)).setNegativeButton("取消", null).show();
@@ -283,13 +281,13 @@ public final class VideoLibraryView extends LinearLayout {
 
     private void showActions(JSONObject video) {
         String[] actions = {"播放", "添加到剪辑", "重命名文件", "管理所属合集", "分享视频", "从视频库移除"};
-        new AlertDialog.Builder(activity).setTitle(video.optString("title", "视频")).setItems(actions, (dialog, which) -> {
+        new PocketDialog.Builder(activity).setTitle(video.optString("title", "视频")).setItems(actions, (dialog, which) -> {
             if (which == 0) openPlayer(video);
             else if (which == 1) { if (video.optBoolean("missing")) message("原视频无法读取，请先恢复文件。"); else openEditor(video.optLong("id")); }
             else if (which == 2) rename(video);
             else if (which == 3) manageCollections(video);
             else if (which == 4) share(video);
-            else new AlertDialog.Builder(activity).setTitle("从视频库移除？").setMessage("只移除库记录、精彩标记与合集归属。手机上的视频文件和已有剪辑草稿会保留。")
+            else new PocketDialog.Builder(activity).setTitle("从视频库移除？").setMessage("只移除库记录、精彩标记与合集归属。手机上的视频文件和已有剪辑草稿会保留。")
                     .setNegativeButton("取消", null).setPositiveButton("移除", (confirm, action) -> runWrite(() -> store.removeVideoRecord(video.optLong("id")), "已从视频库移除")).show();
         }).show();
     }
@@ -298,18 +296,18 @@ public final class VideoLibraryView extends LinearLayout {
         String fileName = video.optString("fileName", ""); String extension = LibraryStore.extension(fileName);
         String base = fileName.isEmpty() ? video.optString("title", "") : fileName.substring(0, fileName.length() - extension.length());
         LinearLayout form = new LinearLayout(activity); form.setOrientation(VERTICAL); form.setPadding(dp(24), dp(8), dp(24), dp(8));
-        EditText input = new EditText(activity); input.setSingleLine(true); input.setTextSize(16); input.setText(base); input.setSelection(input.length()); input.setHint("文件名称"); input.setContentDescription("新文件名称，不含扩展名");
+        EditText input = new PocketEditText(activity); input.setSingleLine(true); input.setTextSize(16); input.setText(base); input.setSelection(input.length()); input.setHint("文件名称"); input.setContentDescription("新文件名称，不含扩展名");
         form.addView(input, new LinearLayout.LayoutParams(-1, dp(52)));
         TextView caption = text(extension.isEmpty() ? "保留原文件扩展名，精彩标记不受影响。" : "保留 " + extension + " 扩展名，精彩标记不受影响。", 13, MUTED, false);
         caption.setPadding(0, dp(8), 0, dp(4)); form.addView(caption, new LinearLayout.LayoutParams(-1, -2));
-        AlertDialog dialog = new AlertDialog.Builder(activity).setTitle("重命名手机里的文件").setView(form).setPositiveButton("保存", null).setNegativeButton("取消", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+        PocketDialog dialog = new PocketDialog.Builder(activity).setTitle("重命名手机里的文件").setView(form).setPositiveButton("保存", null).setNegativeButton("取消", null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(PocketDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             if (released) { dialog.dismiss(); return; }
             String requested;
             try { requested = LibraryStore.validFileBaseName(input.getText().toString()); }
             catch (IllegalArgumentException invalid) { input.setError(invalid.getMessage()); return; }
-            input.setError(null); input.setEnabled(false); dialog.setCancelable(false); dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false); dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(false);
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setText("正在保存…");
+            input.setError(null); input.setEnabled(false); dialog.setCancelable(false); dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(false); dialog.getButton(PocketDialog.BUTTON_NEGATIVE).setEnabled(false);
+            dialog.getButton(PocketDialog.BUTTON_POSITIVE).setText("正在保存…");
             io.execute(() -> {
                 try {
                     store.renameVideo(video.optLong("id"), requested);
@@ -318,7 +316,7 @@ public final class VideoLibraryView extends LinearLayout {
                     main.post(() -> {
                         if (released || !dialog.isShowing()) return;
                         input.setEnabled(true); input.setError(failure.getMessage() == null ? "重命名失败，请重试。" : failure.getMessage());
-                        dialog.setCancelable(true); dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true); dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(true); dialog.getButton(AlertDialog.BUTTON_POSITIVE).setText("保存");
+                        dialog.setCancelable(true); dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(true); dialog.getButton(PocketDialog.BUTTON_NEGATIVE).setEnabled(true); dialog.getButton(PocketDialog.BUTTON_POSITIVE).setText("保存");
                     });
                 }
             });
@@ -342,7 +340,7 @@ public final class VideoLibraryView extends LinearLayout {
                     if (groups.isEmpty()) { createCollection(video); return; }
                     String[] labels = new String[groups.size()]; boolean[] checks = new boolean[groups.size()];
                     for (int i = 0; i < groups.size(); i++) { labels[i] = groups.get(i).optString("name"); checks[i] = included.contains(groups.get(i).optLong("id")); }
-                    new AlertDialog.Builder(activity).setTitle("整理到合集").setMultiChoiceItems(labels, checks, (dialog, which, value) -> checks[which] = value)
+                    new PocketDialog.Builder(activity).setTitle("整理到合集").setMultiChoiceItems(labels, checks, (dialog, which, value) -> checks[which] = value)
                             .setPositiveButton("保存", (dialog, which) -> runWrite(() -> { for (int i = 0; i < groups.size(); i++) store.setCollection(video.optLong("id"), groups.get(i).optLong("id"), checks[i]); }, "合集已更新"))
                             .setNeutralButton("新建合集", (dialog, which) -> createCollection(video)).setNegativeButton("取消", null).show();
                 });
@@ -350,9 +348,9 @@ public final class VideoLibraryView extends LinearLayout {
         });
     }
     private void createCollection(JSONObject video) {
-        EditText input = new EditText(activity); input.setSingleLine(true); input.setTextSize(16); input.setHint("合集名称"); input.setPadding(dp(24), dp(12), dp(24), dp(12));
-        AlertDialog dialog = new AlertDialog.Builder(activity).setTitle("新建合集").setView(input).setPositiveButton("创建", null).setNegativeButton("取消", null).create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+        EditText input = new PocketEditText(activity); input.setSingleLine(true); input.setTextSize(16); input.setHint("合集名称"); input.setPadding(dp(24), dp(12), dp(24), dp(12));
+        PocketDialog dialog = new PocketDialog.Builder(activity).setTitle("新建合集").setView(input).setPositiveButton("创建", null).setNegativeButton("取消", null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(PocketDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             String name = input.getText().toString().trim(); if (name.isEmpty()) { input.setError("请输入合集名称"); return; }
             dialog.dismiss(); runWrite(() -> { long id = store.createCollection(name); if (video != null) store.setCollection(video.optLong("id"), id, true); }, "合集已创建");
         })); dialog.show();
@@ -402,22 +400,22 @@ public final class VideoLibraryView extends LinearLayout {
                 if(released)return;
                 if(groups.isEmpty()){createCollectionFor(ids);return;}
                 String[] names=new String[groups.size()];for(int i=0;i<groups.size();i++)names[i]=groups.get(i).optString("name");
-                new AlertDialog.Builder(activity).setTitle("将 "+ids.size()+" 个视频加入合集").setItems(names,(dialog,which)->writeSelection(()->store.setCollectionForVideos(ids,groups.get(which).optLong("id")),"已加入合集"))
+                new PocketDialog.Builder(activity).setTitle("将 "+ids.size()+" 个视频加入合集").setItems(names,(dialog,which)->writeSelection(()->store.setCollectionForVideos(ids,groups.get(which).optLong("id")),"已加入合集"))
                         .setPositiveButton("新建合集",(dialog,which)->createCollectionFor(ids)).setNegativeButton("取消",null).show();
             });
         }catch(Exception failure){main.post(()->message("无法读取合集，请重试。"));}});
     }
     private void createCollectionFor(List<Long> ids) {
-        EditText input=new EditText(activity);input.setSingleLine(true);input.setTextColor(INK);input.setHintTextColor(MUTED);input.setHint("合集名称");input.setPadding(dp(20),dp(12),dp(20),dp(12));
-        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("新建合集").setView(input).setPositiveButton("创建",null).setNegativeButton("取消",null).create();
-        dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+        EditText input=new PocketEditText(activity);input.setSingleLine(true);input.setTextColor(INK);input.setHintTextColor(MUTED);input.setHint("合集名称");input.setPadding(dp(20),dp(12),dp(20),dp(12));
+        PocketDialog dialog=new PocketDialog.Builder(activity).setTitle("新建合集").setView(input).setPositiveButton("创建",null).setNegativeButton("取消",null).create();
+        dialog.setOnShowListener(ignored->dialog.getButton(PocketDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             String name=input.getText().toString().trim();if(name.isEmpty()){input.setError("请输入合集名称");return;}dialog.dismiss();
             writeSelection(()->{long id=store.createCollection(name);store.setCollectionForVideos(ids,id);},"已创建合集并加入视频");
         }));dialog.show();
     }
     private void removeSelected() {
         if(selectedIds.isEmpty())return;List<Long> ids=new ArrayList<>(selectedIds);
-        new AlertDialog.Builder(activity).setTitle("移除 "+ids.size()+" 条视频库记录？")
+        new PocketDialog.Builder(activity).setTitle("移除 "+ids.size()+" 条视频库记录？")
                 .setMessage("只移除所选库记录、精彩标记和合集归属。手机上的原视频文件、下载记录与已有剪辑草稿会保留。")
                 .setNegativeButton("取消",null).setPositiveButton("移除记录",(dialog,which)->writeSelection(()->store.removeVideoRecords(ids),"已移除库记录，原视频保留")).show();
     }
@@ -432,7 +430,7 @@ public final class VideoLibraryView extends LinearLayout {
         if (released) return; released = true; generation++; clearViewportRestore(); main.removeCallbacksAndMessages(null); covers.release();
         io.execute(store::close); io.shutdown();
     }
-    private void message(String value) { if (!released && !activity.isFinishing()) Toast.makeText(activity, value, Toast.LENGTH_LONG).show(); }
+    private void message(String value) { if (!released && !activity.isFinishing()) PocketNotice.show(activity,value); }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private GradientDrawable shape(int color, boolean border, int radius) { GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); if (border) d.setStroke(dp(1), BORDER); return d; }
     private TextView text(String value, int size, int color, boolean bold) {
@@ -469,7 +467,7 @@ public final class VideoLibraryView extends LinearLayout {
                 ImageView cover=new ImageView(activity);cover.setScaleType(ImageView.ScaleType.FIT_CENTER);cover.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);media.addView(cover,new FrameLayout.LayoutParams(-1,-1));
                 ImageView play=new ImageView(activity);play.setImageDrawable(new LibraryIcon("play",Color.WHITE));play.setPadding(dp(9),dp(9),dp(9),dp(9));play.setBackground(shape(0xA6171a1c,false,20));play.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
                 media.addView(play,new FrameLayout.LayoutParams(dp(40),dp(40),Gravity.CENTER));
-                ProgressBar progress=new ProgressBar(activity,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);progress.setPadding(0,0,0,0);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(palette.accent));progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x66383E3C));progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                ProgressBar progress=new PocketProgressBar(activity,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);progress.setPadding(0,0,0,0);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(palette.accent));progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x66383E3C));progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
                 media.addView(progress,new FrameLayout.LayoutParams(-1,dp(3),Gravity.BOTTOM));
                 TextView time=text("",11,Color.WHITE,true);time.setGravity(Gravity.CENTER);time.setPadding(dp(6),dp(2),dp(6),dp(2));time.setBackground(shape(0xc2171a1c,false,5));
                 FrameLayout.LayoutParams overlay=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.END);overlay.setMargins(dp(6),dp(6),dp(6),dp(6));media.addView(time,overlay);

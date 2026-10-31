@@ -1,6 +1,5 @@
 package dev.streampocket;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
@@ -95,7 +94,7 @@ public final class MarkerEditor028RenderTest {
             View decor=a.getWindow().getDecorView();layout(decor,412,915);idle();
             Rect bounds=new Rect();View action=get(a,"trimExportButton",View.class);assertTrue(action.getGlobalVisibleRect(bounds));assertEquals(action.getHeight(),bounds.height());assertTrue(bounds.bottom<=decor.getHeight());
             capture(decor,412,915,"03-editor-range-native-view-reference-stills");
-            get(a,"trimExportButton",Button.class).performClick();AlertDialog dialog=(AlertDialog)ShadowDialog.getLatestDialog();assertNotNull(dialog);
+            get(a,"trimExportButton",Button.class).performClick();PocketDialog dialog=(PocketDialog)ShadowDialog.getLatestDialog();assertNotNull(dialog);
             View custom=dialog.findViewById(android.R.id.custom);if(custom instanceof ViewGroup){ViewGroup group=(ViewGroup)custom;for(int i=0;i<group.getChildCount();i++)if(group.getChildAt(i) instanceof android.widget.LinearLayout){((android.widget.LinearLayout)group.getChildAt(i)).addView(note(app,"原生 View 布局 · 非真机"));break;}}
             capture(dialog.getWindow().getDecorView(),360,312,"04-export-review-native-view-reference-stills");dialog.dismiss();
             RuntimeEnvironment.setQualifiers("w320dp-h640dp-xhdpi");layout(decor,320,640);idle();assertTrue(action.getGlobalVisibleRect(bounds));assertEquals(action.getHeight(),bounds.height());

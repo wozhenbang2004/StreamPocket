@@ -1,7 +1,6 @@
 package dev.streampocket;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -112,7 +111,7 @@ public final class LibraryPlaybackUiTest {
         for(boolean list:new boolean[]{false,true}){
             if(list){described(library,"切换详细列表").performClick();layout();}
             View cell=grid.getChildAt(0);tap(field(cell.getTag(),"menu",ImageView.class));
-            AlertDialog menu=(AlertDialog)ShadowDialog.getLatestDialog();assertNotNull(menu);assertTrue(menu.isShowing());assertNull(Shadows.shadowOf(activity).getNextStartedActivity());menu.dismiss();
+            PocketDialog menu=(PocketDialog)ShadowDialog.getLatestDialog();assertNotNull(menu);assertTrue(menu.isShowing());assertNull(Shadows.shadowOf(activity).getNextStartedActivity());menu.dismiss();
             View cover=field(cell.getTag(),"cover",ImageView.class);Rect rect=bounds(library,cover);long time=SystemClock.uptimeMillis();
             dispatch(MotionEvent.ACTION_DOWN,rect.centerX(),rect.centerY(),time);Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(android.view.ViewConfiguration.getLongPressTimeout()+100));
             dispatch(MotionEvent.ACTION_UP,rect.centerX(),rect.centerY(),time);Shadows.shadowOf(Looper.getMainLooper()).idle();layout();

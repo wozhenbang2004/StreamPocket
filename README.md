@@ -2,15 +2,16 @@
 
 Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下载到手机，再播放、整理、标记和剪辑。
 
-**当前版本：0.2.13** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.2.13/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.13)
+**当前版本：0.3.0** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.0/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.0)
 
-## 0.2.13 更新
+## 0.3.0 更新
 
-- 统一视频库与下载页的播放入口，移除可能遮挡视频画面的封面共享转场。
-- 更新安装包按版本独立保存；安装返回后检查实际版本，未完成升级时提供明确提示和重试。
-- 调整更新页按钮样式。
-
-0.2.11 用户若应用内更新后仍停在旧版本，请在 Release 下载带版本号的 `StreamPocket-0.2.13-arm64.apk` 直接覆盖安装，无需卸载。
+- 统一应用内面板、菜单、按钮、开关、单选、输入和进度样式，适配浅色与深色。
+- 待下载结果采用紧凑列表；下载筛选支持点击与横向拖动，解析、重试和下载继续按队列处理。
+- 调整视频库、播放器工具、剪辑、账号与设置界面；片段移除后可撤销。
+- 更新页重新排版，格式化显示更新说明，并显示实际安装版本、提供安装信息复制。
+- 应用内更新采用独立的系统安装会话，校验暂存内容后进入确认；取消或失败时保留明确的重试入口。
+- 视频库与下载页使用一致的播放入口，移除封面共享转场，避免静态封面遮挡播放画面。
 
 ## 0.2.12 更新
 
@@ -37,7 +38,7 @@ Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下
 
 ## 安装与更新
 
-1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.13) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
+1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.0) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
 2. 已安装拾流时直接覆盖更新，**不要卸载或清除数据**。新版沿用原安装身份和签名，保留账号、下载记录、视频库、标记与草稿。
 3. 应用内打开 **设置 → 高级与关于 → 应用更新**。确认下载后，本页显示进度，校验完成自动进入系统安装确认；最后一步由你确认。
 

@@ -19,14 +19,14 @@ public final class UiTheme {
         public final boolean dark;
         private Palette(boolean night) {
             dark=night;
-            bg=night?0xFF0F1215:0xFFF6F7F5;
+            bg=night?0xFF0F1215:0xFFF5F6F8;
             surface=night?0xFF1B2024:0xFFFFFFFF;
             ink=night?0xFFEEF1F2:0xFF171A1C;
-            muted=night?0xFFA6B0B4:0xFF64716F;
-            line=night?0xFF343E43:0xFFDFE5E1;
+            muted=night?0xFFA6B0B4:0xFF69707D;
+            line=night?0xFF343E43:0xFFE4E7EC;
             accent=night?0xFF70B8A8:0xFF397D72;
             accentSoft=night?0xFF233D38:0xFFE3EFEB;
-            control=night?0xFF293035:0xFFEDF0ED;
+            control=night?0xFF293035:0xFFEEF0F4;
             danger=night?0xFFF0A8A0:0xFF9D3E39;
         }
     }
@@ -36,6 +36,7 @@ public final class UiTheme {
                 (context.getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES);
         return new Palette(night);
     }
+    static Palette darkPalette(){return new Palette(true);}
     /** Call before Activity.onCreate so dialogs and stock widgets inherit the same palette. */
     public static void apply(Activity activity) {
         activity.setTheme(get(activity).dark?R.style.DarkAppTheme:R.style.LightAppTheme);
@@ -64,9 +65,9 @@ public final class UiTheme {
         view.setOnTouchListener((v,event)->{
             if(!motionEnabled(v.getContext())||!v.isEnabled())return false;
             if(event.getActionMasked()==MotionEvent.ACTION_DOWN){
-                v.animate().cancel();v.animate().scaleX(.975f).scaleY(.975f).setDuration(100).setInterpolator(new DecelerateInterpolator()).start();
+                v.animate().cancel();v.animate().translationY(v.getResources().getDisplayMetrics().density).setDuration(90).setInterpolator(new DecelerateInterpolator()).start();
             } else if(event.getActionMasked()==MotionEvent.ACTION_UP||event.getActionMasked()==MotionEvent.ACTION_CANCEL){
-                v.animate().cancel();v.animate().scaleX(1f).scaleY(1f).setDuration(180).setInterpolator(new OvershootInterpolator(.6f)).start();
+                v.animate().cancel();v.animate().translationY(0).setDuration(170).setInterpolator(new OvershootInterpolator(.6f)).start();
             }
             return false;
         });

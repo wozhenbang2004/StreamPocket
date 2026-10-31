@@ -1,7 +1,6 @@
 package dev.streampocket;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -113,10 +112,10 @@ public final class Library022UiTest {
         try(LibraryStore store=new LibraryStore(app)){store.addMarker(first,5000,"保留前的标记");draft=store.createProject("保留草稿");store.addClip(draft,first,0,10000);}
         open();GridView grid=field(library,"grid",GridView.class);
         grid.getOnItemLongClickListener().onItemLongClick(grid,grid.getChildAt(0),0,grid.getAdapter().getItemId(0));grid.performItemClick(grid.getChildAt(1),1,grid.getAdapter().getItemId(1));
-        field(library,"removeSelection",TextView.class).performClick();AlertDialog confirm=(AlertDialog)ShadowDialog.getLatestDialog();
+        field(library,"removeSelection",TextView.class).performClick();PocketDialog confirm=(PocketDialog)ShadowDialog.getLatestDialog();
         assertTrue(text(confirm.getWindow().getDecorView()).contains("原视频文件"));
         try(LibraryStore store=new LibraryStore(app)){assertNotNull(store.video(first));assertNotNull(store.video(second));}
-        confirm.getButton(AlertDialog.BUTTON_POSITIVE).performClick();await();
+        confirm.getButton(PocketDialog.BUTTON_POSITIVE).performClick();await();
         assertEquals(0,grid.getAdapter().getCount());
         assertEquals(android.widget.AdapterView.INVALID_ROW_ID,grid.getAdapter().getItemId(0));
         try(LibraryStore store=new LibraryStore(app)){

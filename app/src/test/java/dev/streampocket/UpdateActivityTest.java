@@ -1,6 +1,5 @@
 package dev.streampocket;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -27,7 +26,7 @@ import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.GraphicsMode;
 import org.robolectric.annotation.LooperMode;
-import org.robolectric.shadows.ShadowAlertDialog;
+import org.robolectric.shadows.ShadowDialog;
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
@@ -56,9 +55,9 @@ public final class UpdateActivityTest {
         AppUpdates updates=AppUpdates.get(app);set(updates,"state",new AppUpdates.Snapshot(AppUpdates.Phase.AVAILABLE,offer,"发现新版本，下载需你确认",0));
         try(ActivityController<UpdateActivity> controller=Robolectric.buildActivity(UpdateActivity.class).create().start().resume()){
             UpdateActivity activity=controller.get();Shadows.shadowOf(Looper.getMainLooper()).idle();
-            ((Button)field(activity,"primary")).performClick();AlertDialog dialog=ShadowAlertDialog.getLatestAlertDialog();assertNotNull(dialog);
+            ((Button)field(activity,"primary")).performClick();PocketDialog dialog=(PocketDialog)ShadowDialog.getLatestDialog();assertNotNull(dialog);
             assertEquals("No download before consent",AppUpdates.Phase.AVAILABLE,updates.snapshot().phase);
-            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();assertEquals(AppUpdates.Phase.AVAILABLE,updates.snapshot().phase);
+            dialog.getButton(PocketDialog.BUTTON_NEGATIVE).performClick();assertEquals(AppUpdates.Phase.AVAILABLE,updates.snapshot().phase);
             File only=new File(app.getFilesDir(),"app-updates/ready/update.apk");assertEquals("content",FileProvider.getUriForFile(app,app.getPackageName()+".updates",only).getScheme());
             try{FileProvider.getUriForFile(app,app.getPackageName()+".updates",new File(app.getFilesDir(),"accounts/private-fixture"));fail("Private accounts must never be shared");}catch(IllegalArgumentException expected){}
         }

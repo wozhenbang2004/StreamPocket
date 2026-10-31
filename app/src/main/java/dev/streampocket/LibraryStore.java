@@ -378,6 +378,17 @@ public final class LibraryStore implements Closeable {
             db.delete("edit_clip", "id=?", strings(clipId)); normalizePositions(db, project); db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
     }
+    public synchronized void restoreClip(JSONObject clip) {
+        long projectId=clip.optLong("projectId"),id=clip.optLong("id");
+        if(project(projectId)==null||id<=0||!localUri(clip.optString("uri")))throw new IllegalArgumentException("原草稿已不存在，无法撤销移除");
+        SQLiteDatabase db=helper.getWritableDatabase();db.beginTransaction();
+        try{
+            List<Long> ids=clipIds(db,projectId);if(ids.contains(id)){db.setTransactionSuccessful();return;}
+            ContentValues values=new ContentValues();values.put("id",id);values.put("project_id",projectId);long videoId=clip.optLong("videoId");if(video(videoId)==null)values.putNull("video_id");else values.put("video_id",videoId);
+            values.put("uri",clip.optString("uri"));values.put("title",clip.optString("title"));values.put("start_ms",clip.optLong("startMs"));values.put("end_ms",clip.optLong("endMs"));values.put("position",ids.size());
+            db.insertOrThrow("edit_clip",null,values);ids.add(Math.max(0,Math.min(ids.size(),clip.optInt("position"))),id);writePositions(db,ids);db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+    }
     public synchronized void moveClip(long projectId, long clipId, int delta) {
         if (delta == 0) return;
         SQLiteDatabase db = helper.getWritableDatabase(); db.beginTransaction();

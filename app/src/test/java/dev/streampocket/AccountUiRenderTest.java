@@ -1,7 +1,6 @@
 package dev.streampocket;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -13,7 +12,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.Switch;
 import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -83,7 +81,7 @@ public final class AccountUiRenderTest {
             assertNotNull(findButton(savedContent,"打开官方登录页"));
             assertNotNull(findButton(savedContent,"清除本机登录信息"));
             assertNotNull(findText(savedContent,"是否仍然有效，以源站实际响应为准。"));
-            Switch enabled=findSwitch(savedContent);assertNotNull(enabled);assertTrue(enabled.isChecked());
+            PocketSwitch enabled=findSwitch(savedContent);assertNotNull(enabled);assertTrue(enabled.isChecked());
             capture(savedContent,"013-account-saved-metadata-fixture");saved.dismiss();
             invoke(activity,"showTab",new Class<?>[]{String.class},"new");drain(activity);
             assertEquals("Account navigation must preserve the pending link",draft,field(activity,"input",EditText.class).getText().toString());
@@ -107,9 +105,9 @@ public final class AccountUiRenderTest {
         return null;
     }
     private static Button findButton(View view,String exact) {TextView found=findText(view,exact);return found instanceof Button?(Button)found:null;}
-    private static Switch findSwitch(View view) {
-        if(view instanceof Switch)return (Switch)view;
-        if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++){Switch found=findSwitch(group.getChildAt(i));if(found!=null)return found;}}
+    private static PocketSwitch findSwitch(View view) {
+        if(view instanceof PocketSwitch)return (PocketSwitch)view;
+        if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++){PocketSwitch found=findSwitch(group.getChildAt(i));if(found!=null)return found;}}
         return null;
     }
     private static void capture(View decor,String name) throws Exception {

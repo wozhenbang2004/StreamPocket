@@ -34,6 +34,7 @@
         <activity android:name=".EditorActivity" android:exported="false"
             android:windowSoftInputMode="adjustResize" />
         <activity android:name=".UpdateActivity" android:exported="false" />
+        <receiver android:name=".UpdateInstallReceiver" android:exported="false" />
         <receiver android:name=".UpdateDownloadReceiver" android:exported="true"
             android:permission="android.permission.SEND_DOWNLOAD_COMPLETED_INTENTS">
             <intent-filter>

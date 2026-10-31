@@ -1,6 +1,5 @@
 package dev.streampocket;
 
-import android.app.AlertDialog;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
@@ -177,14 +176,14 @@ public final class PlayerHighlightUiTest {
             PlayerActivity activity=controller.create().start().resume().visible().get(); awaitWorker(activity);
             assertNull(field(activity,"player",Object.class));
             Button bookmark=field(activity,"bookmarkButton",Button.class);
-            assertFalse(bookmark.isEnabled()); assertEquals(0xFFA1A1AA,bookmark.getCurrentTextColor());
+            assertFalse(bookmark.isEnabled()); assertEquals(UiTheme.darkPalette().muted,bookmark.getCurrentTextColor());
             assertTrue(bookmark.getMinimumHeight()>=Math.round(44*activity.getResources().getDisplayMetrics().density));
             android.graphics.drawable.Drawable disabledBackground=bookmark.getBackground();
             if(disabledBackground instanceof android.graphics.drawable.RippleDrawable)
                 disabledBackground=((android.graphics.drawable.RippleDrawable)disabledBackground).getDrawable(0);
             disabledBackground=disabledBackground.getCurrent();
             assertTrue(disabledBackground instanceof GradientDrawable);
-            assertEquals(0xFF27272A,((GradientDrawable)disabledBackground).getColor().getDefaultColor());
+            assertEquals(UiTheme.darkPalette().control,((GradientDrawable)disabledBackground).getColor().getDefaultColor());
             assertTrue(findDescription(activity.getWindow().getDecorView(),"返回视频库").isEnabled());
             assertTrue(field(activity,"status",TextView.class).getText().toString().contains("已有精彩标记仍保留"));
             capture(activity.getWindow().getDecorView(),"10-player-neutral-disabled-missing-fixture");
@@ -209,7 +208,7 @@ public final class PlayerHighlightUiTest {
     private static void saveRange(PlayerActivity activity) throws Exception { field(activity,"saveRangeButton",Button.class).performClick(); awaitWorker(activity); }
     private static void openRangeViaMenu(PlayerActivity activity) throws Exception { field(activity,"markerOptionsButton",View.class).performLongClick(); idle(); TextView range=findText(field(activity,"markerPanel",View.class),"标记精彩片段"); assertNotNull(range); range.performClick(); idle(); }
     private static void clickPopupItem(String title) {
-        AlertDialog menu=(AlertDialog)ShadowDialog.getLatestDialog(); assertNotNull(menu);
+        PocketDialog menu=(PocketDialog)ShadowDialog.getLatestDialog(); assertNotNull(menu);
         for(int i=0;i<menu.getListView().getAdapter().getCount();i++) {
             if(title.equals(menu.getListView().getAdapter().getItem(i).toString())) {
                 menu.getListView().performItemClick(null,i,i); idle(); return;

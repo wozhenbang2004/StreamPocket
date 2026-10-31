@@ -1,6 +1,5 @@
 package dev.streampocket;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -80,9 +79,9 @@ public final class MarkerEditor028Test {
     }
     @Test public void confirmedSingleClipExportIsNotStartedByOpeningTheReviewAndCancelKeepsDraftEmpty()throws Exception{
         EditorActivity a=editor();field(a,"trimExportButton",Button.class).performClick();
-        AlertDialog review=(AlertDialog)ShadowDialog.getLatestDialog();assertNotNull(review);assertEquals("开始导出",review.getButton(AlertDialog.BUTTON_POSITIVE).getText().toString());
+        PocketDialog review=(PocketDialog)ShadowDialog.getLatestDialog();assertNotNull(review);assertEquals("开始导出",review.getButton(PocketDialog.BUTTON_POSITIVE).getText().toString());
         assertTrue(store.clips(project).isEmpty());assertFalse(ExportService.isRunning(project));
-        review.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();assertTrue(store.clips(project).isEmpty());
+        review.getButton(PocketDialog.BUTTON_NEGATIVE).performClick();assertTrue(store.clips(project).isEmpty());
     }
     @Test public void exactInputsOutsideZoomedWindowRevealTheSelectedEndpointsAgain()throws Exception{
         EditorActivity a=editor();ClipRangeView range=field(a,"rangeView",ClipRangeView.class);range.zoomToSelection();assertTrue(range.getWindowEndMs()<100800);

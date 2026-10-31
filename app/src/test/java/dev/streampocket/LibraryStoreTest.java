@@ -41,6 +41,12 @@ public final class LibraryStoreTest {
     }
     private JSONObject completed(String taskId) throws Exception { return completed(taskId, Uri.fromFile(fixture).toString(), "本地测试视频"); }
 
+    @Test public void removedClipCanBeRestoredAtItsPositionWithTheSameIdentity()throws Exception{
+        long video=store.upsertCompletedDownload(completed("undo"));long project=store.createProject("撤销样例");long first=store.addClip(project,video,1000,2000),second=store.addClip(project,video,3000,5000);
+        JSONObject saved=store.clips(project).get(0);store.removeClip(first);store.restoreClip(saved);store.restoreClip(saved);
+        java.util.List<JSONObject> restored=store.clips(project);assertEquals(2,restored.size());assertEquals(first,restored.get(0).optLong("id"));assertEquals(second,restored.get(1).optLong("id"));assertEquals(1000,restored.get(0).optLong("startMs"));assertEquals(2000,restored.get(0).optLong("endMs"));
+        store.removeClip(first);store.removeVideoRecord(video);store.restoreClip(saved);assertEquals(0,store.clips(project).get(0).optLong("videoId"));assertEquals(saved.optString("uri"),store.clips(project).get(0).optString("uri"));
+    }
     @Test public void existingQueueImportsOnlyCompletedAndDeduplicatesTaskAndUri() throws Exception {
         JSONObject done = completed("done");
         JSONObject duplicateUri = completed("duplicate");

@@ -1,7 +1,6 @@
 package dev.streampocket;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.Intent;
 import android.graphics.Typeface;
@@ -17,9 +16,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
-import android.widget.Switch;
 import android.widget.TextView;
-import androidx.core.content.FileProvider;
 import java.io.File;
 import java.util.Locale;
 
@@ -28,11 +25,11 @@ public final class UpdateActivity extends Activity {
     private final Handler main=new Handler(Looper.getMainLooper());
     private AppUpdates updates;
     private UiTheme.Palette palette;
-    private TextView status,version,notes,detail;
+    private TextView status,version,notes,detail,continuation;
     private Button primary,cancel;
     private ProgressBar progress;
     private boolean visible,preparingInstall;
-    private AlertDialog sourceDialog;
+    private PocketDialog sourceDialog;
     private final AppUpdates.Listener listener=this::render;
     private final Runnable poll=new Runnable(){@Override public void run(){if(!visible)return;updates.refresh();main.postDelayed(this,1000);}};
 
@@ -40,26 +37,31 @@ public final class UpdateActivity extends Activity {
         UiTheme.apply(this);super.onCreate(saved);palette=UiTheme.get(this);updates=AppUpdates.get(this);
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(palette.bg);root.setPadding(dp(20),dp(12),dp(20),dp(20));
         root.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(dp(20),insets.getSystemWindowInsetTop()+dp(12),dp(20),insets.getSystemWindowInsetBottom()+dp(20));return insets;});
-        Button back=button("‹ 返回",false);back.setOnClickListener(v->finish());root.addView(back,new LinearLayout.LayoutParams(dp(80),dp(48)));
-        ScrollView scroll=new ScrollView(this);LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        add(body,text("应用更新",26,true),16);add(body,text("当前版本 "+BuildConfig.VERSION_NAME,13,false),8);
-        status=text("",18,true);add(body,status,28);
-        version=text("",15,true);add(body,version,14);detail=text("",13,false);add(body,detail,6);
-        progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);add(body,progress,16);
-        primary=button("检查更新",true);add(body,primary,24);primary.setOnClickListener(v->primaryAction());
-        cancel=button("取消下载",false);add(body,cancel,8);cancel.setOnClickListener(v->new AlertDialog.Builder(this).setTitle(updates.snapshot().phase==AppUpdates.Phase.READY?"删除已下载的安装包？":"取消本次更新下载？")
+        LinearLayout bar=new LinearLayout(this);bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        Button back=PocketButton.of(this,"",PocketButton.Role.QUIET);PocketIcon arrow=new PocketIcon("back",palette.ink);arrow.setBounds(0,0,dp(22),dp(22));back.setCompoundDrawables(arrow,null,null,null);back.setPadding(dp(12),0,dp(12),0);back.setContentDescription("返回");back.setOnClickListener(v->finish());bar.addView(back,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        TextView title=text("应用更新",20,true);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));root.addView(bar);
+        ScrollView scroll=new ScrollView(this);scroll.setClipToPadding(false);LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        add(body,text(updates.installedLabel(),13,false),8);
+        LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(18),dp(18),dp(18),dp(18));GradientDrawable face=new GradientDrawable();face.setColor(palette.surface);face.setCornerRadius(dp(16));card.setBackground(face);add(body,card,20);
+        status=text("",17,true);add(card,status,0);
+        version=text("",24,true);add(card,version,16);detail=text("",13,false);add(card,detail,6);
+        progress=new PocketProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);add(card,progress,16);progress.getLayoutParams().height=dp(5);
+        continuation=text("下载完成后自动校验并进入系统安装确认",12,false);add(card,continuation,10);
+        primary=button("检查更新",true);add(card,primary,20);primary.setOnClickListener(v->primaryAction());
+        cancel=PocketButton.of(this,"取消下载",PocketButton.Role.QUIET);add(card,cancel,6);cancel.setOnClickListener(v->new PocketDialog.Builder(this).setTitle(updates.snapshot().phase==AppUpdates.Phase.READY?"删除已下载的安装包？":"取消本次更新下载？")
                 .setMessage("只删除本次更新缓存，不影响现有应用、登录信息或视频。")
                 .setNegativeButton("保留",null).setPositiveButton("确认取消",(d,w)->updates.cancel()).show());
         notes=text("",14,false);notes.setTextIsSelectable(true);add(body,notes,24);
-        Switch automatic=new Switch(this);automatic.setText("打开应用时检查更新");automatic.setTextColor(palette.ink);automatic.setTextSize(14);automatic.setMinHeight(dp(56));automatic.setChecked(updates.automatic());automatic.setOnCheckedChangeListener((v,checked)->updates.automatic(checked));add(body,automatic,28);
-        add(body,text("每天最多自动检查一次。确认下载后，本页显示进度，完成校验后自动打开系统安装确认；最后一步仍由你确认。",12,false),4);
-        Button source=button("查看 GitHub 发布页 ↗",false);add(body,source,14);source.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(UpdateOffer.REPO+"/releases")));}catch(RuntimeException unavailable){new AlertDialog.Builder(this).setMessage("没有可打开网页的应用").setPositiveButton("知道了",null).show();}});
+        PocketSwitch automatic=new PocketSwitch(this);automatic.setText("打开应用时检查更新");automatic.setChecked(updates.automatic());automatic.setOnCheckedChangeListener((v,checked)->updates.automatic(checked));add(body,automatic,20);
+        add(body,text("每天最多检查一次。下载完成后校验安装包，并进入系统安装确认。",12,false),4);
+        Button source=PocketButton.of(this,"GitHub 发布页",PocketButton.Role.QUIET);add(body,source,12);source.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(UpdateOffer.REPO+"/releases")));}catch(RuntimeException unavailable){new PocketDialog.Builder(this).setMessage("没有可打开网页的应用").setPositiveButton("知道了",null).show();}});
+        Button diagnostic=PocketButton.of(this,"复制安装信息",PocketButton.Role.QUIET);add(body,diagnostic,0);diagnostic.setOnClickListener(v->{android.content.ClipboardManager clipboard=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);clipboard.setPrimaryClip(ClipData.newPlainText("拾流安装信息",updates.installationDetails()));PocketNotice.show(this,"安装信息已复制");});
         setContentView(root);UiTheme.systemBars(this);root.requestApplyInsets();render(updates.snapshot());
     }
     private void primaryAction(){
         AppUpdates.Snapshot state=updates.snapshot();
         if(state.phase==AppUpdates.Phase.AVAILABLE&&state.offer!=null){
-            new AlertDialog.Builder(this).setTitle("下载 "+state.offer.version+"？")
+            new PocketDialog.Builder(this).setTitle("下载 "+state.offer.version+"？")
                     .setMessage("完整安装包 "+size(state.offer.size)+"，使用当前网络（可能产生移动流量）。本页显示下载进度，完成校验后自动打开手机系统安装确认，现有数据保留。")
                     .setNegativeButton("暂不下载",null).setPositiveButton("下载更新",(d,w)->updates.download()).show();
         }else if(state.phase==AppUpdates.Phase.READY&&state.offer!=null){
@@ -71,7 +73,7 @@ public final class UpdateActivity extends Activity {
     private boolean needsSourcePermission(){return Build.VERSION.SDK_INT>=26&&!getPackageManager().canRequestPackageInstalls();}
     private void requestSourcePermission(UpdateOffer offer){
         if(sourceDialog!=null||!visible)return;updates.markSourcePrompted(offer);
-        sourceDialog=new AlertDialog.Builder(this).setTitle("允许拾流请求安装更新")
+        sourceDialog=new PocketDialog.Builder(this).setTitle("允许拾流请求安装更新")
                 .setMessage("请在系统设置中允许此来源。开启后返回，本页会继续校验并打开系统安装确认，不必再点安装。最终仍由你确认，不要卸载旧版本。")
                 .setNegativeButton("暂不",null).setPositiveButton("打开系统设置",(d,w)->{
                     try{startActivityForResult(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+getPackageName())),72);}
@@ -89,41 +91,38 @@ public final class UpdateActivity extends Activity {
             if(updates.claimInstaller(offer))launchInstaller(file);
         });
     }
-    private void launchInstaller(File file){
-        try{
-            Uri uri=FileProvider.getUriForFile(this,getPackageName()+".updates",file);
-            Intent install=new Intent(Intent.ACTION_INSTALL_PACKAGE).setDataAndType(uri,"application/vnd.android.package-archive")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION).putExtra(Intent.EXTRA_RETURN_RESULT,true);
-            install.setClipData(ClipData.newRawUri("拾流更新",uri));startActivityForResult(install,71);
-        }catch(RuntimeException unavailable){showInstallError();}
+    private void launchInstaller(File file){AppUpdates.Snapshot state=updates.snapshot();if(state.offer!=null)updates.stageInstall(state.offer,file);}
+    private void showPendingConfirmation(AppUpdates.Snapshot state){
+        if(!visible||state.offer==null)return;Intent confirm=updates.takeInstallConfirmation(state.offer);if(confirm==null)return;
+        try{startActivityForResult(confirm,71);}catch(RuntimeException unavailable){updates.installationLaunchFailed(state.offer);showInstallError();}
     }
-    private void showInstallError(){new AlertDialog.Builder(this).setTitle("暂时无法打开系统安装")
+    private void showInstallError(){new PocketDialog.Builder(this).setTitle("暂时无法打开系统安装")
             .setMessage("安装包已保留，可返回后重试或检查此来源的安装权限。现有应用和数据未删除。")
             .setPositiveButton("知道了",null).show();}
     private void render(AppUpdates.Snapshot state){
         if(status==null)return;if(!state.active())preparingInstall=false;if(visible)updates.clearDownloadReminder();
         if(visible&&state.phase==AppUpdates.Phase.READY&&state.offer!=null)updates.notifiedReady(state.offer.code);status.setText(state.message);boolean offered=state.offer!=null;
         version.setVisibility(offered?View.VISIBLE:View.GONE);detail.setVisibility(offered?View.VISIBLE:View.GONE);notes.setVisibility(offered?View.VISIBLE:View.GONE);
-        if(offered){version.setText(state.offer.version+" · "+size(state.offer.size));detail.setText("完整安装包 · 覆盖更新，保留现有数据");notes.setText("更新内容\n\n"+(state.offer.notes.isEmpty()?"此版本未提供更新说明。":state.offer.notes));}
+        if(offered){version.setText(state.offer.version);detail.setText(size(state.offer.size)+" · 覆盖更新，保留现有数据");notes.setText(ReleaseNotes.format(state.offer.notes));}
         boolean downloading=state.phase==AppUpdates.Phase.DOWNLOADING||state.phase==AppUpdates.Phase.PAUSED;
         progress.setVisibility(downloading||state.phase==AppUpdates.Phase.VERIFYING||state.phase==AppUpdates.Phase.CHECKING?View.VISIBLE:View.GONE);
         progress.setIndeterminate(!downloading||!offered);if(downloading&&offered){int percent=(int)Math.min(100,state.downloaded*100/state.offer.size);progress.setProgress((int)Math.min(1000,state.downloaded*1000/state.offer.size));progress.setContentDescription("更新下载 "+percent+"%");detail.setText(percent+"% · "+size(state.downloaded)+" / "+size(state.offer.size));}
         boolean ready=state.phase==AppUpdates.Phase.READY&&offered;
         boolean launched=ready&&updates.installerLaunched(state.offer),permission=ready&&needsSourcePermission();
         if(ready)status.setText(launched?(!updates.installationMessage(state.offer).isEmpty()?updates.installationMessage(state.offer):"等待系统安装结果；返回后会检查实际版本"):permission?"需要允许此来源，开启后返回会自动继续":"校验完成，正在衔接系统安装确认…");
-        primary.setVisibility(ready&&!launched&&!permission?View.GONE:View.VISIBLE);
+        primary.setVisibility(downloading||ready&&!launched&&!permission?View.GONE:View.VISIBLE);continuation.setVisibility(downloading?View.VISIBLE:View.GONE);
         primary.setEnabled(!downloading&&state.phase!=AppUpdates.Phase.CHECKING&&state.phase!=AppUpdates.Phase.VERIFYING);
         primary.setAlpha(primary.isEnabled()?1f:.5f);
         primary.setText(state.phase==AppUpdates.Phase.AVAILABLE?"下载更新":launched?"重新打开系统确认":permission?"允许此来源":state.phase==AppUpdates.Phase.CHECKING?"正在检查…":state.phase==AppUpdates.Phase.VERIFYING?"正在校验…":downloading?"下载完成后自动继续":"检查更新");
         cancel.setVisibility(state.active()?View.VISIBLE:View.GONE);cancel.setText(state.phase==AppUpdates.Phase.READY?"删除安装包":"取消下载");
-        continueInstall(state);
+        showPendingConfirmation(state);continueInstall(state);
     }
-    @Override protected void onResume(){super.onResume();visible=true;updates.clearDownloadReminder();updates.listen(listener);main.post(poll);}
+    @Override protected void onResume(){super.onResume();visible=true;updates.clearDownloadReminder();updates.resumeInstallation();updates.listen(listener);main.post(poll);}
     @Override protected void onPause(){visible=false;updates.unlisten(listener);main.removeCallbacks(poll);super.onPause();}
     @Override protected void onDestroy(){if(sourceDialog!=null)sourceDialog.dismiss();super.onDestroy();}
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==71){AppUpdates.Snapshot state=updates.snapshot();if(state.offer!=null)updates.installationReturned(state.offer,result==RESULT_OK);}if(request==71||request==72)render(updates.snapshot());}
     private TextView text(String value,int size,boolean bold){TextView view=new TextView(this);view.setText(value);view.setTextSize(size);view.setTextColor(bold?palette.ink:palette.muted);view.setLineSpacing(dp(3),1);if(bold)view.setTypeface(null,Typeface.BOLD);return view;}
-    private Button button(String label,boolean primary){Button b=new Button(this);b.setText(label);b.setAllCaps(false);b.setTextSize(14);b.setTextColor(primary?palette.surface:palette.ink);b.setMinHeight(dp(48));b.setStateListAnimator(null);b.setElevation(0);GradientDrawable shape=new GradientDrawable();shape.setColor(primary?palette.ink:palette.surface);shape.setCornerRadius(dp(12));if(!primary)shape.setStroke(dp(1),palette.line);b.setBackground(shape);UiTheme.press(b);return b;}
+    private Button button(String label,boolean primary){return PocketButton.of(this,label,primary?PocketButton.Role.PRIMARY:PocketButton.Role.SECONDARY);}
     private void add(LinearLayout parent,View child,int top){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,child instanceof Button?dp(50):-2);p.topMargin=dp(top);parent.addView(child,p);}
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
     static String size(long bytes){return String.format(Locale.ROOT,"%.1f MB",Math.max(0,bytes)/1048576d);}

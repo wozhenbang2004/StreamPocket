@@ -1,6 +1,5 @@
 package dev.streampocket;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -10,7 +9,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.Switch;
 import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -58,7 +56,7 @@ public final class Main022UiTest {
             assertTrue("Editor stays available for the next share",input.isShown());assertTrue(field(a,"parse",Button.class).isShown());assertTrue(find(page,"加入队列").isShown());
             capture(page,"01-inline-resolved-metadata-fixture");
             find(page,"画质：最高可用画质  ▾").performClick();
-            AlertDialog quality=(AlertDialog)ShadowDialog.getLatestDialog();quality.getListView().performItemClick(quality.getListView().getChildAt(1),1,1);drain(a);
+            PocketDialog quality=(PocketDialog)ShadowDialog.getLatestDialog();quality.getListView().performItemClick(quality.getListView().getChildAt(1),1,1);drain(a);
             assertNotNull(find(page,"720p · 大小待下载时确定"));assertNull("Best-format size must not be attributed to another quality",find(page,"1920 × 1080 · 预计 128.0 MB"));
             input.setText("https://x.com/example/status/9999");drain(a);assertNotNull("Typing the next link retains the current unqueued result",find(page,m.title));
             assertTrue(TaskStore.all(a).isEmpty());
@@ -91,7 +89,7 @@ public final class Main022UiTest {
             invoke(a,"showTab",new Class<?>[]{String.class},"settings");drain(a);View page=a.getWindow().getDecorView();
             for(String group:new String[]{"账户与来源","下载管理","播放与外观","高级与关于"})assertNotNull(find(page,group));
             assertEquals(View.GONE,field(a,"brand",View.class).getVisibility());assertNotNull(find(page,"跟随系统"));capture(page,"03-light-grouped-settings-fixture");
-            Switch gestures=findSwitch(page,"播放手势");assertNotNull(gestures);assertFalse(gestures.isChecked());gestures.setChecked(true);assertTrue(a.getSharedPreferences("config",0).getBoolean("player_gestures",false));
+            PocketSwitch gestures=findSwitch(page,"播放手势");assertNotNull(gestures);assertFalse(gestures.isChecked());gestures.setChecked(true);assertTrue(a.getSharedPreferences("config",0).getBoolean("player_gestures",false));
             first.saveInstanceState(saved);a.getSharedPreferences("config",0).edit().putString("appearance_theme","dark").commit();
         }finally{first.pause().stop().destroy();}
         ActivityController<MainActivity> second=Robolectric.buildActivity(MainActivity.class);
@@ -144,7 +142,7 @@ public final class Main022UiTest {
     private static <T>T field(Object o,String name,Class<T> type)throws Exception{Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);return type.cast(f.get(o));}
     private static TextView find(View view,String exact){if(view instanceof TextView&&((TextView)view).getText().toString().equals(exact))return (TextView)view;if(view instanceof ViewGroup){ViewGroup g=(ViewGroup)view;for(int n=0;n<g.getChildCount();n++){TextView found=find(g.getChildAt(n),exact);if(found!=null)return found;}}return null;}
     private static boolean containsText(View v,String value){if(v instanceof TextView&&((TextView)v).getText().toString().contains(value))return true;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++)if(containsText(((ViewGroup)v).getChildAt(i),value))return true;return false;}
-    private static Switch findSwitch(View v,String description){if(v instanceof Switch&&description.contentEquals(v.getContentDescription()))return (Switch)v;if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int n=0;n<g.getChildCount();n++){Switch found=findSwitch(g.getChildAt(n),description);if(found!=null)return found;}}return null;}
+    private static PocketSwitch findSwitch(View v,String description){if(v instanceof PocketSwitch&&description.contentEquals(v.getContentDescription()))return (PocketSwitch)v;if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int n=0;n<g.getChildCount();n++){PocketSwitch found=findSwitch(g.getChildAt(n),description);if(found!=null)return found;}}return null;}
     private static void capture(View decor,String name)throws Exception{
         float density=decor.getResources().getDisplayMetrics().density;int width=Math.round(412*density),height=Math.round(915*density);decor.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY));decor.layout(0,0,width,height);
         File root=new File(System.getProperty("user.dir"));while(root!=null&&!new File(root,"settings.gradle").isFile())root=root.getParentFile();assertNotNull(root);File output=new File(root,"docs/design/assets/022-main");assertTrue(output.isDirectory()||output.mkdirs());

@@ -1,6 +1,5 @@
 package dev.streampocket;
 
-import android.app.AlertDialog;
 import android.app.Dialog;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -127,9 +126,9 @@ public final class WhiteUiRenderTest {
             quality.performClick();
             idle();
             Dialog choice = ShadowDialog.getLatestDialog();
-            assertTrue("Quality control should reveal its choices", choice instanceof AlertDialog);
+            assertTrue("Quality control should reveal its choices", choice instanceof PocketDialog);
             capture(choice.getWindow().getDecorView(), "07-quality-options-fixture");
-            AlertDialog choices = (AlertDialog) choice;
+            PocketDialog choices = (PocketDialog) choice;
             choices.getListView().performItemClick(null, 1, 1);
             idle();
             assertNotNull("Selected quality must be shown on the current result without reopening choices",

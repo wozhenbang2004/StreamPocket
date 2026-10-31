@@ -37,6 +37,7 @@ public final class MainActivity extends Activity {
     private final Map<String,JSONObject> pendingRemoval=new LinkedHashMap<>();
     private Bundle libraryState;
     private String queueFilter="all";
+    private PocketTabs queueTabs;
     private final Runnable commitRemovals=()->commitPendingRemovals(true);
     private static final int COOKIE_REQUEST=51, NOTIFY_REQUEST=52, STORAGE_REQUEST=53, LOGIN_REQUEST=54;
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -154,7 +155,7 @@ public final class MainActivity extends Activity {
         linkEditor=column();form.addView(linkEditor,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout label=row();label.addView(text("视频链接",14,INK,true),new LinearLayout.LayoutParams(0,-2,1));
         paste=quietButton("粘贴");paste.setMinWidth(0);paste.setTextColor(ACCENT);paste.setEnabled(true);paste.setOnClickListener(v->pasteLink());label.addView(paste,new LinearLayout.LayoutParams(dp(60),dp(48)));linkEditor.addView(label);
-        input=new EditText(this);input.setTextSize(14);input.setTextColor(INK);input.setHintTextColor(MUTED);
+        input=new PocketEditText(this);input.setTextSize(14);input.setTextColor(INK);input.setHintTextColor(MUTED);
         input.setHint("粘贴一个或多个链接，也支持整段分享文案");input.setGravity(Gravity.TOP);
         input.setSingleLine(false);input.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_VARIATION_URI);input.setMinLines(2);input.setMaxLines(4);
         input.setBackground(fieldBackground());input.setPadding(dp(12),dp(12),dp(12),dp(12));input.setText(draft);input.setEnabled(true);input.setLineSpacing(dp(3),1);
@@ -167,7 +168,7 @@ public final class MainActivity extends Activity {
         failureDetails.setOnClickListener(v->showInspectionDetails());form.addView(failureDetails,new LinearLayout.LayoutParams(-1,dp(48)));c.addView(form);
         inspectionResults=column();add(c,inspectionResults,16,0);renderInspection();
         homeExtras=column();c.addView(homeExtras);
-        if(inspectedMedia.isEmpty()){
+        if(inspectedMedia.isEmpty()&&inspectionInbox.jobs.isEmpty()){
             c=homeExtras;
             LinearLayout hint=row();TextView note=text("最高可用画质 · 直接保存到手机",12,MUTED,false);hint.addView(note,new LinearLayout.LayoutParams(0,-2,1));
             Button settings=quietButton("登录设置");settings.setPadding(dp(8),0,0,0);settings.setTextSize(12);settings.setOnClickListener(v->showTab("settings"));hint.addView(settings,new LinearLayout.LayoutParams(dp(72),dp(48)));add(c,hint,4,0);
@@ -202,23 +203,24 @@ public final class MainActivity extends Activity {
         LinearLayout heading=row();heading.addView(text("待下载 · "+inspectedMedia.size()+" 个视频",14,INK,true),new LinearLayout.LayoutParams(0,-2,1));
         if(inspectedMedia.size()>1){Button all=quietButton("全部加入队列");all.setTextSize(12);all.setTextColor(ACCENT);all.setOnClickListener(v->enqueueBatch(new ArrayList<>(inspectedMedia)));heading.addView(all,new LinearLayout.LayoutParams(dp(112),dp(48)));}add(inspectionResults,heading,6,8);
         for(Engine.Media m:inspectedMedia){
-            LinearLayout item=column();item.setPadding(dp(12),dp(12),dp(12),dp(12));item.setBackground(shape(SURFACE,12,0));
-            LinearLayout media=row();media.addView(cover(m.thumbnail,"inspect:"+m.url+":"+m.id,64,64),new LinearLayout.LayoutParams(dp(64),dp(64)));
+            LinearLayout item=row();item.setGravity(Gravity.TOP);item.setPadding(dp(12),dp(12),dp(12),dp(12));item.setBackground(shape(SURFACE,14,0));
+            item.addView(cover(m.thumbnail,"inspect:"+m.url+":"+m.id,72,96),new LinearLayout.LayoutParams(dp(72),dp(96)));
             LinearLayout words=column();TextView name=text(m.title==null||m.title.isEmpty()?"未命名视频":m.title,14,INK,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);words.addView(name);
-            add(words,text(m.platform+(m.duration>0?" · "+duration(m.duration):""),12,MUTED,false),5,0);LinearLayout.LayoutParams info=new LinearLayout.LayoutParams(0,-2,1);info.leftMargin=dp(12);media.addView(words,info);item.addView(media);
+            add(words,text(m.platform+(m.duration>0?" · "+duration(m.duration):""),12,MUTED,false),4,0);LinearLayout.LayoutParams info=new LinearLayout.LayoutParams(0,-2,1);info.leftMargin=dp(12);item.addView(words,info);
             String key=InspectionBatch.key(m);int chosen=Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),m.qualities.size()-1));
-            TextView details=text(mediaSummary(m,chosen),12,MUTED,false);add(item,details,8,0);
+            TextView details=text(mediaSummary(m,chosen),12,MUTED,false);add(words,details,4,0);
             LinearLayout actions=row();Button quality=quietButton("画质："+m.qualities.get(chosen).label+"  ▾");quality.setTextSize(12);quality.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);quality.setMinWidth(0);
             quality.setOnClickListener(v->{String[] options=new String[m.qualities.size()];for(int n=0;n<options.length;n++)options[n]=m.qualities.get(n).label;
-                AlertDialog panel=new AlertDialog.Builder(this).setTitle("选择画质").setSingleChoiceItems(options,chosen,(d,which)->{qualitySelections.put(key,which);persistInspectionInbox();d.dismiss();renderInspection();}).setNegativeButton("返回",null).show();bottom(panel);});
-            actions.addView(quality,new LinearLayout.LayoutParams(0,dp(48),1));Button save=button("加入队列",true);save.setTextSize(12);save.setMinWidth(0);save.setOnClickListener(v->enqueue(m,m.qualities.get(Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),m.qualities.size()-1)))));actions.addView(save,new LinearLayout.LayoutParams(dp(94),dp(48)));add(item,actions,6,0);add(inspectionResults,item,0,10);
+                PocketDialog panel=new PocketDialog.Builder(this).setTitle("选择画质").setSingleChoiceItems(options,chosen,(d,which)->{qualitySelections.put(key,which);persistInspectionInbox();d.dismiss();renderInspection();}).setNegativeButton("返回",null).show();bottom(panel);});
+            quality.setPadding(0,0,dp(4),0);quality.setSingleLine(true);quality.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            actions.addView(quality,new LinearLayout.LayoutParams(0,dp(44),1));Button save=button("加入队列",true);save.setTextSize(12);save.setPadding(dp(10),0,dp(10),0);save.setOnClickListener(v->enqueue(m,m.qualities.get(Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),m.qualities.size()-1)))));actions.addView(save,new LinearLayout.LayoutParams(dp(82),dp(44)));add(words,actions,8,0);add(inspectionResults,item,0,10);
         }
     }
 
     private void showInspectionQueue() {
         LinearLayout content=column();content.setPadding(dp(20),dp(8),dp(20),dp(12));
         ScrollView scroll=new ScrollView(this);scroll.addView(content);
-        AlertDialog panel=new AlertDialog.Builder(this).setTitle("解析队列").setView(scroll).setNegativeButton("返回",null).create();
+        PocketDialog panel=new PocketDialog.Builder(this).setTitle("解析队列").setView(scroll).setNegativeButton("返回",null).create();
         for(InspectionInbox.Job job:new ArrayList<>(inspectionInbox.jobs)){
             LinearLayout line=row();LinearLayout labels=column();TextView link=text(job.url,13,INK,false);link.setMaxLines(2);link.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);labels.addView(link);
             String state=job.state.equals("failed")?job.message:job.state.equals("parsing")?"正在解析":job.state.equals("cancelling")?"正在取消":"等待解析";
@@ -333,7 +335,7 @@ public final class MainActivity extends Activity {
         String details="拾流 "+BuildConfig.VERSION_NAME+"\n\n"+Engine.cleanLog(lastInspectionDetails);
         TextView view=text(details,13,INK,false);view.setTextIsSelectable(true);view.setPadding(dp(22),dp(15),dp(22),dp(12));
         ScrollView scroll=new ScrollView(this);scroll.addView(view);
-        new AlertDialog.Builder(this).setTitle("解析错误详情").setView(scroll).setPositiveButton("返回",null)
+        new PocketDialog.Builder(this).setTitle("解析错误详情").setView(scroll).setPositiveButton("返回",null)
                 .setNeutralButton("复制详情",(d,w)->{
                     ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
                     if(clipboard!=null){clipboard.setPrimaryClip(ClipData.newPlainText("拾流解析错误",details));toast("错误详情已复制");}
@@ -392,10 +394,9 @@ public final class MainActivity extends Activity {
         if(!force&&signature.equals(lastQueueSignature))return;lastQueueSignature=signature;
         int previousScroll=body.getChildCount()>0&&body.getChildAt(0) instanceof ScrollView?((ScrollView)body.getChildAt(0)).getScrollY():0;
         clearArtwork(body);body.removeAllViews();LinearLayout c=scrollContent();LinearLayout heading=row();heading.addView(text("下载",24,INK,true),new LinearLayout.LayoutParams(0,-2,1));heading.addView(text("本机任务",12,MUTED,false));c.addView(heading);
-        LinearLayout filters=row();String[] labels={"全部","进行中","已完成","失败"},keys={"all","active","completed","failed"};
-        for(int i=0;i<keys.length;i++){final String key=keys[i];Button filter=quietButton(labels[i]);filter.setTextSize(12);filter.setPadding(dp(12),0,dp(12),0);filter.setMinWidth(0);filter.setTextColor(key.equals(queueFilter)?ACCENT:MUTED);
-            if(key.equals(queueFilter))filter.setBackground(shape(palette.accentSoft,12,0));filter.setSelected(key.equals(queueFilter));filter.setOnClickListener(v->{queueFilter=key;refreshQueue(true);});filters.addView(filter,new LinearLayout.LayoutParams(0,dp(48),1));}
-        add(c,filters,10,12);
+        String[] labels={"全部","进行中","已完成","失败"},keys={"all","active","completed","failed"};int selected=0;for(int n=0;n<keys.length;n++)if(keys[n].equals(queueFilter))selected=n;
+        if(queueTabs==null)queueTabs=new PocketTabs(this,labels,selected,index->{queueFilter=keys[index];refreshQueue(true);});
+        if(queueTabs.getParent() instanceof ViewGroup)((ViewGroup)queueTabs.getParent()).removeView(queueTabs);queueTabs.selection(selected);add(c,queueTabs,14,16);
         int queuePosition=0,shown=0;
         for(JSONObject task:tasks){
             String status=task.optString("status"),id=task.optString("id");if("queued".equals(status))queuePosition++;
@@ -418,11 +419,11 @@ public final class MainActivity extends Activity {
             if(!percent.isEmpty())stage.addView(text(percent,12,MUTED,false));add(content,stage,6,0);
             String size=MediaSize.taskSummary(task);if(!size.isEmpty())add(content,text(size,12,MUTED,false),4,0);
             if(active&&!"queued".equals(status)){
-                ProgressBar bar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);bar.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));bar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(LINE));bar.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(ACCENT));bar.setIndeterminate(!known);bar.setProgress((int)Math.min(99,Math.max(0,progress)));bar.setContentDescription(known?prefix+(int)progress+"%":state+"，整体完成时间暂无法估计");add(content,bar,6,0);bar.getLayoutParams().height=dp(4);
+                ProgressBar bar=new PocketProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);bar.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));bar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(LINE));bar.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(ACCENT));bar.setIndeterminate(!known);bar.setProgress((int)Math.min(99,Math.max(0,progress)));bar.setContentDescription(known?prefix+(int)progress+"%":state+"，整体完成时间暂无法估计");add(content,bar,6,0);bar.getLayoutParams().height=dp(4);
             }
             String error=task.optString("userError"),summary=error.isEmpty()?taskCompactDetail(task,known):error;
             if(!summary.isEmpty()){TextView detail=text(summary,12,error.isEmpty()?MUTED:palette.danger,false);detail.setMaxLines(2);detail.setEllipsize(android.text.TextUtils.TruncateAt.END);add(content,detail,5,0);}
-            Button more=quietButton("⋯");more.setTextSize(22);more.setContentDescription("任务更多操作："+task.optString("title"));more.setPadding(0,0,0,0);more.setMinWidth(0);more.setOnClickListener(v->showTaskActions(v,task));item.addView(more,new LinearLayout.LayoutParams(dp(48),dp(48)));
+            Button more=quietButton("");PocketIcon menuIcon=new PocketIcon("more",INK);menuIcon.setBounds(0,0,dp(24),dp(24));more.setCompoundDrawables(menuIcon,null,null,null);more.setContentDescription("任务更多操作："+task.optString("title"));more.setPadding(0,0,0,0);more.setMinWidth(0);more.setOnClickListener(v->showTaskActions(v,task));item.addView(more,new LinearLayout.LayoutParams(dp(48),dp(48)));
             item.setContentDescription(task.optString("title")+("completed".equals(status)?"，点按播放，更多查看任务详情":"，点按查看进度及详情"));
             item.setOnClickListener(v->{JSONObject current=TaskStore.get(this,id);if(current!=null){if("completed".equals(current.optString("status")))openFile(current,false);else showTask(current);}});item.setOnLongClickListener(v->{showTaskActions(v,task);return true;});
             if(pauseable||"paused".equals(status)){
@@ -470,7 +471,7 @@ public final class MainActivity extends Activity {
 
     private void showTaskActions(View anchor,JSONObject task){
         JSONObject latest=TaskStore.get(this,task.optString("id"));if(latest==null)return;task=latest;final JSONObject current=task;
-        PopupMenu menu=new PopupMenu(this,anchor);menu.getMenu().add("详情").setOnMenuItemClickListener(i->{JSONObject fresh=TaskStore.get(this,current.optString("id"));if(fresh!=null)showTask(fresh);return true;});
+        PocketMenu menu=new PocketMenu(this,anchor);menu.getMenu().add("详情").setOnMenuItemClickListener(i->{JSONObject fresh=TaskStore.get(this,current.optString("id"));if(fresh!=null)showTask(fresh);return true;});
         String status=task.optString("status"),id=task.optString("id");
         if("completed".equals(status))menu.getMenu().add("分享视频").setOnMenuItemClickListener(i->{openFile(current,true);return true;});
         if(isActive(status)&&!"cancelling".equals(status)&&!"pausing".equals(status))menu.getMenu().add("取消任务").setOnMenuItemClickListener(i->{startService(new Intent(this,DownloadService.class).setAction("dev.streampocket.CANCEL").putExtra("id",id));return true;});
@@ -591,16 +592,16 @@ public final class MainActivity extends Activity {
     private void section(LinearLayout c,String title){add(c,text(title,12,MUTED,true),22,8);}
     private LinearLayout settingsGroup(LinearLayout c){LinearLayout group=column();group.setPadding(dp(14),0,dp(14),0);group.setBackground(shape(SURFACE,16,0));c.addView(group,new LinearLayout.LayoutParams(-1,-2));return group;}
     private void switchRow(LinearLayout parent,String title,String key,boolean fallback){
-        LinearLayout r=row();r.setMinimumHeight(dp(56));r.addView(text(title,14,INK,false),new LinearLayout.LayoutParams(0,-2,1));Switch control=new Switch(this);control.setMinHeight(dp(48));control.setContentDescription(title);control.setChecked(getSharedPreferences("config",0).getBoolean(key,fallback));control.setThumbTintList(android.content.res.ColorStateList.valueOf(ACCENT));control.setOnCheckedChangeListener((v,checked)->{getSharedPreferences("config",0).edit().putBoolean(key,checked).apply();if(key.equals("clipboard_suggestions")&&!checked)hideClipboardOffer();});r.addView(control);parent.addView(r);
+        LinearLayout r=row();r.setMinimumHeight(dp(56));r.addView(text(title,14,INK,false),new LinearLayout.LayoutParams(0,-2,1));PocketSwitch control=new PocketSwitch(this);control.setMinHeight(dp(48));control.setContentDescription(title);control.setChecked(getSharedPreferences("config",0).getBoolean(key,fallback));control.setOnCheckedChangeListener((v,checked)->{getSharedPreferences("config",0).edit().putBoolean(key,checked).apply();if(key.equals("clipboard_suggestions")&&!checked)hideClipboardOffer();});r.addView(control);parent.addView(r);
     }
     private String themeLabel(){String t=getSharedPreferences("config",0).getString("appearance_theme","system");return "dark".equals(t)?"深色":"light".equals(t)?"浅色":"跟随系统";}
     private void showAppearanceSettings(){
         String[] labels={"跟随系统","浅色","深色"},values={"system","light","dark"};String value=getSharedPreferences("config",0).getString("appearance_theme","system");int selected=Arrays.asList(values).indexOf(value);
-        AlertDialog panel=new AlertDialog.Builder(this).setTitle("外观主题").setSingleChoiceItems(labels,Math.max(0,selected),(d,which)->{getSharedPreferences("config",0).edit().putString("appearance_theme",values[which]).apply();d.dismiss();recreate();}).setNegativeButton("返回",null).show();bottom(panel);
+        PocketDialog panel=new PocketDialog.Builder(this).setTitle("外观主题").setSingleChoiceItems(labels,Math.max(0,selected),(d,which)->{getSharedPreferences("config",0).edit().putString("appearance_theme",values[which]).apply();d.dismiss();recreate();}).setNegativeButton("返回",null).show();bottom(panel);
     }
     private void showSeekSettings(){
         int[] values={5,10,15,30};String[] labels={"5 秒","10 秒","15 秒","30 秒"};int now=getSharedPreferences("config",0).getInt("seek_seconds",10),selected=1;for(int i=0;i<values.length;i++)if(values[i]==now)selected=i;
-        AlertDialog panel=new AlertDialog.Builder(this).setTitle("双击快进 / 快退").setSingleChoiceItems(labels,selected,(d,which)->{getSharedPreferences("config",0).edit().putInt("seek_seconds",values[which]).apply();d.dismiss();showTab("settings");}).setNegativeButton("返回",null).show();bottom(panel);
+        PocketDialog panel=new PocketDialog.Builder(this).setTitle("双击快进 / 快退").setSingleChoiceItems(labels,selected,(d,which)->{getSharedPreferences("config",0).edit().putInt("seek_seconds",values[which]).apply();d.dismiss();showTab("settings");}).setNegativeButton("返回",null).show();bottom(panel);
     }
 
     private int downloadConnections() {
@@ -616,15 +617,15 @@ public final class MainActivity extends Activity {
         int[] values={1,4,8};String[] labels={"标准 · 1 路连接","并行 · 4 路连接（推荐）","并行 · 8 路连接"};
         int selected=downloadConnections();
         for(int i=0;i<values.length;i++){
-            RadioButton option=new RadioButton(this);option.setId(View.generateViewId());option.setTag(values[i]);
+            PocketRadio option=new PocketRadio(this);option.setId(View.generateViewId());option.setTag(values[i]);
             option.setText(labels[i]);option.setTextSize(14);option.setTextColor(INK);option.setMinHeight(dp(52));
-            option.setButtonTintList(android.content.res.ColorStateList.valueOf(INK));option.setPadding(0,dp(4),dp(4),dp(4));
+            option.setButtonTintList(android.content.res.ColorStateList.valueOf(INK));option.setPadding(dp(40),dp(4),dp(12),dp(4));
             options.addView(option,new RadioGroup.LayoutParams(-1,-2));if(values[i]==selected)option.setChecked(true);
         }
         c.addView(options,new LinearLayout.LayoutParams(-1,-2));
         add(c,text("更多连接不一定更快。实际速度取决于手机网络和源站，下次开始任务时生效。",12,MUTED,false),12,18);
         Button save=button("保存下载设置",true);c.addView(save,new LinearLayout.LayoutParams(-1,dp(48)));
-        AlertDialog panel=settingsPanel("下载与速度",c);
+        PocketDialog panel=settingsPanel("下载与速度",c);
         save.setOnClickListener(v->{
             View chosen=options.findViewById(options.getCheckedRadioButtonId());
             int value=chosen!=null&&chosen.getTag() instanceof Integer?(Integer)chosen.getTag():4;
@@ -640,9 +641,9 @@ public final class MainActivity extends Activity {
         LinearLayout platforms=column();platforms.addView(text("正在读取本机登录状态…",13,MUTED,false));c.addView(platforms);
         Button importCookie=quietButton("从 Cookie 文件导入");add(c,importCookie,16,0);
         Button clearAll=quietButton("清除全部登录信息");add(c,clearAll,0,0);
-        AlertDialog panel=settingsPanel("账号管理",c);
+        PocketDialog panel=settingsPanel("账号管理",c);
         importCookie.setOnClickListener(v->openCookieImport(panel));
-        clearAll.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("清除全部本机登录信息？")
+        clearAll.setOnClickListener(v->new PocketDialog.Builder(this).setTitle("清除全部本机登录信息？")
                 .setMessage("将清除所有平台及文件导入的登录会话。进行中的任务可能仍持有本次会话，后续新任务不再使用它们。")
                 .setNegativeButton("保留",null).setPositiveButton("全部清除",(d,w)->{
                     clearAll.setEnabled(false);importCookie.setEnabled(false);
@@ -695,15 +696,15 @@ public final class MainActivity extends Activity {
         add(c,text(state.saved?"是否仍然有效，以源站实际响应为准。":"登录后，后续解析和下载会使用此平台的会话。",13,MUTED,false),8,18);
         Button login=button(state.saved?"打开官方登录页":"登录"+platform.title,true);c.addView(login,new LinearLayout.LayoutParams(-1,dp(48)));
         TextView result=text("",13,MUTED,false);result.setVisibility(View.GONE);
-        AlertDialog panel=new AlertDialog.Builder(this).setTitle(platform.title).setView(accountPanelContent(c))
+        PocketDialog panel=new PocketDialog.Builder(this).setTitle(platform.title).setView(accountPanelContent(c))
                 .setPositiveButton("返回",(d,w)->showLoginSettings()).setOnCancelListener(d->showLoginSettings()).create();
         login.setOnClickListener(v->{
             login.setEnabled(false);
             if(!launchLogin(platform,panel))login.setEnabled(true);
         });
         if(state.saved){
-            Switch enabled=new Switch(this);enabled.setText("用于后续解析和下载");enabled.setTextSize(14);enabled.setTextColor(INK);
-            enabled.setChecked(state.enabled);enabled.setMinHeight(dp(48));enabled.setSwitchPadding(dp(12));add(c,enabled,16,0);
+            PocketSwitch enabled=new PocketSwitch(this);enabled.setText("用于后续解析和下载");enabled.setTextSize(14);enabled.setTextColor(INK);
+            enabled.setChecked(state.enabled);enabled.setMinHeight(dp(48));add(c,enabled,16,0);
             final boolean[] reverting={false};
             enabled.setOnCheckedChangeListener((control,checked)->{
                 if(reverting[0])return;
@@ -719,7 +720,7 @@ public final class MainActivity extends Activity {
                 });
             });
             Button clear=quietButton("清除本机登录信息");add(c,clear,10,0);
-            clear.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("清除"+platform.title+"登录信息？")
+            clear.setOnClickListener(v->new PocketDialog.Builder(this).setTitle("清除"+platform.title+"登录信息？")
                     .setMessage("将移除此平台保存在拾流中的登录信息。进行中的任务可能仍持有本次会话，重新解析和新任务不再使用它。")
                     .setNegativeButton("保留",null).setPositiveButton("清除",(d,w)->{
                         clear.setEnabled(false);login.setEnabled(false);enabled.setEnabled(false);
@@ -740,7 +741,7 @@ public final class MainActivity extends Activity {
         content.setPadding(dp(24),dp(12),dp(24),dp(8));ScrollView scroll=new ScrollView(this);scroll.addView(content);return scroll;
     }
 
-    private boolean launchLogin(LoginPlatform platform,AlertDialog panel) {
+    private boolean launchLogin(LoginPlatform platform,PocketDialog panel) {
         if(loginOpening)return false;
         loginOpening=true;
         try{startActivityForResult(new Intent(this,LoginActivity.class).putExtra("platform",platform.id),LOGIN_REQUEST);panel.dismiss();return true;}
@@ -749,7 +750,7 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void openCookieImport(AlertDialog panel) {
+    private void openCookieImport(PocketDialog panel) {
         Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("text/*");
         try{startActivityForResult(intent,COOKIE_REQUEST);panel.dismiss();}
         catch(ActivityNotFoundException e){toast("请先安装文件管理器");}
@@ -771,12 +772,12 @@ public final class MainActivity extends Activity {
         c.addView(text("默认跟随手机网络",14,INK,true));
         add(c,text("使用手机已有 VPN 时通常无需填写。需要独立代理时再设置。",13,MUTED,false),8,18);
         add(c,text("代理地址（可留空）",13,INK,true),0,8);
-        EditText proxy=new EditText(this);proxy.setSingleLine(true);proxy.setTextSize(14);proxy.setTextColor(INK);proxy.setHintTextColor(MUTED);
+        EditText proxy=new PocketEditText(this);proxy.setSingleLine(true);proxy.setTextSize(14);proxy.setTextColor(INK);proxy.setHintTextColor(MUTED);
         proxy.setHint("http://地址:端口 或 socks5://…");proxy.setBackground(fieldBackground());proxy.setPadding(dp(12),dp(12),dp(12),dp(12));
         proxy.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);
         proxy.setText(getSharedPreferences("config",0).getString("proxy",""));c.addView(proxy);
         Button saveProxy=button("保存网络设置",true);add(c,saveProxy,16,0);
-        AlertDialog panel=settingsPanel("网络与代理",c);
+        PocketDialog panel=settingsPanel("网络与代理",c);
         saveProxy.setOnClickListener(v->{
             String value=proxy.getText().toString().trim();
             if(!value.isEmpty())try{URI u=new URI(value);if(!Arrays.asList("http","https","socks5","socks5h").contains(u.getScheme())||u.getHost()==null||u.getPort()<1||u.getPort()>65535)throw new IllegalArgumentException();}
@@ -818,10 +819,10 @@ public final class MainActivity extends Activity {
         r.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x14397D72),shape(SURFACE,10,0),null));r.setFocusable(true);r.setClickable(true);r.setContentDescription(title+"，"+subtitle+(arrowOnly?"":"，"+actionLabel));r.setOnClickListener(v->click.run());UiTheme.press(r);parent.addView(r,new LinearLayout.LayoutParams(-1,-2));return summary;
     }
 
-    private AlertDialog settingsPanel(String title,LinearLayout content) {
-        content.setPadding(dp(20),dp(8),dp(20),dp(8));ScrollView scroll=new ScrollView(this);scroll.addView(content);AlertDialog panel=new AlertDialog.Builder(this).setTitle(title).setView(scroll).setPositiveButton("完成",null).show();bottom(panel);return panel;
+    private PocketDialog settingsPanel(String title,LinearLayout content) {
+        content.setPadding(0,dp(8),0,dp(8));ScrollView scroll=new ScrollView(this);scroll.addView(content);PocketDialog panel=new PocketDialog.Builder(this).setTitle(title).setView(scroll).setPositiveButton("完成",null).show();bottom(panel);return panel;
     }
-    private void bottom(AlertDialog panel){Window window=panel.getWindow();if(window!=null){window.setGravity(Gravity.BOTTOM);window.setBackgroundDrawable(shape(SURFACE,20,0));window.setLayout(-1,-2);window.setDimAmount(.35f);}}
+    private void bottom(PocketDialog panel){if(panel.getWindow()!=null)panel.getWindow().setGravity(Gravity.BOTTOM);}
 
     private void background(Button button,String pending,Callable<String> work,String title) {
         CharSequence original=button.getText();button.setEnabled(false);button.setText(pending);
@@ -871,7 +872,7 @@ public final class MainActivity extends Activity {
         AppUpdates updates=AppUpdates.get(this);
         if(ready){if(!updates.shouldNotifyReady(state.offer.code))return;updates.notifiedReady(state.offer.code);}
         else{if(!updates.shouldNotify(state.offer.code))return;updates.notified(state.offer.code);}
-        new AlertDialog.Builder(this).setTitle(ready?"拾流更新已下载":"拾流有新版本 "+state.offer.version)
+        new PocketDialog.Builder(this).setTitle(ready?"拾流更新已下载":"拾流有新版本 "+state.offer.version)
                 .setMessage(ready?"打开更新页后会自动复核并进入系统安装确认，最后一步由你确认。现有数据保留。":"安装包 "+UpdateActivity.size(state.offer.size)+"。可查看更新内容后决定下载，完成后进入系统安装确认。")
                 .setNegativeButton("稍后",null).setPositiveButton("查看更新",(d,w)->startActivity(new Intent(this,UpdateActivity.class))).show();
     };
@@ -890,20 +891,14 @@ public final class MainActivity extends Activity {
     private String friendly(Exception e){String m=e.getMessage();if(m==null||m.trim().isEmpty())return"操作未完成，请重试或检查内核。";return Engine.cleanLog(m);}
     private void action(LinearLayout row,String label,Runnable click){Button b=quietButton(label);b.setMinWidth(0);b.setPadding(dp(10),0,dp(10),0);b.setTextSize(12);b.setOnClickListener(v->click.run());row.addView(b,new LinearLayout.LayoutParams(-2,dp(44)));}
     private void divider(LinearLayout c){View v=new View(this);v.setBackgroundColor(LINE);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(1));p.topMargin=dp(23);p.bottomMargin=dp(23);c.addView(v,p);}
-    private void showMessage(String title,String message){TextView t=text(message,14,INK,false);t.setTextIsSelectable(true);t.setPadding(dp(22),dp(15),dp(22),dp(12));ScrollView s=new ScrollView(this);s.addView(t);new AlertDialog.Builder(this).setTitle(title).setView(s).setPositiveButton("知道了",null).show();}
-    private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_SHORT).show();}
+    private void showMessage(String title,String message){TextView t=text(message,14,INK,false);t.setTextIsSelectable(true);t.setPadding(dp(22),dp(15),dp(22),dp(12));ScrollView s=new ScrollView(this);s.addView(t);new PocketDialog.Builder(this).setTitle(title).setView(s).setPositiveButton("知道了",null).show();}
+    private void toast(String s){PocketNotice.show(this,s);}
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
     private LinearLayout row(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.HORIZONTAL);l.setGravity(Gravity.CENTER_VERTICAL);return l;}
     private TextView text(String s,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);t.setLineSpacing(dp(3),1);if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);return t;}
-    private Button button(String title,boolean primary){
-        Button b=new Button(this);b.setText(title);b.setAllCaps(false);b.setTextSize(14);b.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-        b.setTextColor(new android.content.res.ColorStateList(new int[][]{new int[]{-android.R.attr.state_enabled},new int[]{}},new int[]{MUTED,primary?(palette.dark?0xFF171A1C:Color.WHITE):INK}));
-        b.setMinHeight(dp(44));b.setPadding(dp(16),0,dp(16),0);b.setStateListAnimator(null);
-        StateListDrawable surface=new StateListDrawable();surface.addState(new int[]{-android.R.attr.state_enabled},shape(palette.control,12,primary?0:LINE));surface.addState(new int[]{},shape(primary?(palette.dark?0xFFEEF1F2:INK):SURFACE,12,primary?0:LINE));
-        b.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(primary?0x24FFFFFF:0x14397D72),surface,null));UiTheme.press(b);return b;
-    }
-    private Button quietButton(String title){Button b=button(title,false);b.setTypeface(Typeface.DEFAULT,Typeface.NORMAL);b.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x0D000000),shape(android.graphics.Color.TRANSPARENT,10,0),null));return b;}
+    private Button button(String title,boolean primary){return PocketButton.of(this,title,primary?PocketButton.Role.PRIMARY:PocketButton.Role.SECONDARY);}
+    private Button quietButton(String label){return PocketButton.of(this,label,PocketButton.Role.QUIET);}
     private StateListDrawable fieldBackground(){StateListDrawable states=new StateListDrawable();GradientDrawable focused=shape(palette.control,12,ACCENT);focused.setStroke(dp(2),ACCENT);states.addState(new int[]{android.R.attr.state_focused},focused);states.addState(new int[]{},shape(palette.control,12,0));return states;}
     private GradientDrawable shape(int color,int radius,int border){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));if(border!=0)d.setStroke(dp(1),border);return d;}
     private void add(LinearLayout parent,View child,int top,int bottom){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(top);p.bottomMargin=dp(bottom);parent.addView(child,p);}

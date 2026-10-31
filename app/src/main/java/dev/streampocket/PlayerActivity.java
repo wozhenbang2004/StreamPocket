@@ -6,7 +6,6 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.view.VelocityTracker;
 import android.view.ViewConfiguration;
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
@@ -39,7 +38,6 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
@@ -512,14 +510,14 @@ public final class PlayerActivity extends Activity {
         rangePanel=column(); rangePanel.setVisibility(View.GONE);
         add(rangePanel,text("按原视频时间保存，不受观看倍速影响。",12,MUTED,false),4,12);
         rangeStart=rangeTimeRow("开始",rangePanel); rangeEnd=rangeTimeRow("结束",rangePanel);
-        rangeName=new EditText(this); styleInput(rangeName); rangeName.setHint("片段名称（可选）"); rangeName.setContentDescription("精彩片段名称，可选");
+        rangeName=new PocketEditText(this); styleInput(rangeName); rangeName.setHint("片段名称（可选）"); rangeName.setContentDescription("精彩片段名称，可选");
         rangeName.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(200)}); rangePanel.addView(rangeName,new LinearLayout.LayoutParams(-1,dp(48)));
         rangeFeedback=text("例如 01:20.250，也可输入秒数。",12,MUTED,false); rangeFeedback.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); add(rangePanel,rangeFeedback,10,12);
         saveRangeButton=button("保存精彩片段",true); saveRangeButton.setOnClickListener(v->saveRange()); rangePanel.addView(saveRangeButton,new LinearLayout.LayoutParams(-1,dp(48))); parent.addView(rangePanel);
     }
     private EditText rangeTimeRow(String label,LinearLayout parent) {
         LinearLayout line=row(); TextView caption=text(label,13,MUTED,false); line.addView(caption,new LinearLayout.LayoutParams(dp(48),dp(48))); caption.setGravity(Gravity.CENTER_VERTICAL);
-        EditText input=new EditText(this); styleInput(input); input.setHint("00:00.000"); input.setSelectAllOnFocus(true); input.setContentDescription("精彩片段"+label+"时间");
+        EditText input=new PocketEditText(this); styleInput(input); input.setHint("00:00.000"); input.setSelectAllOnFocus(true); input.setContentDescription("精彩片段"+label+"时间");
         input.setInputType(android.text.InputType.TYPE_CLASS_DATETIME|android.text.InputType.TYPE_DATETIME_VARIATION_TIME); input.setKeyListener(android.text.method.DigitsKeyListener.getInstance("0123456789:.")); line.addView(input,new LinearLayout.LayoutParams(0,dp(48),1));
         Button current=button("取当前",false); current.setContentDescription("将"+label+"时间设为当前播放位置"); current.setOnClickListener(v->{
             if (player==null || missing) { rangeFeedback.setText("原视频当前无法打开。"); return; }
@@ -527,6 +525,7 @@ public final class PlayerActivity extends Activity {
         }); line.addView(current,new LinearLayout.LayoutParams(dp(80),dp(48))); parent.addView(line); return input;
     }
     private void styleInput(EditText input) {
+        if(input instanceof PocketEditText)((PocketEditText)input).dark();
         input.setSingleLine(true); input.setTextSize(14); input.setTextColor(WHITE); input.setHintTextColor(MUTED);
         input.setBackgroundTintList(android.content.res.ColorStateList.valueOf(LINE));
     }
@@ -693,32 +692,32 @@ public final class PlayerActivity extends Activity {
     private static String seconds(long ms){return java.math.BigDecimal.valueOf(ms,3).stripTrailingZeros().toPlainString();}
     private void markerMenu(JSONObject marker) {
         String[] labels={"加入剪辑","重命名","删除标记","编辑时间与名称"};
-        new AlertDialog.Builder(this,android.R.style.Theme_Material_Dialog_Alert).setTitle(markerLocation(marker)).setItems(labels,(dialog,which)->{
+        new PocketDialog.Builder(this,android.R.style.Theme_Material_Dialog_Alert).setTitle(markerLocation(marker)).setItems(labels,(dialog,which)->{
             if (which==0) openMarkerInEditor(marker);
             else if (which==1) {
-                EditText input=new EditText(this); styleInput(input); input.setText(marker.optString("label")); input.setSelectAllOnFocus(true); input.setHint("标记名称"); input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(200)});
+                EditText input=new PocketEditText(this); styleInput(input); input.setText(marker.optString("label")); input.setSelectAllOnFocus(true); input.setHint("标记名称"); input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(200)});
                 LinearLayout wrap=column(); wrap.setPadding(dp(24),dp(8),dp(24),0); wrap.addView(input,new LinearLayout.LayoutParams(-1,dp(48)));
-                new AlertDialog.Builder(this,android.R.style.Theme_Material_Dialog_Alert).setTitle("重命名标记").setView(wrap).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{ String label=input.getText().toString().trim(); updateMarker(()->store.renameMarker(marker.optLong("id"),label)); }).show();
-            } else if(which==2) new AlertDialog.Builder(this,android.R.style.Theme_Material_Dialog_Alert).setTitle("删除这个标记？").setMessage("只删除 "+markerLocation(marker)+" 的标记，原视频保持不变。").setNegativeButton("保留",null).setPositiveButton("删除标记",(d,w)->updateMarker(()->store.deleteMarker(marker.optLong("id")))).show();
+                new PocketDialog.Builder(this,android.R.style.Theme_Material_Dialog_Alert).setTitle("重命名标记").setView(wrap).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{ String label=input.getText().toString().trim(); updateMarker(()->store.renameMarker(marker.optLong("id"),label)); }).show();
+            } else if(which==2) new PocketDialog.Builder(this,android.R.style.Theme_Material_Dialog_Alert).setTitle("删除这个标记？").setMessage("只删除 "+markerLocation(marker)+" 的标记，原视频保持不变。").setNegativeButton("保留",null).setPositiveButton("删除标记",(d,w)->updateMarker(()->store.deleteMarker(marker.optLong("id")))).show();
             else editMarker(marker);
         }).show();
     }
     private void editMarker(JSONObject marker){
         LinearLayout fields=column();fields.setPadding(dp(24),dp(8),dp(24),0);
-        EditText name=new EditText(this),from=new EditText(this),to=new EditText(this);styleInput(name);styleInput(from);styleInput(to);
+        EditText name=new PocketEditText(this),from=new PocketEditText(this),to=new PocketEditText(this);styleInput(name);styleInput(from);styleInput(to);
         name.setText(marker.optString("label"));name.setHint("标记名称");name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(200)});
         from.setText(preciseTime(markerStart(marker)));from.setSelectAllOnFocus(true);
         boolean range=marker.optLong("endMs")>markerStart(marker);if(range)to.setText(preciseTime(marker.optLong("endMs")));
         fields.addView(text("名称",12,MUTED,false));fields.addView(name);fields.addView(text(range?"起点（原片时间）":"时间点（原片时间）",12,MUTED,false));fields.addView(from);
         if(range){fields.addView(text("终点",12,MUTED,false));fields.addView(to);}
         TextView error=text("秒数或 分:秒，最多三位小数",12,MUTED,false);fields.addView(error);
-        AlertDialog dialog=new AlertDialog.Builder(this,android.R.style.Theme_Material_Dialog_Alert).setTitle("编辑标记").setView(fields).setNegativeButton("取消",null).setPositiveButton("保存",null).create();
-        dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+        PocketDialog dialog=new PocketDialog.Builder(this,android.R.style.Theme_Material_Dialog_Alert).setTitle("编辑标记").setView(fields).setNegativeButton("取消",null).setPositiveButton("保存",null).create();
+        dialog.setOnShowListener(ignored->dialog.getButton(PocketDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             final long start,end;try{start=parseTime(from.getText().toString());end=range?parseTime(to.getText().toString()):0;long total=playbackDuration();if(start>total||total<=0||range&&(end<=start||end>total))throw new IllegalArgumentException();}
             catch(IllegalArgumentException invalid){error.setText("请检查时间，不能超过原片时长。");return;}
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);String label=name.getText().toString().trim();
+            dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(false);String label=name.getText().toString().trim();
             io.execute(()->{try{store.editMarker(videoId,marker.optLong("id"),start,end,label);List<JSONObject> saved=store.markers(videoId);main.post(()->{if(!destroyed){markers=saved;renderMarkers();dialog.dismiss();}});}
-            catch(RuntimeException failure){main.post(()->{if(!destroyed){error.setText("保存失败，输入已保留，请重试。");dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);}});}});
+            catch(RuntimeException failure){main.post(()->{if(!destroyed){error.setText("保存失败，输入已保留，请重试。");dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(true);}});}});
         }));dialog.show();
     }
     private void updateMarker(Runnable operation) {
@@ -794,14 +793,10 @@ public final class PlayerActivity extends Activity {
     private LinearLayout row() { LinearLayout v=new LinearLayout(this); v.setGravity(Gravity.CENTER_VERTICAL); return v; }
     private TextView text(String value,int size,int color,boolean bold) { TextView v=new TextView(this); v.setText(value); v.setTextSize(size); v.setTextColor(color); v.setFontFeatureSettings("tnum"); if (bold) v.setTypeface(Typeface.DEFAULT,Typeface.BOLD); return v; }
     private GradientDrawable shape(int color,int radius) { GradientDrawable d=new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); return d; }
-    private Button button(String label,boolean primary) {
-        Button b=new Button(this); b.setText(label); b.setTextSize(14); b.setTextColor(WHITE); b.setAllCaps(false); b.setMinWidth(0); b.setMinimumWidth(0); b.setMinHeight(dp(48)); b.setMinimumHeight(dp(48)); b.setPadding(dp(12),0,dp(12),0); b.setStateListAnimator(null);
-        android.graphics.drawable.StateListDrawable states=new android.graphics.drawable.StateListDrawable(); states.addState(new int[]{-android.R.attr.state_enabled},shape(0xFF27272A,8)); states.addState(new int[]{},shape(primary?0xFF3F3F46:android.graphics.Color.TRANSPARENT,8)); b.setBackground(states);
-        b.setTextColor(new android.content.res.ColorStateList(new int[][]{new int[]{-android.R.attr.state_enabled},new int[]{}},new int[]{MUTED,WHITE})); UiTheme.press(b); return b;
-    }
+    private Button button(String label,boolean primary){return PocketButton.dark(this,label,primary?PocketButton.Role.PRIMARY:PocketButton.Role.SECONDARY);}
     private Button action(LinearLayout parent,String label,Runnable run) { Button b=button(label,false); b.setGravity(Gravity.START|Gravity.CENTER_VERTICAL); b.setOnClickListener(v->run.run()); parent.addView(b,new LinearLayout.LayoutParams(-1,dp(48))); return b; }
     private void add(LinearLayout parent,View child,int top,int bottom) { LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2); p.topMargin=dp(top); p.bottomMargin=dp(bottom); parent.addView(child,p); }
-    private void toast(String message) { Toast.makeText(this,message,Toast.LENGTH_SHORT).show(); }
+    private void toast(String message) { PocketNotice.show(this,message); }
     private void hideKeyboard() { android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE); if (keyboard!=null) keyboard.hideSoftInputFromWindow(root.getWindowToken(),0); rangePanel.clearFocus(); }
     private final class ToolOverlay extends FrameLayout {
         private float downX,downY,startOffset;

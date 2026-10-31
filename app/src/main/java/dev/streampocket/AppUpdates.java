@@ -1,8 +1,11 @@
 package dev.streampocket;
 
 import android.app.DownloadManager;
+import android.app.PendingIntent;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInstaller;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
@@ -18,6 +21,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -51,6 +55,7 @@ final class AppUpdates {
     private volatile long generation;
     private long downloadId=-1;
     private boolean busy;
+    private Intent installConfirmation;
 
     private AppUpdates(Context app){
         this.app=app;prefs=app.getSharedPreferences("app_updates",Context.MODE_PRIVATE);downloads=(DownloadManager)app.getSystemService(Context.DOWNLOAD_SERVICE);
@@ -86,7 +91,76 @@ final class AppUpdates {
             return true;
         }
     }
-    void retryInstaller(UpdateOffer offer){synchronized(lock){if(state.offer==offer)prefs.edit().remove("installer_offer").remove("installer_result").apply();}}
+    void retryInstaller(UpdateOffer offer){synchronized(lock){if(state.offer!=offer||busy)return;abandonInstall();prefs.edit().remove("installer_offer").remove("installer_result").apply();}}
+    void resumeInstallation(){synchronized(lock){if(busy||state.phase!=Phase.READY||state.offer==null||!installerLaunched(state.offer))return;
+        try{PackageInfo own=app.getPackageManager().getPackageInfo(app.getPackageName(),signatureFlags());if(code(own)>=state.offer.code){installationReturned(state.offer,false);return;}}catch(Exception ignored){}
+        int id=prefs.getInt("install_session",-1);if(id>=0&&app.getPackageManager().getPackageInstaller().getSessionInfo(id)==null){clearInstallSession();installationReturned(state.offer,false);}
+    }}
+    String installedLabel(){
+        try{PackageInfo info=app.getPackageManager().getPackageInfo(app.getPackageName(),0);return "当前版本 "+info.versionName+" · "+code(info);}
+        catch(PackageManager.NameNotFoundException absent){return "当前版本 "+BuildConfig.VERSION_NAME+" · "+BuildConfig.VERSION_CODE;}
+    }
+    String installationDetails(){
+        StringBuilder out=new StringBuilder("拾流安装信息\n").append(app.getPackageName()).append('\n').append(installedLabel())
+                .append("\nAndroid ").append(Build.VERSION.RELEASE).append(" · ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL);
+        try{out.append("\n已安装签名 SHA-256: ").append(certificate(app.getPackageManager().getPackageInfo(app.getPackageName(),signatureFlags())));}catch(Exception unavailable){out.append("\n已安装签名暂不可读");}
+        Snapshot current=state;if(current.offer!=null){UpdateOffer offer=current.offer;out.append("\n目标版本 ").append(offer.version).append(" · ").append(offer.code)
+                .append("\n安装包 SHA-256: ").append(offer.sha256).append("\n大小: ").append(offer.size).append(" bytes");
+            String result=installationMessage(offer);if(!result.isEmpty())out.append('\n').append(result);}
+        return out.toString();
+    }
+    /** Writes verified bytes into a distinct OS session instead of handing an alias URI to an installer. */
+    void stageInstall(UpdateOffer offer,File file){
+        final long token;
+        synchronized(lock){if(busy||state.phase!=Phase.READY||state.offer!=offer||!installerLaunched(offer))return;busy=true;token=generation;publish(new Snapshot(Phase.VERIFYING,offer,"正在交给系统准备安装…",offer.size));}
+        worker.execute(()->{
+            PackageInstaller installer=app.getPackageManager().getPackageInstaller();int id=-1;
+            try{
+                PackageInstaller.SessionParams params=new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+                params.setAppPackageName(offer.packageName);params.setSize(offer.size);
+                if(Build.VERSION.SDK_INT>=31)params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED);
+                id=installer.createSession(params);String nonce=java.util.UUID.randomUUID().toString();String identity="streampocket-update://session/"+id+"/"+nonce;
+                synchronized(lock){if(token!=generation)throw new IOException("更新已取消");
+                    if(!prefs.edit().putInt("install_session",id).putString("install_session_offer",installKey(offer)).putString("install_session_uri",identity).commit())throw new IOException("无法保存系统安装会话");}
+                try(PackageInstaller.Session session=installer.openSession(id)){
+                    try(InputStream input=new FileInputStream(file);OutputStream output=session.openWrite("base.apk",0,offer.size)){
+                        byte[] bytes=new byte[64*1024];int read;while((read=input.read(bytes))!=-1){if(token!=generation)throw new IOException("更新已取消");output.write(bytes,0,read);}session.fsync(output);
+                    }
+                    verifySessionBytes(session,offer,()->token!=generation);
+                    Intent result=new Intent(app,UpdateInstallReceiver.class).setAction(UpdateInstallReceiver.RESULT).setData(Uri.parse(identity));
+                    int flags=PendingIntent.FLAG_UPDATE_CURRENT|(Build.VERSION.SDK_INT>=31?PendingIntent.FLAG_MUTABLE:0);
+                    PendingIntent callback=PendingIntent.getBroadcast(app,id,result,flags);
+                    synchronized(lock){if(token!=generation)throw new IOException("更新已取消");session.commit(callback.getIntentSender());busy=false;publish(new Snapshot(Phase.READY,offer,"等待系统安装确认",offer.size));}
+                }
+            }catch(Exception failure){if(id>=0)try{installer.abandonSession(id);}catch(RuntimeException ignored){}
+                synchronized(lock){if(token!=generation)return;clearInstallSession();busy=false;prefs.edit().putString("installer_result",message(failure,"系统暂未接受安装包，请重新打开安装确认")).apply();publish(new Snapshot(Phase.READY,offer,installationMessage(offer),offer.size));}}
+        });
+    }
+    static void verifySessionBytes(PackageInstaller.Session session,UpdateOffer offer,Cancelled cancelled)throws Exception{
+        MessageDigest digest=MessageDigest.getInstance("SHA-256");long count=0;
+        try(InputStream input=session.openRead("base.apk")){byte[] bytes=new byte[64*1024];int read;while((read=input.read(bytes))!=-1){if(cancelled.get())throw new IOException("更新已取消");count+=read;digest.update(bytes,0,read);}}
+        if(cancelled.get()||count!=offer.size||!hex(digest.digest()).equals(offer.sha256))throw new IOException("系统暂存安装包校验失败");
+    }
+    Intent takeInstallConfirmation(UpdateOffer offer){synchronized(lock){if(state.offer!=offer||!installerLaunched(offer))return null;Intent result=installConfirmation;installConfirmation=null;return result;}}
+    void installationLaunchFailed(UpdateOffer offer){synchronized(lock){if(state.offer!=offer)return;prefs.edit().putString("installer_result","系统安装确认未能打开，可重新尝试。安装包已保留。").apply();}}
+    void installResult(Intent result){
+        synchronized(lock){UpdateOffer offer=state.offer;int id=result.getIntExtra(PackageInstaller.EXTRA_SESSION_ID,-1);
+            if(offer==null||!installerLaunched(offer)||id<0||id!=prefs.getInt("install_session",-1)||!installKey(offer).equals(prefs.getString("install_session_offer",""))
+                    ||result.getData()==null||!result.getData().toString().equals(prefs.getString("install_session_uri","")))return;
+            int status=result.getIntExtra(PackageInstaller.EXTRA_STATUS,PackageInstaller.STATUS_FAILURE);
+            if(status==PackageInstaller.STATUS_PENDING_USER_ACTION){
+                if(prefs.getBoolean("install_pending_received",false))return;prefs.edit().putBoolean("install_pending_received",true).apply();installConfirmation=result.getParcelableExtra(Intent.EXTRA_INTENT);
+                prefs.edit().putString("installer_result",installConfirmation==null?"系统未返回安装确认，请重试。":"安装包已交给系统，等待你确认安装").apply();
+                publish(new Snapshot(Phase.READY,offer,installationMessage(offer),offer.size));return;}
+            clearInstallSession();
+            if(status==PackageInstaller.STATUS_SUCCESS){installationReturned(offer,true);return;}
+            String reason=status==PackageInstaller.STATUS_FAILURE_ABORTED?"已取消系统安装":status==PackageInstaller.STATUS_FAILURE_STORAGE?"系统存储空间不足":status==PackageInstaller.STATUS_FAILURE_CONFLICT?"系统检测到版本或签名冲突":status==PackageInstaller.STATUS_FAILURE_BLOCKED?"系统暂不允许安装":"系统未完成安装";
+            prefs.edit().putString("installer_result",reason+"。"+installedLabel()+"，目标 "+offer.version+" · "+offer.code+"。安装包已保留，可重试或复制安装信息。").apply();
+            publish(new Snapshot(Phase.READY,offer,installationMessage(offer),offer.size));
+        }
+    }
+    private void clearInstallSession(){installConfirmation=null;prefs.edit().remove("install_session").remove("install_session_offer").remove("install_session_uri").remove("install_pending_received").apply();}
+    private void abandonInstall(){int id=prefs.getInt("install_session",-1);clearInstallSession();if(id>=0)try{app.getPackageManager().getPackageInstaller().abandonSession(id);}catch(RuntimeException ignored){}}
     void installationReturned(UpdateOffer offer,boolean reportedSuccess){
         synchronized(lock){
             if(state.phase!=Phase.READY||state.offer!=offer||!installerLaunched(offer))return;
@@ -182,7 +256,7 @@ final class AppUpdates {
 
     void cancel(){
         final long id;
-        synchronized(lock){generation++;id=downloadId;downloadId=-1;busy=false;prefs.edit().remove("offer").remove("download_id").remove("ready").remove("installer_offer").remove("installer_result").remove("source_prompted").apply();publish(new Snapshot(Phase.IDLE,null,"已取消更新；现有应用与视频不受影响",0));}
+        synchronized(lock){generation++;abandonInstall();id=downloadId;downloadId=-1;busy=false;prefs.edit().remove("offer").remove("download_id").remove("ready").remove("installer_offer").remove("installer_result").remove("source_prompted").apply();publish(new Snapshot(Phase.IDLE,null,"已取消更新；现有应用与视频不受影响",0));}
         clearDownloadReminder();
         worker.execute(()->{if(id>=0)downloads.remove(id);discardFiles();});
     }

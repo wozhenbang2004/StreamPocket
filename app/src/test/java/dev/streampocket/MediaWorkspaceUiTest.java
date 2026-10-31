@@ -1,6 +1,5 @@
 package dev.streampocket;
 
-import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.ContentProvider;
 import android.content.ContentValues;
@@ -109,7 +108,7 @@ public final class MediaWorkspaceUiTest {
             assertNotNull("Long Chinese titles must be ellipsized",cardTitle.getEllipsize());
 
             field(library,"sourceButton",TextView.class).performClick(); idle();
-            AlertDialog filter=latestAlert(); capture(filter.getWindow().getDecorView(),"03-source-filter");
+            PocketDialog filter=latestAlert(); capture(filter.getWindow().getDecorView(),"03-source-filter");
             filter.getListView().performItemClick(null,1,1); awaitWorker(library);
             grid=field(library,"grid",GridView.class);
             assertEquals(1,grid.getAdapter().getCount());
@@ -120,15 +119,15 @@ public final class MediaWorkspaceUiTest {
 
             View cell=grid.getChildAt(0); assertNotNull(cell);
             View more=findDescription(cell,"视频更多操作："+chosen.optString("title")); assertNotNull(more); more.performClick(); idle();
-            AlertDialog actions=latestAlert();
+            PocketDialog actions=latestAlert();
             assertEquals("重命名文件",actions.getListView().getAdapter().getItem(2).toString());
             actions.getListView().performItemClick(null,2,2); idle();
-            AlertDialog rename=latestAlert();
+            PocketDialog rename=latestAlert();
             EditText name=findEdit(rename.getWindow().getDecorView()); assertNotNull(name);
             assertEquals("日落山脊",name.getText().toString());
             assertNotNull(findContainingText(rename.getWindow().getDecorView(),"保留 .mp4"));
             capture(rename.getWindow().getDecorView(),"05-real-file-rename-entry-fixture");
-            rename.getButton(AlertDialog.BUTTON_NEGATIVE).performClick(); idle();
+            rename.getButton(PocketDialog.BUTTON_NEGATIVE).performClick(); idle();
 
             grid.performItemClick(cell,0,grid.getAdapter().getItemId(0)); idle();
             Intent destination=Shadows.shadowOf(activity).getNextStartedActivity(); assertNotNull(destination);
@@ -202,7 +201,7 @@ public final class MediaWorkspaceUiTest {
     private static <T>T field(Object owner,String name,Class<T> type) throws Exception {
         Field member=owner.getClass().getDeclaredField(name); member.setAccessible(true); return type.cast(member.get(owner));
     }
-    private static AlertDialog latestAlert() { Dialog dialog=ShadowDialog.getLatestDialog(); assertTrue(dialog instanceof AlertDialog); return (AlertDialog)dialog; }
+    private static PocketDialog latestAlert() { Dialog dialog=ShadowDialog.getLatestDialog(); assertTrue(dialog instanceof PocketDialog); return (PocketDialog)dialog; }
     private static void clickText(View parent,String exact) { TextView target=findText(parent,exact); assertNotNull("Missing visible control: "+exact,target); target.performClick(); idle(); }
     private static TextView findText(View view,String value) { return findText(view,value,false); }
     private static TextView findContainingText(View view,String value) { return findText(view,value,true); }

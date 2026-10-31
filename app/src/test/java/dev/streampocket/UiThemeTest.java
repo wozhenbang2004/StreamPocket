@@ -18,7 +18,7 @@ public class UiThemeTest {
     @Test public void selectedPaletteOverridesSystemAndSystemFollowsConfiguration(){
         Configuration c=new Configuration(app.getResources().getConfiguration());c.uiMode=(c.uiMode&~Configuration.UI_MODE_NIGHT_MASK)|Configuration.UI_MODE_NIGHT_YES;app.getResources().updateConfiguration(c,app.getResources().getDisplayMetrics());
         assertTrue(UiTheme.get(app).dark);
-        app.getSharedPreferences("config",0).edit().putString("appearance_theme","light").commit();assertFalse(UiTheme.get(app).dark);assertEquals(0xFFF6F7F5,UiTheme.get(app).bg);
+        app.getSharedPreferences("config",0).edit().putString("appearance_theme","light").commit();assertFalse(UiTheme.get(app).dark);assertEquals(0xFFF5F6F8,UiTheme.get(app).bg);
         app.getSharedPreferences("config",0).edit().putString("appearance_theme","dark").commit();assertEquals(0xFF1B2024,UiTheme.get(app).surface);assertEquals(0xFFEEF1F2,UiTheme.get(app).ink);
     }
     @Test public void reducedMotionKeepsTheFinalVisibleState(){

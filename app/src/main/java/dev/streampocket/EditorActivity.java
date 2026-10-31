@@ -1,7 +1,6 @@
 package dev.streampocket;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -23,11 +22,9 @@ import android.widget.LinearLayout;
 import android.widget.FrameLayout;
 import android.content.pm.PackageManager;
 import android.Manifest;
-import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 import androidx.media3.common.C;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.MediaItem;
@@ -224,7 +221,7 @@ public final class EditorActivity extends Activity {
         else{workspace.addView(media,new LinearLayout.LayoutParams(-1,-2));workspace.addView(tools,new LinearLayout.LayoutParams(-1,0,1));}
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(false);body=column();body.setPadding(dp(20),dp(14),dp(20),dp(12));scroll.addView(body,new ScrollView.LayoutParams(-1,-2));tools.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         TextView name=text(source.optString("title","本地视频"),14,INK,true);name.setMaxLines(1);name.setEllipsize(android.text.TextUtils.TruncateAt.END);body.addView(name);
-        name.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("原视频").setMessage(source.optString("title","本地视频")).setPositiveButton("返回",null).show());
+        name.setOnClickListener(v->new PocketDialog.Builder(this).setTitle("原视频").setMessage(source.optString("title","本地视频")).setPositiveButton("返回",null).show());
         long bytes=source.optLong("bytes",-1);sourceMeta=text("原片 "+time(durationMs)+(bytes>0?" · "+MediaSize.format(bytes):""),12,MUTED,false);add(body,sourceMeta,3);
         LinearLayout cursor=row();positionLabel=text("原片位置  "+time(positionMs),12,MUTED,false);cursor.addView(positionLabel,new LinearLayout.LayoutParams(0,-2,1));
         Button setStart=quietButton("设起点"),setEnd=quietButton("设终点");
@@ -290,13 +287,13 @@ public final class EditorActivity extends Activity {
         if(busy)return;long[] range=readRange();if(range==null)return;
         EditText name=input("成片名称");String original=source.optString("title","我的片段");name.setText(original+" · 片段");name.setSelectAllOnFocus(true);
         LinearLayout wrap=column();wrap.setPadding(dp(24),dp(4),dp(24),0);wrap.addView(text(time(range[0])+" — "+time(range[1])+"\n片长 "+time(range[1]-range[0]),14,INK,true));add(wrap,name,14);add(wrap,text("精确裁剪 · MP4 / H.264 / AAC\n重新编码可能耗时，另存新视频，不改原片。",12,MUTED,false),12);
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("确认导出片段").setView(wrap).setNegativeButton("继续调整",null).setPositiveButton("开始导出",null).create();
-        dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+        PocketDialog dialog=new PocketDialog.Builder(this).setTitle("确认导出片段").setView(wrap).setNegativeButton("继续调整",null).setPositiveButton("开始导出",null).create();
+        dialog.setOnShowListener(ignored->dialog.getButton(PocketDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("请输入成片名称");return;}
             if(Build.VERSION.SDK_INT<29&&checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},28);name.setError("允许保存权限后，请再次点开始导出");return;}
-            busy=true;dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);int token=generation;long sourceId=videoId;
+            busy=true;dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(false);int token=generation;long sourceId=videoId;
             io.execute(()->{try{long id=store.createProject(title);store.addClip(id,sourceId,range[0],range[1]);main.post(()->{busy=false;if(current(token,TRIM)){dialog.dismiss();showProject(id);pendingDirectExport=id;}});}
-            catch(Exception failure){main.post(()->{busy=false;if(!destroyed){name.setError(message(failure,"草稿保存失败，请重试"));dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);}});}});
+            catch(Exception failure){main.post(()->{busy=false;if(!destroyed){name.setError(message(failure,"草稿保存失败，请重试"));dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(true);}});}});
         }));dialog.show();
     }
     private long pendingDirectExport;
@@ -323,7 +320,7 @@ public final class EditorActivity extends Activity {
                 main.post(()->{
                     if (destroyed || token!=generation) return; String[] choices=new String[drafts.size()+1]; choices[0]="新建剪辑草稿";
                     for (int i=0;i<drafts.size();i++) choices[i+1]=drafts.get(i).optString("title","我的剪辑");
-                    new AlertDialog.Builder(this).setTitle("加入哪个剪辑？").setItems(choices,(dialog,which)->{
+                    new PocketDialog.Builder(this).setTitle("加入哪个剪辑？").setItems(choices,(dialog,which)->{
                         if (which==0) createProject(selected); else selected.accept(drafts.get(which-1).optLong("id"));
                     }).setNegativeButton("取消",null).show();
                 });
@@ -333,13 +330,13 @@ public final class EditorActivity extends Activity {
     private void createProject(LongConsumer selected) {
         EditText title=input("给剪辑起个名字"); title.setText("我的剪辑"); title.setSelectAllOnFocus(true);
         LinearLayout wrap=column(); wrap.setPadding(dp(24),dp(8),dp(24),0); wrap.addView(title);
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("新建剪辑").setView(wrap).setNegativeButton("取消",null).setPositiveButton("创建",null).create();
-        dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+        PocketDialog dialog=new PocketDialog.Builder(this).setTitle("新建剪辑").setView(wrap).setNegativeButton("取消",null).setPositiveButton("创建",null).create();
+        dialog.setOnShowListener(ignored->dialog.getButton(PocketDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             String name=title.getText().toString().trim(); if (name.isEmpty()) { title.setError("请输入名称"); return; }
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false); int token=generation;
+            dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(false); int token=generation;
             io.execute(()->{
                 try { long id=store.createProject(name); main.post(()->{ if (!destroyed) { dialog.dismiss(); if (token==generation) selected.accept(id); } }); }
-                catch (Exception failure) { main.post(()->{ if (!destroyed) { title.setError("创建失败，请重试"); dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true); } }); }
+                catch (Exception failure) { main.post(()->{ if (!destroyed) { title.setError("创建失败，请重试"); dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(true); } }); }
             });
         })); dialog.show();
     }
@@ -366,21 +363,21 @@ public final class EditorActivity extends Activity {
             ImageView cover=clipCover(clip,"第 "+(i+1)+" 个片段起点附近画面");LinearLayout.LayoutParams poster=new LinearLayout.LayoutParams(dp(76),dp(58));poster.rightMargin=dp(12);line.addView(cover,poster);
             TextView name=text((i+1)+"  "+clip.optString("title","视频片段"),14,INK,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);labels.addView(name);
             add(labels,text(time(clip.optLong("startMs"))+" — "+time(clip.optLong("endMs")),12,MUTED,false),4);line.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
-            Button more=quietButton("⋯");more.setTextSize(22);more.setContentDescription("管理第 "+(i+1)+" 个片段");more.setEnabled(!running);clipMenus.add(more);
+            Button more=quietButton("");PocketIcon dots=new PocketIcon("more",INK);dots.setBounds(0,0,dp(22),dp(22));more.setCompoundDrawables(dots,null,null,null);more.setPadding(dp(12),0,dp(12),0);more.setContentDescription("管理第 "+(i+1)+" 个片段");more.setEnabled(!running);clipMenus.add(more);
             more.setOnClickListener(v->clipMenu(more,clip,index));line.addView(more,new LinearLayout.LayoutParams(dp(48),dp(52)));add(body,line,14);divider(body);
         }
         addClipButton=button("添加视频片段",false);addClipButton.setEnabled(!running);addClipButton.setOnClickListener(v->showPicker());add(body,addClipButton,16);
         LinearLayout preset=row();preset.addView(text("MP4 · 1080p · 原片保留",12,MUTED,false),new LinearLayout.LayoutParams(0,-2,1));
-        Button settings=quietButton("导出设置");settings.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("导出设置").setMessage(ExportService.PRESET_LABEL+"\n最长边不超过1920像素，不放大小视频；不同画幅完整显示并留边。另存新视频，原片保留。").setPositiveButton("知道了",null).show());preset.addView(settings,new LinearLayout.LayoutParams(dp(88),dp(48)));add(body,preset,10);
+        Button settings=quietButton("导出设置");settings.setOnClickListener(v->new PocketDialog.Builder(this).setTitle("导出设置").setMessage(ExportService.PRESET_LABEL+"\n最长边不超过1920像素，不放大小视频；不同画幅完整显示并留边。另存新视频，原片保留。").setPositiveButton("知道了",null).show());preset.addView(settings,new LinearLayout.LayoutParams(dp(88),dp(48)));add(body,preset,10);
         exportDetail=text("",13,MUTED,false);add(body,exportDetail,6);
-        exportProgress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);exportProgress.setMax(100);exportProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));exportProgress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(LINE));add(body,exportProgress,10,new LinearLayout.LayoutParams(-1,dp(4)));
+        exportProgress=new PocketProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);exportProgress.setMax(100);exportProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));exportProgress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(LINE));add(body,exportProgress,10,new LinearLayout.LayoutParams(-1,dp(4)));
         exportButton=button("导出新视频",true);exportButton.setOnClickListener(v->startExport());add(body,exportButton,14);
         cancelButton=button("取消导出",false);cancelButton.setOnClickListener(v->cancelExport());add(body,cancelButton,10);
         outputButton=button("播放成片",false);outputButton.setOnClickListener(v->openOutput());add(body,outputButton,10);
         feedback=text("",12,MUTED,false);add(body,feedback,10);updateExportStatus();
     }
     private void clipMenu(View anchor,JSONObject clip,int index) {
-        if (ExportService.isRunning(projectId)) return; PopupMenu menu=new PopupMenu(this,anchor);
+        if (ExportService.isRunning(projectId)) return; PocketMenu menu=new PocketMenu(this,anchor);
         menu.getMenu().add("预览片段");menu.getMenu().add("调整范围"); if (index>0) menu.getMenu().add("上移"); if (index<clips.size()-1) menu.getMenu().add("下移"); menu.getMenu().add("移除片段");
         menu.setOnMenuItemClickListener(item->{
             String action=item.getTitle().toString();if("预览片段".equals(action)){previewProjectClip(clip);return true;}if("调整范围".equals(action)){editingClipId=clip.optLong("id");requestedStart=clip.optLong("startMs");requestedEnd=clip.optLong("endMs");positionMs=requestedStart;startDraft=time(requestedStart);endDraft=time(requestedEnd);showTrim(clip.optLong("videoId"),true);return true;} long id=projectId,clipId=clip.optLong("id"); int token=generation;
@@ -389,10 +386,13 @@ public final class EditorActivity extends Activity {
                     if (ExportService.isRunning(id)) throw new IllegalArgumentException("草稿正在导出，暂时无法调整。");
                     if ("移除片段".equals(action)) store.removeClip(clipId); else store.moveClip(id,clipId,"上移".equals(action)?-1:1);
                     store.updateProjectExport(id,"draft",-1,"草稿已更新，可导出新成片。",null);
-                    main.post(()->{ if (!destroyed && token==generation) showProject(id); });
+                    main.post(()->{ if (!destroyed && token==generation){showProject(id);if("移除片段".equals(action))PocketNotice.show(this,"已移除片段",()->undoRemoveClip(id,clip));} });
                 } catch (Exception failure) { error(token,message(failure,"片段未能更新，请重试。")); }
             }); return true;
         }); menu.show();
+    }
+    private void undoRemoveClip(long id,JSONObject clip){
+        int token=generation;io.execute(()->{try{if(ExportService.isRunning(id))throw new IllegalArgumentException("草稿正在导出，暂时无法调整。");store.restoreClip(clip);store.updateProjectExport(id,"draft",-1,"已撤销片段移除，可继续调整。",null);main.post(()->{if(!destroyed&&token==generation)showProject(id);});}catch(Exception failure){error(token,message(failure,"未能撤销，请重新添加片段。"));}});
     }
     private void showPicker() {
         rememberRange(); releasePreview(); screen=PICKER; ++generation; main.removeCallbacks(projectPoll); page("选择视频素材");
@@ -558,28 +558,20 @@ public final class EditorActivity extends Activity {
     private boolean current(int token,int destination) { return !destroyed && generation==token && screen==destination; }
     private void error(int token,String detail) { main.post(()->{ if (!destroyed && token==generation) { if (feedback!=null) feedback.setText(detail); else add(body,text(detail,14,MUTED,false),20); } }); }
     private static String message(Exception failure,String fallback) { return failure.getMessage()==null?fallback:Engine.cleanLog(failure.getMessage()); }
-    private void toast(String value) { Toast.makeText(this,value,Toast.LENGTH_SHORT).show(); }
+    private void toast(String value) { PocketNotice.show(this,value); }
     private int dp(int value) { return Math.round(value*getResources().getDisplayMetrics().density); }
     private LinearLayout column() { LinearLayout value=new LinearLayout(this); value.setOrientation(LinearLayout.VERTICAL); return value; }
     private LinearLayout row() { LinearLayout value=new LinearLayout(this); value.setOrientation(LinearLayout.HORIZONTAL); value.setGravity(Gravity.CENTER_VERTICAL); return value; }
     private TextView text(String value,int size,int color,boolean bold) { TextView view=new TextView(this); view.setText(value); view.setTextSize(size); view.setTextColor(color); view.setLineSpacing(dp(3),1); if (bold) view.setTypeface(null,Typeface.BOLD); return view; }
-    private Button button(String label,boolean primary) {
-        Button value=new Button(this); value.setText(label); value.setTextSize(14); value.setAllCaps(false); value.setMinHeight(dp(48)); value.setMinimumHeight(dp(48)); value.setPadding(dp(14),dp(10),dp(14),dp(10));
-        value.setTextColor(new android.content.res.ColorStateList(new int[][]{new int[]{-android.R.attr.state_enabled},new int[]{}},new int[]{MUTED,primary?WHITE:INK}));
-        GradientDrawable shape=new GradientDrawable(); shape.setColor(primary?INK:WHITE); shape.setCornerRadius(dp(12)); if (!primary) shape.setStroke(dp(1),LINE);
-        GradientDrawable disabled=new GradientDrawable(); disabled.setColor(CONTROL); disabled.setCornerRadius(dp(12)); if (!primary) disabled.setStroke(dp(1),LINE);
-        android.graphics.drawable.StateListDrawable states=new android.graphics.drawable.StateListDrawable();
-        states.addState(new int[]{-android.R.attr.state_enabled},disabled); states.addState(new int[]{},shape);
-        value.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x18397D72),states,null));UiTheme.press(value); return value;
-    }
-    private Button quietButton(String label){Button value=button(label,false);value.setTextColor(MUTED);value.setBackgroundColor(android.graphics.Color.TRANSPARENT);value.setPadding(dp(8),0,dp(8),0);value.setTextSize(12);return value;}
+    private Button button(String label,boolean primary){return PocketButton.of(this,label,primary?PocketButton.Role.PRIMARY:PocketButton.Role.SECONDARY);}
+    private Button quietButton(String label){return PocketButton.of(this,label,PocketButton.Role.QUIET);}
     private void clearCovers(){for(ImageView image:boundCovers)covers.cancel(image);boundCovers.clear();clipFrames.clear();}
     private ImageView cover(long id,String uri,String description){
         ImageView value=new ImageView(this);value.setScaleType(ImageView.ScaleType.CENTER_CROP);value.setContentDescription(description);GradientDrawable background=new GradientDrawable();background.setColor(CONTROL);background.setCornerRadius(dp(12));value.setBackground(background);value.setClipToOutline(true);boundCovers.add(value);
         if(!uri.isEmpty())covers.load(value,id,uri,id+"-"+Integer.toHexString(uri.hashCode()),0);return value;
     }
     private EditText input(String hint) {
-        EditText value=new EditText(this); value.setSingleLine(true); value.setTextSize(15); value.setTextColor(INK); value.setHintTextColor(MUTED); value.setHint(hint); value.setPadding(dp(12),dp(12),dp(12),dp(12)); value.setMinHeight(dp(48));
+        EditText value=new PocketEditText(this); value.setSingleLine(true); value.setTextSize(15); value.setTextColor(INK); value.setHintTextColor(MUTED); value.setHint(hint); value.setPadding(dp(12),dp(12),dp(12),dp(12)); value.setMinHeight(dp(48));
         GradientDrawable shape=new GradientDrawable(); shape.setColor(WHITE); shape.setCornerRadius(dp(12)); shape.setStroke(dp(1),LINE); value.setBackground(shape); return value;
     }
     private void add(LinearLayout parent,View child,int margin) { add(parent,child,margin,new LinearLayout.LayoutParams(-1,-2)); }

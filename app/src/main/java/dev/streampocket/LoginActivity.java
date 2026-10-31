@@ -1,7 +1,6 @@
 package dev.streampocket;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -26,7 +25,6 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import androidx.webkit.CookieManagerCompat;
@@ -95,7 +93,7 @@ public final class LoginActivity extends Activity {
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         Button options = button("选项", false); options.setOnClickListener(v -> showOptions(options));
         header.addView(options, new LinearLayout.LayoutParams(dp(64), dp(48))); root.addView(header);
-        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress = new PocketProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setProgressTintList(android.content.res.ColorStateList.valueOf(INK));
         root.addView(progress, new LinearLayout.LayoutParams(-1, dp(2)));
         LinearLayout webArea = column(); webArea.setTag("official-web-area");
@@ -330,7 +328,7 @@ public final class LoginActivity extends Activity {
     }
 
     private void showOptions(View anchor) {
-        PopupMenu menu = new PopupMenu(this, anchor);
+        PocketMenu menu = new PocketMenu(this, anchor);
         menu.getMenu().add("刷新登录页").setOnMenuItemClickListener(item -> {
             if (web != null && ready && !saving) web.reload(); return true;
         });
@@ -349,7 +347,7 @@ public final class LoginActivity extends Activity {
             return true;
         });
         menu.getMenu().add("登录帮助").setOnMenuItemClickListener(item -> {
-            new AlertDialog.Builder(this).setTitle("在官方网页登录")
+            new PocketDialog.Builder(this).setTitle("在官方网页登录")
                     .setMessage("登录页跟随手机网络与系统 VPN。请完成平台要求的验证码或短信验证。页面只有打开 App 的入口时，可在选项切换电脑版网页。\n\nGoogle、Apple 等第三方登录可能不支持此网页环境，请优先使用平台账号登录。\n\n保存的登录信息仅供本机下载，账号是否有效及可用画质以源站响应为准。可在账号管理中暂停、重新登录或清除。")
                     .setPositiveButton("知道了", null).show();
             return true;
@@ -359,7 +357,7 @@ public final class LoginActivity extends Activity {
 
     private void requestClose() {
         if (closing || saving) return;
-        if (detected) new AlertDialog.Builder(this).setTitle("登录信息尚未保存")
+        if (detected) new PocketDialog.Builder(this).setTitle("登录信息尚未保存")
                 .setMessage("保存后可用于下载，也可以直接离开。原有已保存信息会保留。")
                 .setNegativeButton("继续登录", null)
                 .setNeutralButton("离开", (d, w) -> closeWebSession())
@@ -410,16 +408,5 @@ public final class LoginActivity extends Activity {
         TextView result = new TextView(this); result.setText(value); result.setTextSize(size); result.setTextColor(color);
         result.setLineSpacing(dp(2), 1); if (bold) result.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return result;
     }
-    private Button button(String label, boolean primary) {
-        Button result = new Button(this); result.setText(label); result.setAllCaps(false); result.setTextSize(14);
-        int[][] states = new int[][]{new int[]{-android.R.attr.state_enabled}, new int[]{}};
-        result.setTextColor(new android.content.res.ColorStateList(states, new int[]{MUTED, primary ? (UiTheme.get(this).dark ? BG : Color.WHITE) : INK}));
-        result.setMinWidth(0); result.setMinimumWidth(0);
-        result.setPadding(dp(8), 0, dp(8), 0);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(new android.content.res.ColorStateList(states, new int[]{primary ? LINE : SURFACE, primary ? INK : SURFACE}));
-        bg.setCornerRadius(dp(12));
-        result.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(primary ? 0x33FFFFFF : 0x0D000000), bg, null));
-        UiTheme.press(result); return result;
-    }
+    private Button button(String label,boolean primary){return PocketButton.of(this,label,primary?PocketButton.Role.PRIMARY:PocketButton.Role.SECONDARY);}
 }
