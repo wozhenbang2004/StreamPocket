@@ -110,7 +110,7 @@ public final class UpdateActivity extends Activity {
         progress.setIndeterminate(!downloading||!offered);if(downloading&&offered){int percent=(int)Math.min(100,state.downloaded*100/state.offer.size);progress.setProgress((int)Math.min(1000,state.downloaded*1000/state.offer.size));progress.setContentDescription("更新下载 "+percent+"%");detail.setText(percent+"% · "+size(state.downloaded)+" / "+size(state.offer.size));}
         boolean ready=state.phase==AppUpdates.Phase.READY&&offered;
         boolean launched=ready&&updates.installerLaunched(state.offer),permission=ready&&needsSourcePermission();
-        if(ready)status.setText(launched?"已打开系统安装确认；取消后可在这里重新打开":permission?"需要允许此来源，开启后返回会自动继续":"校验完成，正在衔接系统安装确认…");
+        if(ready)status.setText(launched?(!updates.installationMessage(state.offer).isEmpty()?updates.installationMessage(state.offer):"等待系统安装结果；返回后会检查实际版本"):permission?"需要允许此来源，开启后返回会自动继续":"校验完成，正在衔接系统安装确认…");
         primary.setVisibility(ready&&!launched&&!permission?View.GONE:View.VISIBLE);
         primary.setEnabled(!downloading&&state.phase!=AppUpdates.Phase.CHECKING&&state.phase!=AppUpdates.Phase.VERIFYING);
         primary.setAlpha(primary.isEnabled()?1f:.5f);
@@ -121,9 +121,9 @@ public final class UpdateActivity extends Activity {
     @Override protected void onResume(){super.onResume();visible=true;updates.clearDownloadReminder();updates.listen(listener);main.post(poll);}
     @Override protected void onPause(){visible=false;updates.unlisten(listener);main.removeCallbacks(poll);super.onPause();}
     @Override protected void onDestroy(){if(sourceDialog!=null)sourceDialog.dismiss();super.onDestroy();}
-    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==71||request==72)render(updates.snapshot());}
+    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==71){AppUpdates.Snapshot state=updates.snapshot();if(state.offer!=null)updates.installationReturned(state.offer,result==RESULT_OK);}if(request==71||request==72)render(updates.snapshot());}
     private TextView text(String value,int size,boolean bold){TextView view=new TextView(this);view.setText(value);view.setTextSize(size);view.setTextColor(bold?palette.ink:palette.muted);view.setLineSpacing(dp(3),1);if(bold)view.setTypeface(null,Typeface.BOLD);return view;}
-    private Button button(String label,boolean primary){Button b=new Button(this);b.setText(label);b.setAllCaps(false);b.setTextSize(14);b.setTextColor(primary?palette.surface:palette.ink);b.setMinHeight(dp(48));GradientDrawable shape=new GradientDrawable();shape.setColor(primary?palette.accent:palette.surface);shape.setCornerRadius(dp(12));b.setBackground(shape);UiTheme.press(b);return b;}
+    private Button button(String label,boolean primary){Button b=new Button(this);b.setText(label);b.setAllCaps(false);b.setTextSize(14);b.setTextColor(primary?palette.surface:palette.ink);b.setMinHeight(dp(48));b.setStateListAnimator(null);b.setElevation(0);GradientDrawable shape=new GradientDrawable();shape.setColor(primary?palette.ink:palette.surface);shape.setCornerRadius(dp(12));if(!primary)shape.setStroke(dp(1),palette.line);b.setBackground(shape);UiTheme.press(b);return b;}
     private void add(LinearLayout parent,View child,int top){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,child instanceof Button?dp(50):-2);p.topMargin=dp(top);parent.addView(child,p);}
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
     static String size(long bytes){return String.format(Locale.ROOT,"%.1f MB",Math.max(0,bytes)/1048576d);}

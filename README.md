@@ -2,7 +2,15 @@
 
 Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下载到手机，再播放、整理、标记和剪辑。
 
-**当前版本：0.2.12** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.2.12/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.12)
+**当前版本：0.2.13** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.2.13/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.13)
+
+## 0.2.13 更新
+
+- 统一视频库与下载页的播放入口，移除可能遮挡视频画面的封面共享转场。
+- 更新安装包按版本独立保存；安装返回后检查实际版本，未完成升级时提供明确提示和重试。
+- 调整更新页按钮样式。
+
+0.2.11 用户若应用内更新后仍停在旧版本，请在 Release 下载带版本号的 `StreamPocket-0.2.13-arm64.apk` 直接覆盖安装，无需卸载。
 
 ## 0.2.12 更新
 
@@ -29,7 +37,7 @@ Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下
 
 ## 安装与更新
 
-1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.12) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
+1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.13) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
 2. 已安装拾流时直接覆盖更新，**不要卸载或清除数据**。新版沿用原安装身份和签名，保留账号、下载记录、视频库、标记与草稿。
 3. 应用内打开 **设置 → 高级与关于 → 应用更新**。确认下载后，本页显示进度，校验完成自动进入系统安装确认；最后一步由你确认。
 

@@ -1,9 +1,9 @@
 # 安装与版本
 
-当前版本 **0.2.12 / versionCode 18**，应用名“拾流”。支持 Android 7.0+ / ARM64，包名为 `dev.streampocket.localtest`，沿用既有安装身份。
+当前版本 **0.2.13 / versionCode 19**，应用名“拾流”。支持 Android 7.0+ / ARM64，包名为 `dev.streampocket.localtest`，沿用既有安装身份。
 
-- [安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.2.12/StreamPocket-arm64-v8a.apk)
-- [版本更新内容](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.12)
+- [安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.2.13/StreamPocket-arm64-v8a.apk)
+- [版本更新内容](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.2.13)
 - [应用内更新](APP_UPDATES.md)
 - [第三方对应源码](THIRD_PARTY_SOURCES.md)
 

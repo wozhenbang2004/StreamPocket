@@ -58,7 +58,8 @@ final class AppUpdates {
             UpdateOffer saved=UpdateOffer.saved(prefs.getString("offer",""));
             if(saved.code>BuildConfig.VERSION_CODE){downloadId=prefs.getLong("download_id",-1);
                 if(downloadId>=0)state=new Snapshot(Phase.DOWNLOADING,saved,"正在恢复系统下载状态…",0);
-                else if(prefs.getBoolean("ready",false)&&readyFile().isFile())state=new Snapshot(Phase.READY,saved,"安装前将再次校验文件与身份",saved.size);
+                else if(prefs.getBoolean("ready",false)&&readyFile(app,saved).isFile())state=new Snapshot(Phase.READY,saved,"安装前将再次校验文件与身份",saved.size);
+                else if(prefs.getBoolean("ready",false)){prefs.edit().putBoolean("ready",false).apply();state=new Snapshot(Phase.AVAILABLE,saved,"旧安装缓存已停用，请重新下载更新",0);}
             }else worker.execute(()->{long old=prefs.getLong("download_id",-1);if(old>=0)downloads.remove(old);prefs.edit().remove("offer").remove("download_id").remove("ready").apply();discardFiles();});
         }catch(Exception absent){/* First run has no update state. */}
     }
@@ -73,18 +74,33 @@ final class AppUpdates {
     void notifiedReady(long code){prefs.edit().putLong("ready_notified_code",code).apply();}
     static String installKey(UpdateOffer offer){return offer.code+":"+offer.sha256;}
     boolean installerLaunched(UpdateOffer offer){return installKey(offer).equals(prefs.getString("installer_offer",""));}
+    String installationMessage(UpdateOffer offer){return installerLaunched(offer)?prefs.getString("installer_result",""):"";}
     boolean sourcePrompted(UpdateOffer offer){return installKey(offer).equals(prefs.getString("source_prompted",""));}
     void markSourcePrompted(UpdateOffer offer){prefs.edit().putString("source_prompted",installKey(offer)).apply();}
     boolean claimInstaller(UpdateOffer offer){
         synchronized(lock){
             if(busy||state.phase!=Phase.READY||state.offer!=offer||installerLaunched(offer))return false;
-            if(!prefs.edit().putString("installer_offer",installKey(offer)).commit()){
+            if(!prefs.edit().putString("installer_offer",installKey(offer)).remove("installer_result").commit()){
                 publish(new Snapshot(Phase.ERROR,offer,"无法保存安装状态，请重试更新",0));return false;
             }
             return true;
         }
     }
-    void retryInstaller(UpdateOffer offer){synchronized(lock){if(state.offer==offer)prefs.edit().remove("installer_offer").apply();}}
+    void retryInstaller(UpdateOffer offer){synchronized(lock){if(state.offer==offer)prefs.edit().remove("installer_offer").remove("installer_result").apply();}}
+    void installationReturned(UpdateOffer offer,boolean reportedSuccess){
+        synchronized(lock){
+            if(state.phase!=Phase.READY||state.offer!=offer||!installerLaunched(offer))return;
+            try{
+                PackageInfo installed=app.getPackageManager().getPackageInfo(app.getPackageName(),signatureFlags());
+                if(code(installed)>=offer.code&&offer.certificate.equals(certificate(installed))){
+                    generation++;prefs.edit().remove("offer").remove("download_id").remove("ready").remove("installer_offer").remove("installer_result").apply();
+                    publish(new Snapshot(Phase.NONE,null,"已更新到 "+installed.versionName,0));worker.execute(this::discardFiles);return;
+                }
+                String message=(reportedSuccess?"安装返回后仍是 ":"当前仍是 ")+installed.versionName+"，尚未升级到 "+offer.version+"。可重新安装，或下载独立安装包覆盖更新。";
+                prefs.edit().putString("installer_result",message).apply();publish(new Snapshot(Phase.READY,offer,message,offer.size));
+            }catch(Exception unavailable){prefs.edit().putString("installer_result","尚未确认更新完成，请重新打开应用检查版本，或重试安装。").apply();}
+        }
+    }
     boolean ownsDownload(long id){synchronized(lock){return id>=0&&id==downloadId&&state.offer!=null;}}
     void clearDownloadReminder(){UpdateDownloadReceiver.clearReminder(app);}
     void checkIfDue(){if(automatic()&&System.currentTimeMillis()-prefs.getLong("last_check",0)>24*60*60*1000L)check();}
@@ -131,7 +147,7 @@ final class AppUpdates {
                 id=downloads.enqueue(request);
                 synchronized(lock){if(token!=generation){downloads.remove(id);return;}
                     if(!prefs.edit().putString("offer",offer.json().toString()).putLong("download_id",id).putBoolean("ready",false)
-                            .remove("installer_offer").remove("source_prompted").commit())throw new IOException("无法保存更新下载状态");
+                            .remove("installer_offer").remove("installer_result").remove("source_prompted").commit())throw new IOException("无法保存更新下载状态");
                     downloadId=id;busy=false;publish(new Snapshot(Phase.DOWNLOADING,offer,"系统下载中；离开本页也会继续",0));}
             }catch(Exception failure){if(id>=0)downloads.remove(id);fail(token,offer,message(failure,"无法开始更新下载"));}
         });
@@ -151,8 +167,9 @@ final class AppUpdates {
                     File stage=new File(app.getFilesDir(),"app-updates/staged.apk");stage.getParentFile().mkdirs();
                     try(InputStream input=new ParcelFileDescriptor.AutoCloseInputStream(downloads.openDownloadedFile(id))){copyAndHash(input,stage,offer,()->token!=generation);}
                     verifyArchive(stage,offer);if(token!=generation){stage.delete();return;}
-                    File ready=readyFile();ready.getParentFile().mkdirs();if(ready.exists()&&!ready.delete())throw new IOException("无法替换旧安装缓存");
-                    if(!stage.renameTo(ready))throw new IOException("无法保存已校验安装包");
+                    File ready=readyFile(app,offer);ready.getParentFile().mkdirs();
+                    if(ready.exists()){hashFile(ready,offer,()->token!=generation);stage.delete();}
+                    else if(!stage.renameTo(ready))throw new IOException("无法保存已校验安装包");
                     synchronized(lock){if(token!=generation){ready.delete();return;}downloadId=-1;
                         if(!prefs.edit().putLong("download_id",-1).putBoolean("ready",true).commit())throw new IOException("无法保存安装状态");}
                     downloads.remove(id);finish(token,new Snapshot(Phase.READY,offer,"校验完成，将进入系统安装确认",offer.size));
@@ -165,7 +182,7 @@ final class AppUpdates {
 
     void cancel(){
         final long id;
-        synchronized(lock){generation++;id=downloadId;downloadId=-1;busy=false;prefs.edit().remove("offer").remove("download_id").remove("ready").remove("installer_offer").remove("source_prompted").apply();publish(new Snapshot(Phase.IDLE,null,"已取消更新；现有应用与视频不受影响",0));}
+        synchronized(lock){generation++;id=downloadId;downloadId=-1;busy=false;prefs.edit().remove("offer").remove("download_id").remove("ready").remove("installer_offer").remove("installer_result").remove("source_prompted").apply();publish(new Snapshot(Phase.IDLE,null,"已取消更新；现有应用与视频不受影响",0));}
         clearDownloadReminder();
         worker.execute(()->{if(id>=0)downloads.remove(id);discardFiles();});
     }
@@ -212,8 +229,13 @@ final class AppUpdates {
         if(!hex(digest.digest()).equals(offer.sha256))throw new IOException("安装包完整性复核失败");
     }
     static String hex(byte[] bytes){StringBuilder out=new StringBuilder();for(byte value:bytes)out.append(String.format(Locale.ROOT,"%02x",value&255));return out.toString();}
-    private File readyFile(){return new File(app.getFilesDir(),"app-updates/ready/update.apk");}
-    private void discardFiles(){readyFile().delete();new File(app.getFilesDir(),"app-updates/staged.apk").delete();}
+    static File readyFile(Context context,UpdateOffer offer){return new File(context.getFilesDir(),"app-updates/ready/update-"+offer.code+"-"+offer.sha256+".apk");}
+    private File readyFile(){return readyFile(app,state.offer);}
+    private void discardFiles(){
+        File[] files=new File(app.getFilesDir(),"app-updates/ready").listFiles();
+        if(files!=null)for(File file:files)if(file.isFile()&&(file.getName().equals("update.apk")||file.getName().matches("update-[0-9]+-[a-f0-9]{64}\\.apk")))file.delete();
+        new File(app.getFilesDir(),"app-updates/staged.apk").delete();
+    }
     private void finish(long token,Snapshot result){synchronized(lock){if(token!=generation)return;busy=false;publish(result);}}
     private void fail(long token,UpdateOffer offer,String message){finish(token,new Snapshot(Phase.ERROR,offer,message,0));}
     private void publishIfCurrent(long token,Snapshot result){synchronized(lock){if(token==generation)publish(result);}}

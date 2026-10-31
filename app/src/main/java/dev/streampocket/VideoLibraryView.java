@@ -2,7 +2,6 @@ package dev.streampocket;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.ActivityOptions;
 import android.content.ClipData;
 import android.content.Intent;
 import android.graphics.Color;
@@ -271,13 +270,9 @@ public final class VideoLibraryView extends LinearLayout {
             // The player re-reads this stable ID and its current local URI/access.
             // A stale catalogue 'missing' snapshot must not block a restored file.
             Intent intent=new Intent(activity,PlayerActivity.class).putExtra("video_id",id);
-            ImageView cover=cell!=null&&cell.getTag() instanceof Holder?((Holder)cell.getTag()).cover:null;
-            String path=covers.cachedCoverPath(video);
-            if(cover!=null&&cover.getDrawable()!=null&&path!=null&&UiTheme.motionEnabled(activity)){
-                String name="sp-video-"+video.optLong("id");cover.setTransitionName(name);
-                intent.putExtra("transition_name",name).putExtra("transition_cover_path",path);
-                activity.startActivity(intent,ActivityOptions.makeSceneTransitionAnimation(activity,cover,name).toBundle());
-            }else activity.startActivity(intent);
+            // Match the download entry. A window-owned shared-element snapshot
+            // must never sit above the independent video surface.
+            activity.startActivity(intent);
         }catch (Exception unavailable) { message("暂时无法打开播放器，请重试。"); }
     }
 

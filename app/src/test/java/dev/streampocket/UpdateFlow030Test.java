@@ -63,7 +63,7 @@ public final class UpdateFlow030Test {
                 .put("abi","arm64-v8a").put("minSdk",24).put("apkAssetName",UpdateOffer.APK).put("apkSize",DATA.length)
                 .put("apkSha256",AppUpdates.hex(MessageDigest.getInstance("SHA-256").digest(DATA))).put("signingCertificateSha256",cert);
         offer=new UpdateOffer(manifest,"v9.0","更新流程测试数据",UpdateOffer.REPO+"/releases/download/v9.0/"+UpdateOffer.APK);
-        File file=new File(app.getFilesDir(),"app-updates/ready/update.apk");file.getParentFile().mkdirs();try(FileOutputStream out=new FileOutputStream(file)){out.write(DATA);}
+        File file=AppUpdates.readyFile(app,offer);file.getParentFile().mkdirs();try(FileOutputStream out=new FileOutputStream(file)){out.write(DATA);}
         PackageInfo archive=new PackageInfo();archive.packageName=app.getPackageName();archive.versionCode=900;archive.versionName=offer.version;
         archive.signatures=new Signature[]{signature};archive.applicationInfo=new ApplicationInfo();archive.applicationInfo.minSdkVersion=24;
         Shadows.shadowOf(app.getPackageManager()).setPackageArchiveInfo(file.getPath(),archive);
@@ -73,14 +73,41 @@ public final class UpdateFlow030Test {
     private void settle()throws Exception{worker.submit(()->{}).get(5,TimeUnit.SECONDS);Shadows.shadowOf(Looper.getMainLooper()).idle();}
     @After public void closeWorker()throws Exception{if(worker!=null){worker.shutdownNow();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));}}
 
+    @Test public void separateReleasesNeverReuseInstallerUri()throws Exception{
+        ready(true);Context app=RuntimeEnvironment.getApplication();
+        java.lang.reflect.Method location=AppUpdates.class.getDeclaredMethod("readyFile");location.setAccessible(true);
+        File first=(File)location.invoke(updates);
+        Uri firstUri=androidx.core.content.FileProvider.getUriForFile(app,app.getPackageName()+".updates",first);
+        UpdateOffer next=new UpdateOffer(offer.json().put("versionCode",901).put("versionName","9.1-fixture").put("apkSha256","b".repeat(64)),"v9.1","",UpdateOffer.REPO+"/releases/download/v9.1/"+UpdateOffer.APK);
+        set(updates,"state",new AppUpdates.Snapshot(AppUpdates.Phase.READY,next,"已校验",next.size));
+        File second=(File)location.invoke(updates);
+        Uri secondUri=androidx.core.content.FileProvider.getUriForFile(app,app.getPackageName()+".updates",second);
+        assertNotEquals("Two releases must never share a mutable installer address",firstUri,secondUri);
+    }
+
     @Test public void visibleReadyPackageAutomaticallyRechecksAndOpensSystemInstallerOnce()throws Exception{
         ready(true);
         try(ActivityController<UpdateActivity> c=Robolectric.buildActivity(UpdateActivity.class).create().start().resume()){
             settle();ShadowActivity shadow=Shadows.shadowOf(c.get());ShadowActivity.IntentForResult started=shadow.getNextStartedActivityForResult();
             assertNotNull("Verified READY must not require an extra install button: "+updates.snapshot().message,started);assertEquals(Intent.ACTION_INSTALL_PACKAGE,started.intent.getAction());
             assertEquals("content",started.intent.getData().getScheme());assertTrue((started.intent.getFlags()&Intent.FLAG_GRANT_READ_URI_PERMISSION)!=0);
+            assertTrue(started.intent.getData().getLastPathSegment().contains(offer.sha256));
+            try(java.io.InputStream input=RuntimeEnvironment.getApplication().getContentResolver().openInputStream(started.intent.getData())){
+                assertNotNull(input);assertArrayEquals("The installer URI must expose exactly the verified payload",DATA,input.readAllBytes());
+            }
             c.pause().resume();settle();assertNull("Polling/resume must not repeat the system dialog",shadow.getNextStartedActivityForResult());
             shadow.callOnActivityResult(started.requestCode,Activity.RESULT_CANCELED,null);settle();assertNull("Declining system install must not reopen it",shadow.getNextStartedActivityForResult());
+        }
+    }
+    @Test public void returningFromInstallerWithoutAnUpgradeShowsTheActualInstalledVersion()throws Exception{
+        ready(true);
+        try(ActivityController<UpdateActivity> c=Robolectric.buildActivity(UpdateActivity.class).create().start().resume()){
+            settle();ShadowActivity shadow=Shadows.shadowOf(c.get());ShadowActivity.IntentForResult started=shadow.getNextStartedActivityForResult();assertNotNull(started);
+            shadow.callOnActivityResult(started.requestCode,Activity.RESULT_OK,null);settle();
+            assertEquals(AppUpdates.Phase.READY,updates.snapshot().phase);
+            assertTrue(updates.installationMessage(offer).contains(BuildConfig.VERSION_NAME));
+            assertTrue(updates.installationMessage(offer).contains("尚未升级"));
+            assertNull("A failed version check must not reopen the installer automatically",shadow.getNextStartedActivityForResult());
         }
     }
     @Test public void allowingUnknownSourceReturnsDirectlyToVerificationAndSystemConfirmation()throws Exception{
@@ -111,7 +138,7 @@ public final class UpdateFlow030Test {
         }finally{release.countDown();}
     }
     @Test public void tamperingAfterDownloadBlocksAutomaticHandoff()throws Exception{
-        ready(true);try(FileOutputStream out=new FileOutputStream(new File(RuntimeEnvironment.getApplication().getFilesDir(),"app-updates/ready/update.apk"))){out.write(new byte[DATA.length]);}
+        ready(true);try(FileOutputStream out=new FileOutputStream(AppUpdates.readyFile(RuntimeEnvironment.getApplication(),offer))){out.write(new byte[DATA.length]);}
         try(ActivityController<UpdateActivity> c=Robolectric.buildActivity(UpdateActivity.class).create().start().resume()){
             settle();assertEquals(AppUpdates.Phase.ERROR,updates.snapshot().phase);assertNull(Shadows.shadowOf(c.get()).getNextStartedActivityForResult());assertFalse(updates.installerLaunched(offer));
         }
@@ -124,7 +151,7 @@ public final class UpdateFlow030Test {
         }
     }
     @Test public void completedDownloadAutomaticallyCopiesVerifiesAndOpensTheSystemConfirmation()throws Exception{
-        ready(true);Context app=RuntimeEnvironment.getApplication();File ready=new File(app.getFilesDir(),"app-updates/ready/update.apk");
+        ready(true);Context app=RuntimeEnvironment.getApplication();File ready=AppUpdates.readyFile(app,offer);
         PackageInfo archive=app.getPackageManager().getPackageArchiveInfo(ready.getPath(),0);assertTrue(ready.delete());
         Shadows.shadowOf(app.getPackageManager()).setPackageArchiveInfo(new File(app.getFilesDir(),"app-updates/staged.apk").getPath(),archive);
         File source=new File(app.getCacheDir(),"downloaded-update-fixture");try(FileOutputStream out=new FileOutputStream(source)){out.write(DATA);}

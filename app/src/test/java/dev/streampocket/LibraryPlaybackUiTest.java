@@ -91,6 +91,22 @@ public final class LibraryPlaybackUiTest {
         }
     }
 
+    @Test public void animatedLibraryEntryUsesTheSameUnobstructedPlayerRouteAsDownloads() throws Exception {
+        app.getSharedPreferences("config",0).edit().putBoolean("motion_enabled",true).commit();
+        assertTrue("Exercise the production animation branch",UiTheme.motionEnabled(activity));open();
+        field(field(library,"covers",ThumbnailRepository.class),"worker",java.util.concurrent.ThreadPoolExecutor.class).submit(()->{}).get(5,TimeUnit.SECONDS);
+        Shadows.shadowOf(Looper.getMainLooper()).idle();layout();
+        GridView grid=field(library,"grid",GridView.class);
+        for(boolean list:new boolean[]{false,true}){
+            if(list){described(library,"切换详细列表").performClick();layout();}
+            View cell=grid.getChildAt(0);ImageView cover=field(cell.getTag(),"cover",ImageView.class);assertNotNull(cover.getDrawable());
+            tap(cover);Intent intent=Shadows.shadowOf(activity).getNextStartedActivity();assertNotNull(intent);
+            assertEquals(videoId,intent.getLongExtra("video_id",0));
+            assertFalse("A shared snapshot must not cover the independently rendered video",intent.hasExtra("transition_name"));
+            assertFalse(intent.hasExtra("transition_cover_path"));
+        }
+    }
+
     @Test public void overflowAndLongPressSelectionDoNotAccidentallyPlay() throws Exception {
         open();GridView grid=field(library,"grid",GridView.class);
         for(boolean list:new boolean[]{false,true}){
