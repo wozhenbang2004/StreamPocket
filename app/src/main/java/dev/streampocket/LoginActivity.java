@@ -224,12 +224,13 @@ public final class LoginActivity extends Activity {
         ready = true;
         if (loginEntry != null) loginEntry.setEnabled(true);
         status.setText(!error.isEmpty() ? error : restored
-                ? "已带入本机保存的登录信息；是否仍有效由平台确认。" : instruction());
+                ? "已恢复上次登录，失效时请重新登录。" : instruction());
         web.loadUrl(platform.loginUrl);
         main.removeCallbacks(observe); main.post(observe);
     }
 
     private String instruction() {
+        if(platform==LoginPlatform.YOUTUBE)return "在 YouTube 完成登录后保存。无法登录时，可返回账号管理导入登录信息。";
         if (platform == LoginPlatform.DOUYIN) return desktop
                 ? "抖音官方账号页：请选择「验证码登录」或「密码登录」。若只有首页，点「重新打开登录」。"
                 : "手机版可能只显示官网首页。点「重新打开登录」可切换到电脑版账号入口。";
@@ -265,7 +266,7 @@ public final class LoginActivity extends Activity {
         catch (IllegalArgumentException malformed) { found = false; }
         if (found != detected) {
             detected = found;
-            status.setText(found ? "已检测到账号会话，可保存到本机；有效性仍以平台响应为准。" : instruction());
+            status.setText(found ? "已检测到登录信息，可以保存。" : instruction());
         }
         save.setEnabled(found);
         save.setText(found ? "保存并返回" : "登录后保存到本机");
@@ -348,7 +349,7 @@ public final class LoginActivity extends Activity {
         });
         menu.getMenu().add("登录帮助").setOnMenuItemClickListener(item -> {
             new PocketDialog.Builder(this).setTitle("在官方网页登录")
-                    .setMessage("登录页跟随手机网络与系统 VPN。请完成平台要求的验证码或短信验证。页面只有打开 App 的入口时，可在选项切换电脑版网页。\n\nGoogle、Apple 等第三方登录可能不支持此网页环境，请优先使用平台账号登录。\n\n保存的登录信息仅供本机下载，账号是否有效及可用画质以源站响应为准。可在账号管理中暂停、重新登录或清除。")
+                    .setMessage(platform==LoginPlatform.YOUTUBE?"请在 YouTube 完成登录和验证。若 Google 不允许在此网页中登录，请返回账号管理，导入浏览器导出的 YouTube 登录文件。\n\n登录信息仅在本机使用。登录不保证所有视频都能下载。":"请完成平台要求的验证码或短信验证。页面只显示打开 App 时，可从选项切换电脑版网页。\n\n第三方账号无法登录时，请使用平台账号登录。登录信息仅在本机使用，可随时停用或清除。")
                     .setPositiveButton("知道了", null).show();
             return true;
         });

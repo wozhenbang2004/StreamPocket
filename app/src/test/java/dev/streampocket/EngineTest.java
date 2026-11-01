@@ -30,7 +30,7 @@ public final class EngineTest {
     }
     @Test public void genericFreshCookiesErrorDoesNotAssertServerVerification() {
         String message = CoreRules.inspectionMessage(new Exception("Fresh cookies (not necessarily logged in) are needed"));
-        assertTrue(message.contains("会话或解析接口"));
+        assertTrue(message.contains("暂时没有取得视频信息"));
         assertFalse(message.contains("平台要求验证"));
     }
 }

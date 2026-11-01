@@ -53,11 +53,11 @@ public final class YouTubeChannelTest {
         InspectionInbox inbox = new InspectionInbox(); inbox.add(java.util.Collections.singletonList(url));
         InspectionInbox.Job job = inbox.next();
         inbox.fail(job, new Exception("ERROR: Sign in to confirm you're not a bot"));
-        assertTrue(job.message.contains("YouTube")); assertFalse(job.message.contains("账号管理"));
+        assertTrue(job.message.contains("YouTube")); assertTrue(job.message.contains("账号管理"));
         InspectionInbox restored = new InspectionInbox(); restored.restore(inbox.json());
         assertEquals(url, restored.jobs.get(0).url); assertEquals(job.id, restored.jobs.get(0).id);
         assertTrue(restored.retry(restored.jobs.get(0))); assertEquals("queued", restored.jobs.get(0).state);
-        assertTrue(CoreRules.inspectionMessage(new Exception("WARNING: No supported JavaScript runtime could be found"), url).contains("解析组件"));
+        assertTrue(CoreRules.inspectionMessage(new Exception("WARNING: No supported JavaScript runtime could be found"), url).contains("更新下载支持"));
         assertTrue(CoreRules.userMessage(new Exception("ERROR: HTTP Error 429"), url).contains("冷却"));
         assertTrue(CoreRules.userMessage(new Exception("ERROR: connection timed out"), url).contains("超时"));
         assertEquals("https://example.org/video?id=1", Engine.normalizeUrl("https://example.org/video?id=1"));

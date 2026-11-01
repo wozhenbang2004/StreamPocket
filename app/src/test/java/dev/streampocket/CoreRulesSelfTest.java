@@ -18,7 +18,7 @@ public final class CoreRulesSelfTest {
         check(CoreRules.userMessage(new Exception("write failed: ENOSPC")).contains("存储空间不足"), "Missing storage recovery message");
         check(CoreRules.userMessage(new Exception("Fresh cookies needed, captcha required")).contains("验证"), "Verification misclassified as ordinary login");
         String freshCookies = CoreRules.inspectionMessage(new Exception("Fresh cookies (not necessarily logged in) are needed"));
-        check(freshCookies.contains("会话或解析接口") && !freshCookies.contains("平台要求验证"), "Generic extractor error was misreported as a server verification demand");
+        check(freshCookies.contains("暂时没有取得视频信息") && !freshCookies.contains("平台要求验证"), "Generic extractor error was misreported as a server verification demand");
         check(CoreRules.isBilibiliUrl("https://www.bilibili.com/video/BV1nx411u79K"), "Bilibili compatibility rule missed the main site");
         check(CoreRules.isBilibiliUrl("https://B23.TV/example"), "Bilibili compatibility rule missed a share link");
         for (String value : new String[]{"https://evilbilibili.com/a", "https://bilibili.com.example.org/a", "https://x.com/user/status/1", "https://www.douyin.com/video/1"})

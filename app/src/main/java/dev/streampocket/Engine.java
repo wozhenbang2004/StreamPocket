@@ -53,7 +53,7 @@ public final class Engine {
                 YoutubeDL.getInstance().execute(diagnostic, "runtime-diagnostic", false, null);
                 initialized = true;
             } catch (Throwable error) {
-                throw new Exception("下载内核初始化失败。请确认安装包包含适合本机的原生库；当前版本可能不支持此设备的内存页大小。" +
+                throw new Exception("下载功能暂时无法启动。请更新应用后重试。" +
                         "\n" + cleanLog(error.toString()), error);
             }
         }
@@ -278,7 +278,7 @@ public final class Engine {
         for (String api : apis) {
             for (int retry = 0; retry < 2; retry++) {
                 if (inspectCancelled || cancelled.getAsBoolean()) throw new InterruptedException("解析已取消");
-                progress.accept(retry > 0 ? "连接暂时失败，正在退避重试…" : "正在获取视频信息…");
+                progress.accept(retry > 0 ? "连接暂时失败，正在重试…" : "正在获取视频信息…");
                 String processId = "inspect-" + java.util.UUID.randomUUID();
                 try (SourceScheduler.Lease lease = SourceScheduler.SHARED.acquire(url,
                         () -> inspectCancelled || cancelled.getAsBoolean(), progress)) {

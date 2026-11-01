@@ -237,7 +237,7 @@ public final class EditorActivity extends Activity {
         preciseFields=column();LinearLayout fields=row(),start=column(),end=column();start.addView(text("起点",12,MUTED,false));end.addView(text("终点",12,MUTED,false));
         startInput=input("00:00.000");endInput=input("00:15.000");startInput.setContentDescription("片段起点，秒数或分秒，最多三位小数");endInput.setContentDescription("片段终点，秒数或分秒，最多三位小数");
         startInput.setText(startDraft);endInput.setText(endDraft);add(start,startInput,6);add(end,endInput,6);fields.addView(start,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams second=new LinearLayout.LayoutParams(0,-2,1);second.leftMargin=dp(12);fields.addView(end,second);preciseFields.addView(fields);
-        add(preciseFields,text("秒数或 分:秒，最多三位小数；实际边界受源帧率影响",12,MUTED,false),6);add(body,preciseFields,0);preciseFields.setVisibility(preciseOpen?View.VISIBLE:View.GONE);
+        add(preciseFields,text("例如 01:20.250，也可输入秒数",12,MUTED,false),6);add(body,preciseFields,0);preciseFields.setVisibility(preciseOpen?View.VISIBLE:View.GONE);
         precise.setSelected(preciseOpen);precise.setOnClickListener(v->{preciseOpen=!preciseOpen;precise.setSelected(preciseOpen);preciseFields.setVisibility(preciseOpen?View.VISIBLE:View.GONE);});
         TextWatcher watcher=new TextWatcher(){public void beforeTextChanged(CharSequence value,int st,int count,int after){}public void onTextChanged(CharSequence value,int st,int before,int count){if(!syncingRange&&player!=null){rangePlaying=false;seekSource(currentSourcePosition());player.pause();}syncRangeFromFields();}public void afterTextChanged(Editable value){}};
         startInput.addTextChangedListener(watcher);endInput.addTextChangedListener(watcher);
@@ -286,7 +286,7 @@ public final class EditorActivity extends Activity {
     private void reviewRangeExport(){
         if(busy)return;long[] range=readRange();if(range==null)return;
         EditText name=input("成片名称");String original=source.optString("title","我的片段");name.setText(original+" · 片段");name.setSelectAllOnFocus(true);
-        LinearLayout wrap=column();wrap.setPadding(dp(24),dp(4),dp(24),0);wrap.addView(text(time(range[0])+" — "+time(range[1])+"\n片长 "+time(range[1]-range[0]),14,INK,true));add(wrap,name,14);add(wrap,text("精确裁剪 · MP4 / H.264 / AAC\n重新编码可能耗时，另存新视频，不改原片。",12,MUTED,false),12);
+        LinearLayout wrap=column();wrap.setPadding(dp(24),dp(4),dp(24),0);wrap.addView(text(time(range[0])+" — "+time(range[1])+"\n片长 "+time(range[1]-range[0]),14,INK,true));add(wrap,name,14);add(wrap,text("另存为 MP4，不改变原视频。",12,MUTED,false),12);
         PocketDialog dialog=new PocketDialog.Builder(this).setTitle("确认导出片段").setView(wrap).setNegativeButton("继续调整",null).setPositiveButton("开始导出",null).create();
         dialog.setOnShowListener(ignored->dialog.getButton(PocketDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("请输入成片名称");return;}
@@ -368,7 +368,7 @@ public final class EditorActivity extends Activity {
         }
         addClipButton=button("添加视频片段",false);addClipButton.setEnabled(!running);addClipButton.setOnClickListener(v->showPicker());add(body,addClipButton,16);
         LinearLayout preset=row();preset.addView(text("MP4 · 1080p · 原片保留",12,MUTED,false),new LinearLayout.LayoutParams(0,-2,1));
-        Button settings=quietButton("导出设置");settings.setOnClickListener(v->new PocketDialog.Builder(this).setTitle("导出设置").setMessage(ExportService.PRESET_LABEL+"\n最长边不超过1920像素，不放大小视频；不同画幅完整显示并留边。另存新视频，原片保留。").setPositiveButton("知道了",null).show());preset.addView(settings,new LinearLayout.LayoutParams(dp(88),dp(48)));add(body,preset,10);
+        Button settings=quietButton("导出设置");settings.setOnClickListener(v->new PocketDialog.Builder(this).setTitle("导出设置").setMessage(ExportService.PRESET_LABEL+"\n最高 1080p，保留完整画面。导出为新视频，原片不变。").setPositiveButton("知道了",null).show());preset.addView(settings,new LinearLayout.LayoutParams(dp(88),dp(48)));add(body,preset,10);
         exportDetail=text("",13,MUTED,false);add(body,exportDetail,6);
         exportProgress=new PocketProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);exportProgress.setMax(100);exportProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));exportProgress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(LINE));add(body,exportProgress,10,new LinearLayout.LayoutParams(-1,dp(4)));
         exportButton=button("导出新视频",true);exportButton.setOnClickListener(v->startExport());add(body,exportButton,14);
@@ -429,14 +429,14 @@ public final class EditorActivity extends Activity {
         try {
             Intent request=new Intent(this,ExportService.class).setAction(ExportService.ENQUEUE).putExtra(ExportService.PROJECT_ID,projectId);
             if (Build.VERSION.SDK_INT>=26) startForegroundService(request); else startService(request);
-            feedback.setText("已请求导出。请查看上方真实处理状态。"); exportButton.setEnabled(false); schedulePoll();
+            feedback.setText("正在准备导出…"); exportButton.setEnabled(false); schedulePoll();
         } catch (RuntimeException failure) { feedback.setText("暂时无法启动导出，请保持拾流在前台后重试。"); exportButton.setEnabled(true); }
     }
     private void cancelExport() {
         try {
             startService(new Intent(this,ExportService.class).setAction(ExportService.CANCEL).putExtra(ExportService.PROJECT_ID,projectId));
             feedback.setText("正在请求取消；原片和草稿会保留。");
-        } catch (RuntimeException failure) { feedback.setText("取消请求未能送达，请返回后查看状态。"); }
+        } catch (RuntimeException failure) { feedback.setText("暂时无法取消，请稍后重试。"); }
     }
     private void updateExportStatus() {
         if (exportDetail==null || project==null) return;
@@ -485,7 +485,7 @@ public final class EditorActivity extends Activity {
             current.setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true);current.setHandleAudioBecomingNoisy(true);
             List<MediaItem> items=new ArrayList<>();for(JSONObject clip:selected)items.add(ClipContract.mediaItem(Uri.parse(clip.optString("uri")),clip.optLong("startMs"),clip.optLong("endMs")));
             current.addListener(new Player.Listener(){@Override public void onPlayerError(PlaybackException error){if(player==current){releasePreview();feedback.setText("草稿预览失败，原片可能不可用；片段信息已保留。");}}});
-            playerView.setPlayer(current);current.setMediaItems(items);current.prepare();current.play();feedback.setText("按草稿顺序预览所选片段 · 导出会重新编码并统一画幅");draftPreviewHost.requestRectangleOnScreen(new android.graphics.Rect(0,0,draftPreviewHost.getWidth(),draftPreviewHost.getHeight()),true);
+            playerView.setPlayer(current);current.setMediaItems(items);current.prepare();current.play();feedback.setText("按草稿顺序预览所选片段");draftPreviewHost.requestRectangleOnScreen(new android.graphics.Rect(0,0,draftPreviewHost.getWidth(),draftPreviewHost.getHeight()),true);
         }catch(RuntimeException failure){releasePreview();feedback.setText("预览初始化失败，请返回后重试。");}
     }
     private void schedulePoll() { main.removeCallbacks(projectPoll); if (resumed && screen==PROJECT) main.postDelayed(projectPoll,300); }

@@ -42,6 +42,41 @@ public final class AccountStoreTest {
         assertFalse(LoginPlatform.BILIBILI.ownsDomain("..bilibili.com"));
     }
 
+    @Test public void youtubeGoogleNavigationNeverGrantsCookieOwnership() {
+        assertTrue(LoginPlatform.YOUTUBE.ownsDomain("#HttpOnly_.youtube.com"));
+        assertTrue(LoginPlatform.YOUTUBE.ownsDomain("music.youtube.com"));
+        assertTrue(LoginPlatform.YOUTUBE.allowsNavigation("https://accounts.google.com/ServiceLogin?service=youtube"));
+        assertTrue(LoginPlatform.YOUTUBE.allowsNavigation("https://www.youtube.com/"));
+        for (String domain : new String[]{"accounts.google.com", ".google.com", "youtube.com.attacker.example", "notyoutube.com"})
+            assertFalse(domain, LoginPlatform.YOUTUBE.ownsDomain(domain));
+        for (String url : new String[]{"http://accounts.google.com/", "https://accounts.google.com.attacker.example/",
+                "https://other.accounts.google.com/", "https://user@accounts.google.com/", "https://accounts.google.com:1234/", "intent://accounts.google.com/"})
+            assertFalse(url, LoginPlatform.YOUTUBE.allowsNavigation(url));
+        assertFalse(LoginPlatform.X.allowsNavigation("https://accounts.google.com/"));
+        for (String url : LoginPlatform.YOUTUBE.cookieUrls()) assertFalse(url.contains("google.com"));
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("https://accounts.google.com/", "SAPISID=google-only");
+        try { AccountStore.fromWebCookies(LoginPlatform.YOUTUBE, headers); fail(); }
+        catch (IllegalArgumentException expected) {}
+        Map<String, List<String>> full = new LinkedHashMap<>();
+        full.put("https://www.youtube.com/", Arrays.asList("SAPISID=google-only; Domain=.google.com; Path=/; Secure"));
+        try { AccountStore.fromWebCookieInfo(LoginPlatform.YOUTUBE, full); fail(); }
+        catch (IllegalArgumentException expected) {}
+    }
+
+    @Test public void youtubeDetectionNeedsANonExpiredOwnedAuthenticationCookie() {
+        for (String name : new String[]{"SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"}) {
+            assertTrue(name, LoginPlatform.YOUTUBE.hasLogin(HEADER + row(".youtube.com", name, "fixture")));
+            assertFalse(LoginPlatform.YOUTUBE.hasLogin(HEADER + row(".google.com", name, "fixture")));
+            assertFalse(LoginPlatform.YOUTUBE.hasLogin(HEADER + "youtube.com\tFALSE\t/\tTRUE\t1\t" + name + "\tfixture\n"));
+            assertFalse(LoginPlatform.YOUTUBE.hasLogin(HEADER + row(".youtube.com", name, "")));
+        }
+        assertFalse(LoginPlatform.YOUTUBE.hasLogin(HEADER + row(".youtube.com", "PREF", "guest")));
+        assertFalse(LoginPlatform.YOUTUBE.hasLogin(HEADER + row("youtube.com.attacker.example", "SAPISID", "fixture")));
+        long future = System.currentTimeMillis() / 1000 + 3600;
+        assertTrue(LoginPlatform.YOUTUBE.hasLogin(HEADER + "#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t" + future + "\tSAPISID\tfixture\n"));
+    }
+
     @Test public void fullCookieInfoPreservesOriginalScopeHttpOnlyPathAndExpiry() {
         Map<String, List<String>> values = new LinkedHashMap<>();
         values.put("https://api.bilibili.com/", Arrays.asList(
@@ -152,6 +187,113 @@ public final class AccountStoreTest {
         snapshot.delete();
     }
 
+    @Test public void encryptedOldOtherMovesYouTubeAndKeepsOtherSites() throws Exception {
+        seedOldOther(row(".youtube.com", "SAPISID", "old-youtube") + row("example.org", "session", "other-site"));
+        store.prepare();
+        assertTrue(store.hasSaved(LoginPlatform.YOUTUBE));
+        assertEquals(HEADER + row(".youtube.com", "SAPISID", "old-youtube"), store.load(LoginPlatform.YOUTUBE));
+        assertEquals("文件导入", store.source(LoginPlatform.YOUTUBE));
+        File snapshot = new File(app.getCacheDir(), "upgraded-youtube.txt");
+        store.writeSnapshot(snapshot);
+        assertTrue(readText(snapshot.toPath()).contains("old-youtube"));
+        assertTrue(readText(snapshot.toPath()).contains("other-site"));
+        byte[] encrypted = Files.readAllBytes(new File(app.getNoBackupFilesDir(), "account-sessions/youtube.session").toPath());
+        assertFalse(new String(encrypted, StandardCharsets.ISO_8859_1).contains("old-youtube"));
+        store.setEnabled(LoginPlatform.YOUTUBE, false);
+        store.writeSnapshot(snapshot);
+        assertFalse(readText(snapshot.toPath()).contains("old-youtube"));
+        assertTrue(readText(snapshot.toPath()).contains("other-site"));
+        store.clear(LoginPlatform.YOUTUBE); store.prepare(); store.writeSnapshot(snapshot);
+        assertFalse(store.hasSaved(LoginPlatform.YOUTUBE));
+        assertFalse(readText(snapshot.toPath()).contains("old-youtube"));
+        snapshot.delete();
+    }
+
+    @Test public void oldOtherMigrationNeverOverwritesANewerDisabledYouTubeSession() throws Exception {
+        store.save(LoginPlatform.YOUTUBE, HEADER + row(".youtube.com", "SAPISID", "new-youtube"), "网页登录");
+        store.setEnabled(LoginPlatform.YOUTUBE, false);
+        app.getSharedPreferences("account-sessions-metadata", 0).edit().putLong("youtube.savedAt", 123456L).commit();
+        seedOldOther(row(".youtube.com", "SAPISID", "old-youtube") + row("example.org", "session", "other-site"));
+        store.prepare(); store.prepare();
+        assertTrue(store.load(LoginPlatform.YOUTUBE).contains("new-youtube"));
+        assertFalse(store.load(LoginPlatform.YOUTUBE).contains("old-youtube"));
+        assertFalse(store.isEnabled(LoginPlatform.YOUTUBE));
+        assertEquals(123456L, store.savedAt(LoginPlatform.YOUTUBE));
+        assertEquals("网页登录", store.source(LoginPlatform.YOUTUBE));
+        File snapshot = new File(app.getCacheDir(), "new-youtube-wins.txt");
+        store.writeSnapshot(snapshot);
+        assertFalse(readText(snapshot.toPath()).contains("youtube"));
+        assertTrue(readText(snapshot.toPath()).contains("other-site"));
+        store.setEnabled(LoginPlatform.YOUTUBE, true); store.writeSnapshot(snapshot);
+        assertTrue(readText(snapshot.toPath()).contains("new-youtube"));
+        assertFalse(readText(snapshot.toPath()).contains("old-youtube"));
+        snapshot.delete();
+    }
+
+    @Test public void oldOtherBackupCannotBypassPauseOrResurrectAClearedYouTubeSession() throws Exception {
+        store.save(LoginPlatform.YOUTUBE, HEADER + row(".youtube.com", "SAPISID", "new-youtube"), "文件导入");
+        store.setEnabled(LoginPlatform.YOUTUBE, false);
+        seedOldOther(row(".youtube.com", "SAPISID", "stale-youtube") + row("example.org", "session", "other-site"));
+        // A stale generic jar cannot undo a completed migration or a later user action.
+        app.getSharedPreferences("account-sessions-metadata", 0).edit().putBoolean("youtube.otherMigrated", true).commit();
+        File snapshot = new File(app.getCacheDir(), "stale-youtube.txt");
+        store.writeSnapshot(snapshot);
+        assertFalse(readText(snapshot.toPath()).contains("youtube"));
+        assertTrue(readText(snapshot.toPath()).contains("other-site"));
+        store.clear(LoginPlatform.YOUTUBE); store.prepare(); store.writeSnapshot(snapshot);
+        assertFalse(store.hasSaved(LoginPlatform.YOUTUBE));
+        assertFalse(readText(snapshot.toPath()).contains("youtube"));
+        assertTrue(readText(snapshot.toPath()).contains("other-site"));
+        snapshot.delete();
+    }
+
+    @Test public void scopedImportKeepsOnlyTheTargetAndLeavesOtherAccountsUnchanged() throws Exception {
+        store.save(LoginPlatform.X, HEADER + row("x.com", "auth_token", "preserved-x"), "网页登录");
+        store.importLegacy(HEADER + row("example.org", "session", "preserved-other"));
+        File other = new File(app.getNoBackupFilesDir(), "account-sessions/other.session");
+        byte[] originalOther = Files.readAllBytes(other.toPath());
+        store.importForPlatform(LoginPlatform.YOUTUBE, HEADER + row(".youtube.com", "SAPISID", "selected-youtube")
+                + row("x.com", "auth_token", "ignored-x") + row(".google.com", "SAPISID", "ignored-google")
+                + row("example.org", "session", "ignored-other"));
+        assertTrue(LoginPlatform.YOUTUBE.hasLogin(store.load(LoginPlatform.YOUTUBE)));
+        assertTrue(store.load(LoginPlatform.X).contains("preserved-x"));
+        assertArrayEquals(originalOther, Files.readAllBytes(other.toPath()));
+        File snapshot = new File(app.getCacheDir(), "scoped-youtube.txt");
+        store.writeSnapshot(snapshot);
+        String actual = readText(snapshot.toPath());
+        assertTrue(actual.contains("selected-youtube")); assertTrue(actual.contains("preserved-other"));
+        assertFalse(actual.contains("ignored-google")); assertFalse(actual.contains("ignored-x")); assertFalse(actual.contains("ignored-other"));
+        assertEquals("文件导入", store.source(LoginPlatform.YOUTUBE));
+        snapshot.delete();
+    }
+
+    @Test public void missingTargetOrMalformedScopedImportPreservesSavedData() throws Exception {
+        String original = HEADER + row(".youtube.com", "SAPISID", "preserved-youtube");
+        store.save(LoginPlatform.YOUTUBE, original, "网页登录"); store.setEnabled(LoginPlatform.YOUTUBE, false);
+        for (String invalid : new String[]{HEADER + row(".google.com", "SAPISID", "wrong-domain"),
+                HEADER + row("youtube.com.attacker.example", "SAPISID", "wrong-domain"), HEADER + "broken\trow",
+                HEADER + row(".youtube.com", "SAPISID", "new") + "broken\trow\n"}) {
+            try { store.importForPlatform(LoginPlatform.YOUTUBE, invalid); fail(); }
+            catch (java.io.IOException expected) {}
+            assertEquals(original, store.load(LoginPlatform.YOUTUBE));
+            assertFalse(store.isEnabled(LoginPlatform.YOUTUBE));
+            assertEquals("网页登录", store.source(LoginPlatform.YOUTUBE));
+        }
+    }
+
+    @Test public void wrongKeyCannotPartiallyMoveAnOldGenericJar() throws Exception {
+        seedOldOther(row(".youtube.com", "SAPISID", "old-youtube") + row("example.org", "session", "other-site"));
+        File other = new File(app.getNoBackupFilesDir(), "account-sessions/other.session");
+        byte[] before = Files.readAllBytes(other.toPath());
+        byte[] different = new byte[32]; different[0] = 1;
+        try { new AccountStore(app, new SecretKeySpec(different, "AES")).prepare(); fail(); }
+        catch (java.io.IOException expected) {}
+        assertArrayEquals(before, Files.readAllBytes(other.toPath()));
+        assertFalse(store.hasSaved(LoginPlatform.YOUTUBE));
+        store.prepare();
+        assertTrue(store.load(LoginPlatform.YOUTUBE).contains("old-youtube"));
+    }
+
     @Test public void invalidOrCrossPlatformSavePreservesPreviouslySavedSession() throws Exception {
         store.save(LoginPlatform.X, HEADER + row("x.com", "auth_token", "preserved"), "网页登录");
         for (String invalid : new String[]{HEADER + "broken\trow", HEADER + row("x.com", "auth_token", "new") + row("www.douyin.com", "sessionid", "other"), HEADER + "x.com\tFALSE\t/\tTRUE\t0\tauth_token\tbad\u0000value\n"}) {
@@ -186,6 +328,22 @@ public final class AccountStoreTest {
         store.writeSnapshot(snapshot);
         assertEquals(HEADER, readText(snapshot.toPath()));
         snapshot.delete();
+    }
+
+    @Test public void clearAllDoesNotMigrateOrReviveAnUnreadableOldGenericJar() throws Exception {
+        seedOldOther(row(".youtube.com", "SAPISID", "old-youtube") + row("example.org", "session", "other-site"));
+        byte[] different = new byte[32]; different[0] = 1;
+        new AccountStore(app, new SecretKeySpec(different, "AES")).clearAll();
+        store.prepare(); assertFalse(store.hasAnySaved()); assertFalse(store.hasSaved(LoginPlatform.YOUTUBE));
+        File snapshot = new File(app.getCacheDir(), "clear-old-youtube.txt");
+        store.writeSnapshot(snapshot); assertEquals(HEADER, readText(snapshot.toPath())); snapshot.delete();
+    }
+
+    private void seedOldOther(String rows) throws Exception {
+        java.lang.reflect.Method write = AccountStore.class.getDeclaredMethod("writeEncrypted", String.class, String.class);
+        write.setAccessible(true); write.invoke(store, "other", HEADER + rows);
+        app.getSharedPreferences("account-sessions-metadata", 0).edit().putBoolean("legacy.migrated", true)
+                .remove("youtube.otherMigrated").commit();
     }
 
     private static String readText(java.nio.file.Path path) throws java.io.IOException {

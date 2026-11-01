@@ -35,6 +35,7 @@ public final class AccountStore {
     private static final byte[] MAGIC = new byte[]{'S', 'P', 'A', 'C', 1};
     private static final String KEY_ALIAS = "streampocket.local.accounts.v1";
     private static final int LIMIT = 2 * 1024 * 1024;
+    private static final String YOUTUBE_MIGRATED = "youtube.otherMigrated";
     private final Context app;
     private final File directory;
     private final SharedPreferences metadata;
@@ -69,6 +70,7 @@ public final class AccountStore {
 
     public void setEnabled(LoginPlatform platform, boolean enabled) throws IOException {
         synchronized (LOCK) {
+            migrateLegacy();
             if (!metadata.edit().putBoolean(platform.id + ".enabled", enabled).commit())
                 throw new IOException("未能保存账号启用设置，请重试。");
         }
@@ -123,7 +125,7 @@ public final class AccountStore {
             File legacyStaged = new File(app.getFilesDir(), "cookies.txt.new");
             if (legacyStaged.exists() && !legacyStaged.delete()) throw new IOException("部分旧登录临时文件未能清除，请重试。");
             if (hasAnySaved()) throw new IOException("部分本机登录信息未能清除，请重试。");
-            if (!metadata.edit().clear().putBoolean("legacy.migrated", true).commit())
+            if (!metadata.edit().clear().putBoolean("legacy.migrated", true).putBoolean(YOUTUBE_MIGRATED, true).commit())
                 throw new IOException("登录信息已清除，但状态记录未完成，请重新打开账号管理。");
         }
     }
@@ -142,6 +144,20 @@ public final class AccountStore {
         }
     }
 
+    /** A platform import never saves cookies from the other websites in an export. */
+    public void importForPlatform(LoginPlatform platform, String netscape) throws IOException {
+        synchronized (LOCK) {
+            if (platform == null) throw new IOException("请选择要导入的平台。");
+            Map<String, StringBuilder> parts = split(netscape);
+            StringBuilder selected = parts.get(platform.id);
+            if (selected == null || selected.length() == 0)
+                throw new IOException("文件里没有此平台的 Cookie，原登录信息已保留。");
+            migrateLegacy();
+            writeEncrypted(platform.id, HEADER + selected);
+            recordSaved(platform, "文件导入");
+        }
+    }
+
     /** Never gives a request permission to modify the encrypted masters. */
     public void writeSnapshot(File destination) throws IOException {
         synchronized (LOCK) {
@@ -150,7 +166,9 @@ public final class AccountStore {
             for (LoginPlatform platform : LoginPlatform.values()) {
                 if (isEnabled(platform)) appendRows(combined, readEncrypted(platform.id));
             }
-            appendRows(combined, readEncrypted("other"));
+            // Old backups must not bypass a platform's pause or clear action.
+            StringBuilder other = split(readEncrypted("other", true)).get("other");
+            if (other != null) appendRows(combined, HEADER + other);
             File parent = destination.getParentFile();
             if (parent == null || (!parent.isDirectory() && !parent.mkdirs())) throw new IOException("无法创建登录凭据临时目录。");
             try (FileOutputStream output = new FileOutputStream(destination)) {
@@ -283,7 +301,7 @@ public final class AccountStore {
     }
 
     private void migrateLegacy() throws IOException {
-        if (metadata.getBoolean("legacy.migrated", false)) return;
+        if (metadata.getBoolean("legacy.migrated", false)) { migrateYouTubeOther(); return; }
         File legacy = new File(app.getFilesDir(), "cookies.txt");
         if (legacy.isFile()) {
             String original = new String(readLimited(legacy), StandardCharsets.UTF_8);
@@ -301,6 +319,29 @@ public final class AccountStore {
         File legacyStaged = new File(app.getFilesDir(), "cookies.txt.new");
         if (legacyStaged.exists() && !legacyStaged.delete()) throw new IOException("旧登录临时文件迁移未完成，请稍后重试。");
         if (!metadata.edit().putBoolean("legacy.migrated", true).commit()) throw new IOException("无法记录本机登录信息迁移状态。");
+        migrateYouTubeOther();
+    }
+
+    /** Older releases kept YouTube in the encrypted generic jar, without a platform switch. */
+    private void migrateYouTubeOther() throws IOException {
+        if (metadata.getBoolean(YOUTUBE_MIGRATED, false)) return;
+        Map<String, StringBuilder> parts = split(readEncrypted("other", true));
+        StringBuilder youtube = parts.get(LoginPlatform.YOUTUBE.id);
+        if (youtube != null) {
+            // Write the new owner first. An interrupted retry must keep an explicit newer login,
+            // including its existing disabled state and save metadata.
+            if (!exists(LoginPlatform.YOUTUBE.id)) {
+                writeEncrypted(LoginPlatform.YOUTUBE.id, HEADER + youtube);
+                recordSaved(LoginPlatform.YOUTUBE, "文件导入");
+            }
+            StringBuilder other = parts.get("other");
+            if (other == null) {
+                new AtomicFile(file("other")).delete();
+                if (exists("other")) throw new IOException("旧登录信息迁移未完成，请稍后重试。");
+            } else writeEncrypted("other", HEADER + other);
+        }
+        if (!metadata.edit().putBoolean(YOUTUBE_MIGRATED, true).commit())
+            throw new IOException("无法记录本机登录信息迁移状态。");
     }
 
     private void recordSaved(LoginPlatform platform, String source) throws IOException {
@@ -346,6 +387,10 @@ public final class AccountStore {
     }
 
     private String readEncrypted(String id) throws IOException {
+        return readEncrypted(id, false);
+    }
+
+    private String readEncrypted(String id, boolean allowYouTubeRepartition) throws IOException {
         File saved = file(id);
         if (!exists(id)) return HEADER;
         try {
@@ -360,7 +405,11 @@ public final class AccountStore {
             cipher.updateAAD(id.getBytes(StandardCharsets.UTF_8));
             String value = new String(cipher.doFinal(bytes, start + ivLength, bytes.length - start - ivLength), StandardCharsets.UTF_8);
             Map<String, StringBuilder> parts = split(value);
-            if (parts.size() > 1 || (!parts.isEmpty() && !parts.containsKey(id))) throw new IOException();
+            if (allowYouTubeRepartition && id.equals("other")) {
+                // Authenticate with the original `other` AAD, then permit only the newly
+                // recognized YouTube owner. Other platform files keep strict ownership.
+                for (String owner : parts.keySet()) if (!owner.equals("other") && !owner.equals(LoginPlatform.YOUTUBE.id)) throw new IOException();
+            } else if (parts.size() > 1 || (!parts.isEmpty() && !parts.containsKey(id))) throw new IOException();
             return value;
         } catch (Exception error) { throw new IOException("本机保存的登录信息暂时无法读取，原文件已保留；请在账号管理中检查或重新登录此平台。", error); }
     }

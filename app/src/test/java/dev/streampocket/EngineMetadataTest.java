@@ -46,7 +46,7 @@ public final class EngineMetadataTest {
     }
     @Test public void noFormatsExplainsUncertaintyWithoutCallingItANetworkFailure(){
         java.io.IOException error=new java.io.IOException("ERROR: [twitter] 2116424978870456755: No video formats found!");
-        assertEquals(SourceFailure.Kind.NO_FORMATS,SourceFailure.kind(error));assertFalse(SourceFailure.retryable(error));assertTrue(CoreRules.inspectionMessage(error).contains("不能确定是代理故障"));
+        assertEquals(SourceFailure.Kind.NO_FORMATS,SourceFailure.kind(error));assertFalse(SourceFailure.retryable(error));assertTrue(CoreRules.inspectionMessage(error).contains("暂时没有可下载的画质"));
         assertEquals(SourceFailure.Kind.TIMEOUT,SourceFailure.kind("ERROR: connection timed out"));
     }
     @Test public void redactsCredentialsInPreservedParserError() throws Exception {

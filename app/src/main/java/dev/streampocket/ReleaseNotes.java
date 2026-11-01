@@ -13,7 +13,9 @@ final class ReleaseNotes {
         if(source==null||source.trim().isEmpty())return out.append("此版本未提供更新说明。");
         for(String raw:source.split("\n")){
             String line=raw.trim();boolean heading=line.matches("^#{1,6}\\s+.*");line=line.replaceFirst("^#{1,6}\\s+","");
-            if(line.equals("更新内容"))continue;
+            // The update screen needs changes to the app, not the distribution/build report.
+            if(heading&&line.matches("(?i)(?:安装.*|下载与安装.*|验证.*|测试.*|开发.*|源码.*|开源.*|第三方.*|从源码.*|Install.*|Build.*|Validat.*|Test.*|Source.*|Develop.*|Licen.*)"))break;
+            if(line.equals("更新内容")||line.equalsIgnoreCase("What's new"))continue;
             line=line.replaceAll("\\[([^]]+)\\]\\([^)]*\\)","$1").replace("**","").replace("`","");
             line=line.replaceFirst("^[-*]\\s+","•  ");int start=out.length();out.append(line).append('\n');
             if(heading&&line.length()>0)out.setSpan(new StyleSpan(Typeface.BOLD),start,start+line.length(),Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);

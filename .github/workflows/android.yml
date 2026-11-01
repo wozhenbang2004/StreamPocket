@@ -36,3 +36,33 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - name: Upload unsigned release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamPocket-release-unsigned
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload UI fixtures and test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamPocket-verification
+          path: |
+            app/build/reports/view-fixtures/
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/lint-results-debug.html
+          retention-days: 7
+      - name: Collect Android signing tools
+        run: |
+          mkdir -p signing-tools/lib
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" signing-tools/lib/
+          cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" signing-tools/
+          cp -r "$ANDROID_HOME/build-tools/35.0.0/lib64" signing-tools/
+      - name: Upload Android signing tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamPocket-signing-tools
+          path: signing-tools/
+          retention-days: 7

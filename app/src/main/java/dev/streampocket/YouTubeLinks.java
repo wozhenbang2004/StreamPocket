@@ -67,11 +67,11 @@ final class YouTubeLinks {
         if (text.contains("具体的 youtube")) return "请复制具体的 YouTube 视频或 Shorts 链接；目前不整批解析频道或播放列表。";
         if (kind == SourceFailure.Kind.AUTH || kind == SourceFailure.Kind.CHALLENGE
                 || text.contains("confirm your age") || text.contains("age-restricted"))
-            return "YouTube 要求登录、年龄确认或访问验证，当前无法取得这个视频。本版支持无需登录即可访问的视频；请先在 YouTube 确认内容的可访问状态。记录已保留。";
+            return "YouTube 要求登录、年龄确认或访问验证。请先确认账号能观看这个视频，再到账号管理中登录 YouTube 或导入登录信息。记录已保留。";
         if (text.contains("javascript runtime") || text.contains("signature solving failed") || text.contains("challenge solver"))
-            return "YouTube 解析组件未能完成视频解析。请先更新解析器；若仍失败，请更新应用后重试。链接和错误详情已保留。";
+            return "暂时无法解析这个 YouTube 视频，请更新下载支持或应用后重试。链接已保留。";
         if (kind == SourceFailure.Kind.NO_FORMATS)
-            return "YouTube 没有向当前访问状态提供可下载的画质。请先在 YouTube 确认视频可播放，再更新解析器后重试；失败链接已保留。";
+            return "暂时没有可下载的画质。请确认 YouTube 能播放这个视频，再检查登录状态或更新下载支持。链接已保留。";
         if (text.contains("not available in your country") || text.contains("geo-restricted"))
             return "这个 YouTube 视频在当前地区不可用。请在 YouTube 确认可访问状态，已有记录保留。";
         return "";

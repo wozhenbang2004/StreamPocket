@@ -46,23 +46,21 @@ public final class UpdateActivity extends Activity {
         status=text("",17,true);add(card,status,0);
         version=text("",24,true);add(card,version,16);detail=text("",13,false);add(card,detail,6);
         progress=new PocketProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);add(card,progress,16);progress.getLayoutParams().height=dp(5);
-        continuation=text("下载完成后自动校验并进入系统安装确认",12,false);add(card,continuation,10);
+        continuation=text("下载完成后会提示安装",12,false);add(card,continuation,10);
         primary=button("检查更新",true);add(card,primary,20);primary.setOnClickListener(v->primaryAction());
         cancel=PocketButton.of(this,"取消下载",PocketButton.Role.QUIET);add(card,cancel,6);cancel.setOnClickListener(v->new PocketDialog.Builder(this).setTitle(updates.snapshot().phase==AppUpdates.Phase.READY?"删除已下载的安装包？":"取消本次更新下载？")
-                .setMessage("只删除本次更新缓存，不影响现有应用、登录信息或视频。")
+                .setMessage("不会影响当前应用和已保存的视频。")
                 .setNegativeButton("保留",null).setPositiveButton("确认取消",(d,w)->updates.cancel()).show());
         notes=text("",14,false);notes.setTextIsSelectable(true);add(body,notes,24);
         PocketSwitch automatic=new PocketSwitch(this);automatic.setText("打开应用时检查更新");automatic.setChecked(updates.automatic());automatic.setOnCheckedChangeListener((v,checked)->updates.automatic(checked));add(body,automatic,20);
-        add(body,text("每天最多检查一次。下载完成后校验安装包，并进入系统安装确认。",12,false),4);
-        Button source=PocketButton.of(this,"GitHub 发布页",PocketButton.Role.QUIET);add(body,source,12);source.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(UpdateOffer.REPO+"/releases")));}catch(RuntimeException unavailable){new PocketDialog.Builder(this).setMessage("没有可打开网页的应用").setPositiveButton("知道了",null).show();}});
-        Button diagnostic=PocketButton.of(this,"复制安装信息",PocketButton.Role.QUIET);add(body,diagnostic,0);diagnostic.setOnClickListener(v->{android.content.ClipboardManager clipboard=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);clipboard.setPrimaryClip(ClipData.newPlainText("拾流安装信息",updates.installationDetails()));PocketNotice.show(this,"安装信息已复制");});
+        Button help=PocketButton.of(this,"更新帮助",PocketButton.Role.QUIET);add(body,help,12);help.setOnClickListener(v->showUpdateHelp());
         setContentView(root);UiTheme.systemBars(this);root.requestApplyInsets();render(updates.snapshot());
     }
     private void primaryAction(){
         AppUpdates.Snapshot state=updates.snapshot();
         if(state.phase==AppUpdates.Phase.AVAILABLE&&state.offer!=null){
             new PocketDialog.Builder(this).setTitle("下载 "+state.offer.version+"？")
-                    .setMessage("完整安装包 "+size(state.offer.size)+"，使用当前网络（可能产生移动流量）。本页显示下载进度，完成校验后自动打开手机系统安装确认，现有数据保留。")
+                    .setMessage("下载大小 "+size(state.offer.size)+"。建议使用 Wi-Fi，更新会保留现有数据。")
                     .setNegativeButton("暂不下载",null).setPositiveButton("下载更新",(d,w)->updates.download()).show();
         }else if(state.phase==AppUpdates.Phase.READY&&state.offer!=null){
             if(updates.installerLaunched(state.offer))updates.retryInstaller(state.offer);
@@ -73,8 +71,8 @@ public final class UpdateActivity extends Activity {
     private boolean needsSourcePermission(){return Build.VERSION.SDK_INT>=26&&!getPackageManager().canRequestPackageInstalls();}
     private void requestSourcePermission(UpdateOffer offer){
         if(sourceDialog!=null||!visible)return;updates.markSourcePrompted(offer);
-        sourceDialog=new PocketDialog.Builder(this).setTitle("允许拾流请求安装更新")
-                .setMessage("请在系统设置中允许此来源。开启后返回，本页会继续校验并打开系统安装确认，不必再点安装。最终仍由你确认，不要卸载旧版本。")
+        sourceDialog=new PocketDialog.Builder(this).setTitle("允许安装更新")
+                .setMessage("请在系统设置中允许拾流安装应用，开启后返回即可继续。")
                 .setNegativeButton("暂不",null).setPositiveButton("打开系统设置",(d,w)->{
                     try{startActivityForResult(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+getPackageName())),72);}
                     catch(RuntimeException unavailable){showInstallError();}
@@ -97,11 +95,19 @@ public final class UpdateActivity extends Activity {
         try{startActivityForResult(confirm,71);}catch(RuntimeException unavailable){updates.installationLaunchFailed(state.offer);showInstallError();}
     }
     private void showInstallError(){new PocketDialog.Builder(this).setTitle("暂时无法打开系统安装")
-            .setMessage("安装包已保留，可返回后重试或检查此来源的安装权限。现有应用和数据未删除。")
+            .setMessage("安装包已保留。请允许拾流安装应用后重试。")
             .setPositiveButton("知道了",null).show();}
+    private void showUpdateHelp(){
+        new PocketDialog.Builder(this).setTitle("更新帮助").setItems(new String[]{"查看版本记录","复制问题信息"},(dialog,which)->{
+            if(which==0){try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(UpdateOffer.REPO+"/releases")));}
+                catch(RuntimeException unavailable){PocketNotice.show(this,"没有可打开网页的应用");}}
+            else{android.content.ClipboardManager clipboard=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+                clipboard.setPrimaryClip(ClipData.newPlainText("拾流安装信息",updates.installationDetails()));PocketNotice.show(this,"问题信息已复制");}
+        }).setNegativeButton("返回",null).show();
+    }
     private void render(AppUpdates.Snapshot state){
         if(status==null)return;if(!state.active())preparingInstall=false;if(visible)updates.clearDownloadReminder();
-        if(visible&&state.phase==AppUpdates.Phase.READY&&state.offer!=null)updates.notifiedReady(state.offer.code);status.setText(state.message);boolean offered=state.offer!=null;
+        if(visible&&state.phase==AppUpdates.Phase.READY&&state.offer!=null)updates.notifiedReady(state.offer.code);status.setText(state.message);status.setVisibility(state.phase==AppUpdates.Phase.IDLE?View.GONE:View.VISIBLE);boolean offered=state.offer!=null;
         version.setVisibility(offered?View.VISIBLE:View.GONE);detail.setVisibility(offered?View.VISIBLE:View.GONE);notes.setVisibility(offered?View.VISIBLE:View.GONE);
         if(offered){version.setText(state.offer.version);detail.setText(size(state.offer.size)+" · 覆盖更新，保留现有数据");notes.setText(ReleaseNotes.format(state.offer.notes));}
         boolean downloading=state.phase==AppUpdates.Phase.DOWNLOADING||state.phase==AppUpdates.Phase.PAUSED;
@@ -109,11 +115,11 @@ public final class UpdateActivity extends Activity {
         progress.setIndeterminate(!downloading||!offered);if(downloading&&offered){int percent=(int)Math.min(100,state.downloaded*100/state.offer.size);progress.setProgress((int)Math.min(1000,state.downloaded*1000/state.offer.size));progress.setContentDescription("更新下载 "+percent+"%");detail.setText(percent+"% · "+size(state.downloaded)+" / "+size(state.offer.size));}
         boolean ready=state.phase==AppUpdates.Phase.READY&&offered;
         boolean launched=ready&&updates.installerLaunched(state.offer),permission=ready&&needsSourcePermission();
-        if(ready)status.setText(launched?(!updates.installationMessage(state.offer).isEmpty()?updates.installationMessage(state.offer):"等待系统安装结果；返回后会检查实际版本"):permission?"需要允许此来源，开启后返回会自动继续":"校验完成，正在衔接系统安装确认…");
+        if(ready)status.setText(launched?(!updates.installationMessage(state.offer).isEmpty()?updates.installationMessage(state.offer):"等待安装确认"):permission?"需要允许拾流安装更新":"正在准备安装…");
         primary.setVisibility(downloading||ready&&!launched&&!permission?View.GONE:View.VISIBLE);continuation.setVisibility(downloading?View.VISIBLE:View.GONE);
         primary.setEnabled(!downloading&&state.phase!=AppUpdates.Phase.CHECKING&&state.phase!=AppUpdates.Phase.VERIFYING);
         primary.setAlpha(primary.isEnabled()?1f:.5f);
-        primary.setText(state.phase==AppUpdates.Phase.AVAILABLE?"下载更新":launched?"重新打开系统确认":permission?"允许此来源":state.phase==AppUpdates.Phase.CHECKING?"正在检查…":state.phase==AppUpdates.Phase.VERIFYING?"正在校验…":downloading?"下载完成后自动继续":"检查更新");
+        primary.setText(state.phase==AppUpdates.Phase.AVAILABLE?"下载更新":launched?"继续安装":permission?"允许安装更新":state.phase==AppUpdates.Phase.CHECKING?"正在检查…":state.phase==AppUpdates.Phase.VERIFYING?"正在准备安装…":downloading?"下载完成后自动继续":"检查更新");
         cancel.setVisibility(state.active()?View.VISIBLE:View.GONE);cancel.setText(state.phase==AppUpdates.Phase.READY?"删除安装包":"取消下载");
         showPendingConfirmation(state);continueInstall(state);
     }

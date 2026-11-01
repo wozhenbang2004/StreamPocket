@@ -34,7 +34,7 @@ public final class UpdateDownloadReceiver extends BroadcastReceiver {
                 if(Build.VERSION.SDK_INT>=26)manager.createNotificationChannel(new NotificationChannel(CHANNEL,"应用更新",NotificationManager.IMPORTANCE_DEFAULT));
                 Notification.Builder notice=Build.VERSION.SDK_INT>=26?new Notification.Builder(context,CHANNEL):new Notification.Builder(context);
                 manager.notify(REMINDER,notice.setSmallIcon(R.drawable.ic_launcher).setContentTitle("拾流更新已下载")
-                        .setContentText("点此回到应用，自动校验后进入系统安装确认")
+                        .setContentText("点击继续安装更新")
                         .setContentIntent(PendingIntent.getActivity(context,REMINDER,page(context),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE))
                         .setAutoCancel(true).build());
             }catch(RuntimeException unavailable){/* Notification permission/storage state must not discard the update. */}

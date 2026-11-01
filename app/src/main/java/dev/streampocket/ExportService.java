@@ -90,7 +90,7 @@ public final class ExportService extends Service {
         super.onCreate();
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel channel = new NotificationChannel(CHANNEL, "视频导出", NotificationManager.IMPORTANCE_LOW);
-            channel.setDescription("显示本地剪辑的真实导出状态，可取消。");
+            channel.setDescription("查看导出进度或取消导出。");
             getSystemService(NotificationManager.class).createNotificationChannel(channel);
         }
     }
@@ -264,14 +264,14 @@ public final class ExportService extends Service {
                 try (LibraryStore store = new LibraryStore(this)) {
                     String detail = "成片已保存到视频库";
                     try { store.addExportedVideo(job.title, saved.uri.toString(), saved.mime, output.length(), outputDuration); }
-                    catch (Exception indexFailure) { detail = "成片已保存到下载目录，视频库登记未完成"; }
+                    catch (Exception indexFailure) { detail = "视频已保存，可从手机的下载文件夹打开"; }
                     store.updateProjectExport(job.id, "completed", 100, detail, saved.uri.toString());
                 }
             } catch (Exception failure) {
                 try (LibraryStore store = new LibraryStore(this)) {
                     if (saved != null) {
                         store.updateProjectExport(job.id, "completed", 100,
-                                "成片已保存到下载目录，视频库登记未完成", saved.uri.toString());
+                                "视频已保存，可从手机的下载文件夹打开", saved.uri.toString());
                     } else {
                         String state = isCancelled(job.id) ? (destroyed ? "interrupted" : "cancelled") : "failed";
                         store.updateProjectExport(job.id, state, -1,
@@ -361,14 +361,14 @@ public final class ExportService extends Service {
         destroyed = true; main.removeCallbacksAndMessages(null); stopTransformer();
         MediaWorkload.setExporting(false); releaseWakeLock();
         for (Long id : queue) {
-            record(id, "interrupted", -1, "导出服务已停止，草稿保留，可重新导出", "");
+            record(id, "interrupted", -1, "导出已中断，草稿保留，可重新导出", "");
             execute(() -> RUNNING.remove(id));
         }
         queue.clear();
         if (activeId > 0) {
             long id = activeId;
             cancelled.add(id);
-            record(activeId, "interrupted", -1, "导出服务已停止，草稿保留，可重新导出", "");
+            record(activeId, "interrupted", -1, "导出已中断，草稿保留，可重新导出", "");
             execute(() -> RUNNING.remove(id));
             if (!saving && activeFile != null) activeFile.delete();
         }

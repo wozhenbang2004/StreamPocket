@@ -482,10 +482,10 @@ public final class PlayerActivity extends Activity {
                 sheetTitle.setText("播放手势");
                 info("单击","显示或隐藏控制"); info("双击左右","快退 / 快进 "+seekSeconds()+" 秒");
                 info("横向滑动","预览并调整播放位置");info("按住画面","临时 2×，松手恢复原倍速");
-                info("上下刷视频","下滑下一个，上滑上一个；短滑或取消不切换");
+                info("上下刷视频","下滑下一个，上滑上一个");
                 info("双指缩放","最大 5×，放大后单指移动；点复原画面恢复原比例");
                 info("屏幕边缘上下滑",getSharedPreferences("config",0).getBoolean("player_gestures",false)?"左侧亮度 · 右侧视频音量":"已关闭，可在设置开启");
-                info("精彩标记","底栏标记此刻，顶栏“标记”查看列表");
+                info("精彩标记","记录喜欢的时刻，随时回来继续看");
             } else if ("info".equals(mode)) {
                 sheetTitle.setText("视频信息"); String name=video==null?"本地视频":video.optString("title","本地视频");
                 add(menuPanel,text(name,15,WHITE,true),10,16);
@@ -661,7 +661,7 @@ public final class PlayerActivity extends Activity {
     private boolean rejectUnrenderableTracks(Tracks tracks) {
         if(tracks.isEmpty()||tracks.containsType(C.TRACK_TYPE_VIDEO)&&tracks.isTypeSelected(C.TRACK_TYPE_VIDEO))return false;
         if(player!=null)player.pause();shouldPlay=false;
-        showError(tracks.containsType(C.TRACK_TYPE_VIDEO)?"当前设备无法选择此文件的视频轨，已暂停播放。":"此文件没有可播放的视频轨，已暂停播放。",true);return true;
+        showError(tracks.containsType(C.TRACK_TYPE_VIDEO)?"当前设备无法播放这个视频。":"这个文件没有可播放的画面。",true);return true;
     }
     private String playbackError(PlaybackException error) {
         if(error.errorCode==PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND)return CoreRules.userMessage(new java.io.FileNotFoundException("file does not exist"));
@@ -738,7 +738,7 @@ public final class PlayerActivity extends Activity {
             View divider=new View(this);divider.setBackgroundColor(0xFF30363B);markerList.addView(divider,new LinearLayout.LayoutParams(-1,dp(1)));
         }
         if(markers.size()>visibleMarkers)action(markerList,"显示更多标记",()->{visibleMarkers+=40;renderMarkers();});
-        if(!markers.isEmpty())add(markerList,text("画面取自标记时间附近 · 点画面或文字跳转",11,MUTED,false),12,4);
+        if(!markers.isEmpty())add(markerList,text("点画面或文字回到这个时刻",11,MUTED,false),12,4);
         markerList.post(this::bindVisibleMarkerFrames);
     }
     private static String seconds(long ms){return java.math.BigDecimal.valueOf(ms,3).stripTrailingZeros().toPlainString();}

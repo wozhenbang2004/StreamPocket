@@ -10,7 +10,9 @@ public enum LoginPlatform {
     DOUYIN("douyin", "抖音", "https://www.douyin.com/user/self?from_nav=1", new String[]{"douyin.com", "iesdouyin.com"},
             new String[]{"https://douyin.com/", "https://www.douyin.com/", "https://sso.douyin.com/", "https://www.iesdouyin.com/"}),
     X("x", "X / Twitter", "https://x.com/i/flow/login", new String[]{"x.com", "twitter.com"},
-            new String[]{"https://x.com/", "https://www.x.com/", "https://api.x.com/", "https://twitter.com/", "https://www.twitter.com/", "https://api.twitter.com/"});
+            new String[]{"https://x.com/", "https://www.x.com/", "https://api.x.com/", "https://twitter.com/", "https://www.twitter.com/", "https://api.twitter.com/"}),
+    YOUTUBE("youtube", "YouTube", "https://www.youtube.com/", new String[]{"youtube.com"},
+            new String[]{"https://youtube.com/", "https://www.youtube.com/", "https://m.youtube.com/", "https://music.youtube.com/"});
 
     public final String id;
     public final String title;
@@ -47,7 +49,8 @@ public enum LoginPlatform {
         try {
             URI uri = new URI(url);
             return "https".equalsIgnoreCase(uri.getScheme()) && uri.getUserInfo() == null
-                    && (uri.getPort() == -1 || uri.getPort() == 443) && ownsDomain(uri.getHost());
+                    && (uri.getPort() == -1 || uri.getPort() == 443)
+                    && (ownsDomain(uri.getHost()) || (this == YOUTUBE && "accounts.google.com".equalsIgnoreCase(uri.getHost())));
         } catch (Exception invalid) { return false; }
     }
 
@@ -62,6 +65,7 @@ public enum LoginPlatform {
             try { long expires = Long.parseLong(row[4]); if (expires != 0 && expires <= now) continue; }
             catch (NumberFormatException invalid) { continue; }
             String name = row[5];
+            if (this == YOUTUBE && (name.equals("SAPISID") || name.equals("__Secure-1PAPISID") || name.equals("__Secure-3PAPISID"))) return true;
             if (this == BILIBILI && name.equals("SESSDATA")) return true;
             if (this == X && name.equals("auth_token")) return true;
             if (this == DOUYIN && (name.equals("sessionid") || name.equals("sessionid_ss") || name.equals("sid_guard"))) return true;

@@ -51,7 +51,7 @@ final class AppUpdates {
     private final ExecutorService worker=Executors.newSingleThreadExecutor(task->new Thread(task,"app-updates"));
     private final CopyOnWriteArrayList<Listener> listeners=new CopyOnWriteArrayList<>();
     private final Object lock=new Object();
-    private volatile Snapshot state=new Snapshot(Phase.IDLE,null,"从 GitHub 正式发布检查应用更新",0);
+    private volatile Snapshot state=new Snapshot(Phase.IDLE,null,"检查更新",0);
     private volatile long generation;
     private long downloadId=-1;
     private boolean busy;
@@ -62,9 +62,9 @@ final class AppUpdates {
         try {
             UpdateOffer saved=UpdateOffer.saved(prefs.getString("offer",""));
             if(saved.code>BuildConfig.VERSION_CODE){downloadId=prefs.getLong("download_id",-1);
-                if(downloadId>=0)state=new Snapshot(Phase.DOWNLOADING,saved,"正在恢复系统下载状态…",0);
-                else if(prefs.getBoolean("ready",false)&&readyFile(app,saved).isFile())state=new Snapshot(Phase.READY,saved,"安装前将再次校验文件与身份",saved.size);
-                else if(prefs.getBoolean("ready",false)){prefs.edit().putBoolean("ready",false).apply();state=new Snapshot(Phase.AVAILABLE,saved,"旧安装缓存已停用，请重新下载更新",0);}
+                if(downloadId>=0)state=new Snapshot(Phase.DOWNLOADING,saved,"正在恢复下载…",0);
+                else if(prefs.getBoolean("ready",false)&&readyFile(app,saved).isFile())state=new Snapshot(Phase.READY,saved,"更新已下载，可以安装",saved.size);
+                else if(prefs.getBoolean("ready",false)){prefs.edit().putBoolean("ready",false).apply();state=new Snapshot(Phase.AVAILABLE,saved,"请重新下载更新",0);}
             }else worker.execute(()->{long old=prefs.getLong("download_id",-1);if(old>=0)downloads.remove(old);prefs.edit().remove("offer").remove("download_id").remove("ready").apply();discardFiles();});
         }catch(Exception absent){/* First run has no update state. */}
     }
@@ -97,11 +97,11 @@ final class AppUpdates {
         int id=prefs.getInt("install_session",-1);if(id>=0&&app.getPackageManager().getPackageInstaller().getSessionInfo(id)==null){clearInstallSession();installationReturned(state.offer,false);}
     }}
     String installedLabel(){
-        try{PackageInfo info=app.getPackageManager().getPackageInfo(app.getPackageName(),0);return "当前版本 "+info.versionName+" · "+code(info);}
-        catch(PackageManager.NameNotFoundException absent){return "当前版本 "+BuildConfig.VERSION_NAME+" · "+BuildConfig.VERSION_CODE;}
+        try{PackageInfo info=app.getPackageManager().getPackageInfo(app.getPackageName(),0);return "当前版本 "+info.versionName;}
+        catch(PackageManager.NameNotFoundException absent){return "当前版本 "+BuildConfig.VERSION_NAME;}
     }
     String installationDetails(){
-        StringBuilder out=new StringBuilder("拾流安装信息\n").append(app.getPackageName()).append('\n').append(installedLabel())
+        StringBuilder out=new StringBuilder("拾流安装信息\n").append(app.getPackageName()).append('\n').append(installedLabel()).append(" · ").append(BuildConfig.VERSION_CODE)
                 .append("\nAndroid ").append(Build.VERSION.RELEASE).append(" · ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL);
         try{out.append("\n已安装签名 SHA-256: ").append(certificate(app.getPackageManager().getPackageInfo(app.getPackageName(),signatureFlags())));}catch(Exception unavailable){out.append("\n已安装签名暂不可读");}
         Snapshot current=state;if(current.offer!=null){UpdateOffer offer=current.offer;out.append("\n目标版本 ").append(offer.version).append(" · ").append(offer.code)
@@ -170,7 +170,7 @@ final class AppUpdates {
                     generation++;prefs.edit().remove("offer").remove("download_id").remove("ready").remove("installer_offer").remove("installer_result").apply();
                     publish(new Snapshot(Phase.NONE,null,"已更新到 "+installed.versionName,0));worker.execute(this::discardFiles);return;
                 }
-                String message=(reportedSuccess?"安装返回后仍是 ":"当前仍是 ")+installed.versionName+"，尚未升级到 "+offer.version+"。可重新安装，或下载独立安装包覆盖更新。";
+                String message=(reportedSuccess?"安装返回后仍是 ":"当前仍是 ")+installed.versionName+"，尚未升级到 "+offer.version+"。请重试安装。";
                 prefs.edit().putString("installer_result",message).apply();publish(new Snapshot(Phase.READY,offer,message,offer.size));
             }catch(Exception unavailable){prefs.edit().putString("installer_result","尚未确认更新完成，请重新打开应用检查版本，或重试安装。").apply();}
         }
@@ -181,24 +181,24 @@ final class AppUpdates {
 
     void check(){
         final long token;
-        synchronized(lock){if(busy||state.active())return;busy=true;token=++generation;publish(new Snapshot(Phase.CHECKING,null,"正在检查 GitHub 正式发布…",0));}
+        synchronized(lock){if(busy||state.active())return;busy=true;token=++generation;publish(new Snapshot(Phase.CHECKING,null,"正在检查更新…",0));}
         prefs.edit().putLong("last_check",System.currentTimeMillis()).apply();
         worker.execute(()->{
             try {
                 String json=getJson(UpdateOffer.API,256*1024,true);
-                if(json==null){finish(token,new Snapshot(Phase.NONE,null,"暂未发布可安装的正式更新",0));return;}
+                if(json==null){finish(token,new Snapshot(Phase.NONE,null,"暂无可用更新",0));return;}
                 JSONObject release=new JSONObject(json);
-                if(release.optBoolean("draft",true)||release.optBoolean("prerelease",true)){finish(token,new Snapshot(Phase.NONE,null,"暂无正式更新（测试发布不自动分发）",0));return;}
+                if(release.optBoolean("draft",true)||release.optBoolean("prerelease",true)){finish(token,new Snapshot(Phase.NONE,null,"暂无可用更新",0));return;}
                 JSONObject asset=UpdateOffer.asset(release,UpdateOffer.APK),manifestAsset=UpdateOffer.asset(release,UpdateOffer.MANIFEST);
-                if(asset==null||manifestAsset==null){finish(token,new Snapshot(Phase.NONE,null,"当前发布尚无完整安装包与校验清单",0));return;}
+                if(asset==null||manifestAsset==null){finish(token,new Snapshot(Phase.NONE,null,"更新尚未准备好，请稍后重试",0));return;}
                 String tag=release.getString("tag_name"),manifestUrl=manifestAsset.getString("browser_download_url");
                 if(!UpdateOffer.validAssetUrl(manifestUrl,tag,UpdateOffer.MANIFEST))throw new IOException("更新清单来源不匹配");
                 UpdateOffer offer=new UpdateOffer(new JSONObject(getJson(manifestUrl,64*1024,false)),tag,release.optString("body"),asset.getString("browser_download_url"));
-                if(offer.code<=BuildConfig.VERSION_CODE){finish(token,new Snapshot(Phase.NONE,null,"当前已是最新可用版本",0));return;}
+                if(offer.code<=BuildConfig.VERSION_CODE){finish(token,new Snapshot(Phase.NONE,null,"已是最新版本",0));return;}
                 compatible(offer);
                 if(asset.getLong("size")!=offer.size)throw new IOException("安装包大小与发布清单不一致");
                 String digest=asset.optString("digest");if(!digest.isEmpty()&&!digest.equals("sha256:"+offer.sha256))throw new IOException("安装包摘要与发布清单不一致");
-                finish(token,new Snapshot(Phase.AVAILABLE,offer,"发现新版本，下载需你确认",0));
+                finish(token,new Snapshot(Phase.AVAILABLE,offer,"发现新版本",0));
             }catch(Exception failure){fail(token,null,message(failure,"无法检查更新，请检查网络后重试"));}
         });
     }
@@ -214,7 +214,7 @@ final class AppUpdates {
                 File destination=new File(external,"app-updates/update-"+offer.code+".download");
                 if(destination.exists()&&!destination.delete())throw new IOException("无法准备更新下载目录");
                 DownloadManager.Request request=new DownloadManager.Request(Uri.parse(offer.url)).setTitle("拾流更新 "+offer.version)
-                        .setDescription("点此查看进度；完成后自动校验并进入系统安装确认")
+                        .setDescription("查看下载进度")
                         .setMimeType("application/octet-stream")
                         .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
                         .setDestinationInExternalFilesDir(app,null,"app-updates/update-"+offer.code+".download");
@@ -237,7 +237,7 @@ final class AppUpdates {
                 long bytes=cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
                 if(bytes>offer.size){downloads.remove(id);throw new IOException("下载内容超过发布大小，已拒绝");}
                 if(status==DownloadManager.STATUS_SUCCESSFUL){
-                    publishIfCurrent(token,new Snapshot(Phase.VERIFYING,offer,"正在校验安装包，请稍候…",offer.size));
+                    publishIfCurrent(token,new Snapshot(Phase.VERIFYING,offer,"正在准备安装…",offer.size));
                     File stage=new File(app.getFilesDir(),"app-updates/staged.apk");stage.getParentFile().mkdirs();
                     try(InputStream input=new ParcelFileDescriptor.AutoCloseInputStream(downloads.openDownloadedFile(id))){copyAndHash(input,stage,offer,()->token!=generation);}
                     verifyArchive(stage,offer);if(token!=generation){stage.delete();return;}
@@ -246,7 +246,7 @@ final class AppUpdates {
                     else if(!stage.renameTo(ready))throw new IOException("无法保存已校验安装包");
                     synchronized(lock){if(token!=generation){ready.delete();return;}downloadId=-1;
                         if(!prefs.edit().putLong("download_id",-1).putBoolean("ready",true).commit())throw new IOException("无法保存安装状态");}
-                    downloads.remove(id);finish(token,new Snapshot(Phase.READY,offer,"校验完成，将进入系统安装确认",offer.size));
+                    downloads.remove(id);finish(token,new Snapshot(Phase.READY,offer,"下载完成，即将安装",offer.size));
                 }else if(status==DownloadManager.STATUS_FAILED){downloads.remove(id);throw new IOException("系统下载失败，请重新检查后下载");}
                 else finish(token,new Snapshot(status==DownloadManager.STATUS_PAUSED?Phase.PAUSED:Phase.DOWNLOADING,offer,
                         status==DownloadManager.STATUS_PAUSED?"系统等待网络或重试；可取消":"系统下载中；离开本页也会继续",Math.max(0,bytes)));
@@ -326,7 +326,7 @@ final class AppUpdates {
             try {
                 int code=connection.getResponseCode();
                 if(code==404&&missingIsNone)return null;
-                if(code==403||code==429)throw new IOException("GitHub 暂时限流或拒绝访问，请稍后重试");
+                if(code==403||code==429)throw new IOException("暂时无法检查更新，请稍后重试");
                 if(code>=300&&code<=399){String location=connection.getHeaderField("Location");if(location==null)throw new IOException("更新服务缺少重定向地址");url=new URL(new URL(url),location).toString();continue;}
                 if(code!=200)throw new IOException("更新服务暂不可用（HTTP "+code+"）");
                 if(connection.getContentLengthLong()>limit)throw new IOException("更新清单过大");

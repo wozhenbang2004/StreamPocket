@@ -90,15 +90,15 @@ public final class CoreRules {
 
     public static String inspectionMessage(Throwable error) {
         if(SourceFailure.kind(error)==SourceFailure.Kind.NO_FORMATS)
-            return "源站返回了帖子信息，但没有提供可下载的视频画质。这条错误不能确定是代理故障。请先在原平台打开同一链接；能播放时可更新解析器或检查登录状态后重试。失败链接已保留。";
+            return "暂时没有可下载的画质。请先确认原平台能播放，再更新下载支持或重新登录。失败链接已保留。";
         if (SourceFailure.kind(error) != SourceFailure.Kind.OTHER) return userMessage(error);
         String text = cleanLog(error == null ? "" : error.toString()).toLowerCase(Locale.ROOT);
-        if (text.contains("certificate") || text.contains("ssl")) return "解析连接的证书验证失败，请查看错误详情。视频尚未开始下载。";
+        if (text.contains("certificate") || text.contains("ssl")) return "无法安全连接网站，请检查手机时间和网络后重试。";
         if (text.contains("no video could be found in this tweet") || text.contains("tweet is unavailable") || text.contains("tombstone"))
-            return "X 没有向当前访问状态返回此帖的视频。帖子可能受限或已失效；如在 X 中能播放，可在设置的账号管理中登录后重试。";
-        if(text.contains("没有返回可用视频")||text.contains("no video"))return "源站没有返回可用视频。请确认复制的是具体视频页面，并在原平台检查内容是否仍能播放。链接记录已保留，可重新解析。";
+            return "暂时无法取得这个 X 视频。请先确认原帖能播放，再到账号管理中登录后重试。";
+        if(text.contains("没有返回可用视频")||text.contains("no video"))return "没有找到可下载的视频。请确认原链接能播放，再重新复制视频链接。记录已保留。";
         String message = userMessage(error);
-        if (message.startsWith("操作未完成")) return "暂时未能解析出视频。链接已留在失败记录，可重新解析；错误详情可查看或复制。";
+        if (message.startsWith("操作未完成")) return "暂时无法解析这个视频，链接已保留，可稍后重试。";
         return message;
     }
 
@@ -120,17 +120,17 @@ public final class CoreRules {
         if(kind==SourceFailure.Kind.PERMISSION)return "没有读取或保存文件的权限。请重新授予文件访问权限；来自其他应用的文件可重新选择或导入后重试。";
         if(kind==SourceFailure.Kind.NOT_FOUND)return lower.contains("filenotfound")||lower.contains("no such file")||lower.contains("file does not exist")?"找不到原文件，可能已被移动或删除。请恢复文件或重新下载，已有记录仍保留。":"找不到链接对应的内容。请在原平台确认内容仍有效，再重新复制链接并解析。";
         if(kind==SourceFailure.Kind.CERTIFICATE)return "无法验证网站的安全证书。请检查手机时间、网络或代理配置后重试。";
-        if(kind==SourceFailure.Kind.ACCESS)return "源站拒绝访问此内容（403）。请先在原平台确认能否观看，再检查地区、账号权限或代理配置后重试。";
+        if(kind==SourceFailure.Kind.ACCESS)return "网站暂时拒绝访问。请先确认原平台能播放，再检查登录状态或网络。";
         if (kind == SourceFailure.Kind.RATE_LIMIT) return "平台请求过于频繁，已进入冷却。稍后重试，登录状态会保留。";
         if (kind == SourceFailure.Kind.TIMEOUT) return "连接源站超时，暂时没有收到响应。请检查网络或代理后重试，链接记录已保留。";
         if (kind == SourceFailure.Kind.NETWORK) return lower.contains("resolve host")||lower.contains("name resolution")||lower.contains("unknownhost")?"无法解析网站地址。请检查网络、DNS 或代理配置后重试，链接记录已保留。":"无法连接源站，或连接已中断。请检查网络、代理和源站是否可访问，再重试。";
-        if (kind == SourceFailure.Kind.AUTH) return "源站要求登录或当前账号权限不足。请在账号管理中检查此平台的登录状态。";
-        if(kind==SourceFailure.Kind.NO_FORMATS)return "源站没有提供可用视频画质。请在原平台确认能播放，再更新解析器或检查登录状态后重新解析。";
-        if(kind==SourceFailure.Kind.UNSUPPORTED)return lower.contains("requested format")?"所选画质暂时不可用。请重新解析链接，再选择其他可用画质。":"暂时无法从这个链接取得视频。请复制具体视频页面的链接，或更新解析器后重新解析。";
-        if (lower.contains("ffmpeg") || lower.contains("dlopen") || lower.contains("libc++") || lower.contains("native")) return "视频处理组件暂时无法运行。请在设置中检查解析器与组件状态，更新后重试；详情保留了原始错误。";
-        if (lower.contains("captcha") || lower.contains("verification") || lower.contains("verify") || lower.contains("验证")) return "平台要求验证。请在账号管理中正常完成网页登录与验证，保存后重试。抖音目前属于实验性支持。";
-        if (lower.contains("fresh cookies")) return "未能获取视频详情，可能与会话或解析接口有关。可更新解析器，或在账号管理中重新登录并保存后重试。";
-        if (lower.contains("unsupported url") || lower.contains("no video") || lower.contains("not available") || lower.contains("requested format")) return "当前链接或所选画质暂不可下载。请尝试最高可用画质，或更新内核后重试。";
+        if (kind == SourceFailure.Kind.AUTH) return "这个视频需要登录或相应权限，请在账号管理中检查登录状态。";
+        if(kind==SourceFailure.Kind.NO_FORMATS)return "暂时没有可下载的画质。请确认原平台能播放，再更新下载支持或重新登录。";
+        if(kind==SourceFailure.Kind.UNSUPPORTED)return lower.contains("requested format")?"所选画质暂时不可用。请重新解析链接，再选择其他可用画质。":"暂时无法下载这个链接，请复制视频页面链接或更新下载支持后重试。";
+        if (lower.contains("ffmpeg") || lower.contains("dlopen") || lower.contains("libc++") || lower.contains("native")) return "下载功能暂时不可用，请在设置中更新下载支持后重试。";
+        if (lower.contains("captcha") || lower.contains("verification") || lower.contains("verify") || lower.contains("验证")) return "平台要求验证。请在账号管理中完成登录和验证，再重试。";
+        if (lower.contains("fresh cookies")) return "暂时没有取得视频信息。请更新下载支持，或重新登录后重试。";
+        if (lower.contains("unsupported url") || lower.contains("no video") || lower.contains("not available") || lower.contains("requested format")) return "当前链接或画质暂不可下载。请尝试最高可用画质，或更新下载支持。";
         if (lower.contains("network") || lower.contains("unable to download")) return "网络或源站暂时不可用。请确认原链接能正常访问，再检查网络或代理后重试。";
         return "操作未完成，已有记录保留。可稍后重试，或查看并复制错误详情。";
     }

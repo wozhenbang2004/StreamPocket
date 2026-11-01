@@ -61,6 +61,7 @@ public final class MainActivity extends Activity {
     private InspectionBatch.Inspector inspector;
     private final ArrayList<Engine.Media> pendingBatch=new ArrayList<>();
     private boolean parsing=false, loginOpening=false, taskMenuOpen=false;
+    private String cookieImportPlatform;
     private volatile int parseGeneration=0;
     private String pendingRetryId;
     private final Runnable poll=new Runnable() {
@@ -79,6 +80,7 @@ public final class MainActivity extends Activity {
         inspectionInbox.restore(getPreferences(0).getString("inspection_inbox",""));
         try{JSONObject selections=new JSONObject(getPreferences(0).getString("inspection_quality","{}"));Iterator<String> keys=selections.keys();while(keys.hasNext()){String key=keys.next();qualitySelections.put(key,selections.optInt(key));}}catch(Exception ignored){}
         if(state!=null){
+            cookieImportPlatform=state.getString("cookie_import_platform");
             linkEditorExpanded=state.getBoolean("link_editor_expanded",false);
             lastInspectionMessage=state.getString("inspection_message","");lastInspectionDetails=state.getString("inspection_details","");
             libraryState=state.getBundle("library_state");queueFilter=state.getString("queue_filter","all");
@@ -619,7 +621,7 @@ public final class MainActivity extends Activity {
             case "parallel-http":return "分块下载"+(active>=0?" · 当前 "+active+" 个连接":" · 连接数测量中")
                     +(configured>0?" · 上限 "+configured+" 路":"");
             case "native-http":return task.optString("transferReason").isEmpty()
-                    ? "兼容下载 · 未启用多连接" : task.optString("transferReason");
+                    ? "标准下载" : task.optString("transferReason");
             default:return "";
         }
     }
@@ -659,11 +661,11 @@ public final class MainActivity extends Activity {
         LinearLayout c=scrollContent();c.addView(text("设置",22,INK,true));
         section(c,"账户与来源");LinearLayout accounts=settingsGroup(c);TextView accountSummary=settingRow(accounts,"账号管理","读取中…",this::showLoginSettings);
         io.execute(()->{String summary;try{AccountStore store=new AccountStore(this);store.prepare();int count=0;for(LoginPlatform p:LoginPlatform.values())if(store.hasSaved(p))count++;summary=count==0?"未登录":count+" 个平台已保存";}catch(Exception e){summary="点此管理";}String value=summary;main.post(()->{if(!isDestroyed()&&"settings".equals(tab)&&accountSummary.isAttachedToWindow())accountSummary.setText(value);});});
-        section(c,"下载管理");LinearLayout downloads=settingsGroup(c);settingRow(downloads,"下载与速度",downloadConnections()+" 路 · 最高可用",this::showDownloadSettings);settingRow(downloads,"保存位置","Download / StreamPocket",()->showMessage("保存位置","完整视频保存到系统 Download / StreamPocket。未完成片段保留在本 App 临时目录，不作为成片导出。"));
+        section(c,"下载管理");LinearLayout downloads=settingsGroup(c);settingRow(downloads,"下载与速度",downloadConnections()+" 路 · 最高可用",this::showDownloadSettings);settingRow(downloads,"保存位置","Download / StreamPocket",()->showMessage("保存位置","视频保存在手机的 Download / StreamPocket 文件夹。"));
         switchRow(downloads,"剪贴板链接提醒","clipboard_suggestions",true);
         section(c,"播放与外观");LinearLayout appearance=settingsGroup(c);settingRow(appearance,"外观主题",themeLabel(),this::showAppearanceSettings);settingRow(appearance,"快进 / 快退",getSharedPreferences("config",0).getInt("seek_seconds",10)+" 秒",this::showSeekSettings);
         switchRow(appearance,"播放手势","player_gestures",false);switchRow(appearance,"界面动效","motion_enabled",true);
-        section(c,"高级与关于");LinearLayout advanced=settingsGroup(c);String proxy=getSharedPreferences("config",0).getString("proxy","");settingRow(advanced,"网络与代理",proxy==null||proxy.isEmpty()?"跟随手机网络":"独立代理",this::showNetworkSettings);settingRow(advanced,"下载内核","更新与诊断",this::showParserSettings);settingRow(advanced,"应用更新",BuildConfig.VERSION_NAME+" · GitHub Releases",()->startActivity(new Intent(this,UpdateActivity.class)));settingRow(advanced,"关于拾流",BuildConfig.VERSION_NAME,this::showAboutSettings);
+        section(c,"高级与关于");LinearLayout advanced=settingsGroup(c);String proxy=getSharedPreferences("config",0).getString("proxy","");settingRow(advanced,"网络与代理",proxy==null||proxy.isEmpty()?"跟随手机网络":"独立代理",this::showNetworkSettings);settingRow(advanced,"下载支持","更新或检查下载功能",this::showParserSettings);settingRow(advanced,"应用更新",BuildConfig.VERSION_NAME+" · GitHub Releases",()->startActivity(new Intent(this,UpdateActivity.class)));settingRow(advanced,"关于拾流",BuildConfig.VERSION_NAME,this::showAboutSettings);
         add(c,text("视频、账号与设置仅保存在本机",12,MUTED,false),18,0);
     }
     private void section(LinearLayout c,String title){add(c,text(title,12,MUTED,true),22,8);}
@@ -689,7 +691,7 @@ public final class MainActivity extends Activity {
     private void showDownloadSettings() {
         LinearLayout c=column();
         c.addView(text("选择同时下载的连接数",14,INK,true));
-        add(c,text("分片视频并发下载，支持的 MP4（含B站）使用分块加速。已有兼容下载断点会继续续传。",13,MUTED,false),8,12);
+        add(c,text("可调整下载连接数，已开始的任务继续按原设置下载。",13,MUTED,false),8,12);
         RadioGroup options=new RadioGroup(this);options.setOrientation(RadioGroup.VERTICAL);
         int[] values={1,4,8};String[] labels={"标准 · 1 路连接","并行 · 4 路连接（推荐）","并行 · 8 路连接"};
         int selected=downloadConnections();
@@ -716,12 +718,12 @@ public final class MainActivity extends Activity {
         c.addView(text("选择平台，在官方网页中登录。",14,INK,true));
         add(c,text("登录信息只在本机使用。",13,MUTED,false),8,12);
         LinearLayout platforms=column();platforms.addView(text("正在读取本机登录状态…",13,MUTED,false));c.addView(platforms);
-        Button importCookie=quietButton("从 Cookie 文件导入");add(c,importCookie,16,0);
+        Button importCookie=quietButton("导入登录信息");add(c,importCookie,16,0);
         Button clearAll=quietButton("清除全部登录信息");add(c,clearAll,0,0);
         PocketDialog panel=settingsPanel("账号管理",c);
         importCookie.setOnClickListener(v->openCookieImport(panel));
         clearAll.setOnClickListener(v->new PocketDialog.Builder(this).setTitle("清除全部本机登录信息？")
-                .setMessage("将清除所有平台及文件导入的登录会话。进行中的任务可能仍持有本次会话，后续新任务不再使用它们。")
+                .setMessage("后续下载将不再使用这些账号。正在进行的任务不受影响。")
                 .setNegativeButton("保留",null).setPositiveButton("全部清除",(d,w)->{
                     clearAll.setEnabled(false);importCookie.setEnabled(false);
                     io.execute(()->{
@@ -744,8 +746,8 @@ public final class MainActivity extends Activity {
                     platforms.addView(text("登录状态读取失败："+failure,13,MUTED,false));
                     Button retry=quietButton("重新读取");retry.setOnClickListener(v->{panel.dismiss();showLoginSettings();});add(platforms,retry,8,0);return;
                 }
-                for(AccountState state:result)settingRow(platforms,state.platform.title,accountStatus(state),state.saved?"管理":"登录",()->{
-                    if(state.saved){panel.dismiss();showAccountDetails(state);}
+                for(AccountState state:result)settingRow(platforms,state.platform.title,accountStatus(state),state.saved||state.platform==LoginPlatform.YOUTUBE?"管理":"登录",()->{
+                    if(state.saved||state.platform==LoginPlatform.YOUTUBE){panel.dismiss();showAccountDetails(state);}
                     else launchLogin(state.platform,panel);
                 });
             });
@@ -770,7 +772,7 @@ public final class MainActivity extends Activity {
             String time=state.savedAt>0?android.text.format.DateFormat.format("yyyy-MM-dd HH:mm",state.savedAt).toString():"时间未知";
             add(c,text(state.source+" · "+time,12,MUTED,false),6,0);
         }
-        add(c,text(state.saved?"是否仍然有效，以源站实际响应为准。":"登录后，后续解析和下载会使用此平台的会话。",13,MUTED,false),8,18);
+        add(c,text(state.saved?"登录可能已过期，无法下载时请重新登录。":"登录后可下载账号有权访问的视频。",13,MUTED,false),8,18);
         Button login=button(state.saved?"打开官方登录页":"登录"+platform.title,true);c.addView(login,new LinearLayout.LayoutParams(-1,dp(48)));
         TextView result=text("",13,MUTED,false);result.setVisibility(View.GONE);
         PocketDialog panel=new PocketDialog.Builder(this).setTitle(platform.title).setView(accountPanelContent(c))
@@ -779,6 +781,13 @@ public final class MainActivity extends Activity {
             login.setEnabled(false);
             if(!launchLogin(platform,panel))login.setEnabled(true);
         });
+        if(platform==LoginPlatform.YOUTUBE){
+            Button importLogin=quietButton("导入登录信息");add(c,importLogin,8,0);
+            importLogin.setOnClickListener(v->new PocketDialog.Builder(this).setTitle("导入 YouTube 登录信息")
+                    .setMessage("选择从浏览器导出的 YouTube 登录文件（cookies.txt），仅保存在本机。")
+                    .setNegativeButton("返回",null).setPositiveButton("选择文件",(d,w)->openCookieImport(panel,platform)).show());
+            add(c,text("公开视频通常无需登录。登录后仍受平台权限限制。",12,MUTED,false),8,0);
+        }
         if(state.saved){
             PocketSwitch enabled=new PocketSwitch(this);enabled.setText("用于后续解析和下载");enabled.setTextSize(14);enabled.setTextColor(INK);
             enabled.setChecked(state.enabled);enabled.setMinHeight(dp(48));add(c,enabled,16,0);
@@ -798,7 +807,7 @@ public final class MainActivity extends Activity {
             });
             Button clear=quietButton("清除本机登录信息");add(c,clear,10,0);
             clear.setOnClickListener(v->new PocketDialog.Builder(this).setTitle("清除"+platform.title+"登录信息？")
-                    .setMessage("将移除此平台保存在拾流中的登录信息。进行中的任务可能仍持有本次会话，重新解析和新任务不再使用它。")
+                    .setMessage("后续下载将不再使用这个账号。正在进行的任务不受影响。")
                     .setNegativeButton("保留",null).setPositiveButton("清除",(d,w)->{
                         clear.setEnabled(false);login.setEnabled(false);enabled.setEnabled(false);
                         io.execute(()->{
@@ -828,9 +837,12 @@ public final class MainActivity extends Activity {
     }
 
     private void openCookieImport(PocketDialog panel) {
+        openCookieImport(panel,null);
+    }
+    private void openCookieImport(PocketDialog panel,LoginPlatform platform) {
         Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("text/*");
-        try{startActivityForResult(intent,COOKIE_REQUEST);panel.dismiss();}
-        catch(ActivityNotFoundException e){toast("请先安装文件管理器");}
+        try{cookieImportPlatform=platform==null?null:platform.id;startActivityForResult(intent,COOKIE_REQUEST);panel.dismiss();}
+        catch(ActivityNotFoundException e){cookieImportPlatform=null;toast("请先安装文件管理器");}
     }
 
     private void refreshSettingsSummary() {
@@ -865,19 +877,19 @@ public final class MainActivity extends Activity {
 
     private void showParserSettings() {
         LinearLayout c=column();
-        c.addView(text("已内置解析器，可直接尝试下载。",14,INK,true));
-        add(c,text("平台无法解析时可更新；遇到组件错误时先检查运行状态。",13,MUTED,false),8,18);
-        Button update=button("更新解析器",true);update.setOnClickListener(v->background(update,"正在更新…",()->engine.update(),"解析器更新"));c.addView(update,new LinearLayout.LayoutParams(-1,dp(48)));
-        Button diagnose=button("检查内核与合并组件",false);diagnose.setOnClickListener(v->background(diagnose,"检查中…",()->engine.diagnose(),"内核诊断"));add(c,diagnose,10,0);
-        settingsPanel("下载内核",c);
+        c.addView(text("遇到链接无法解析时，可以先更新下载支持。",14,INK,true));
+        add(c,text("更新后仍有问题，可以检查下载功能。",13,MUTED,false),8,18);
+        Button update=button("更新下载支持",true);update.setOnClickListener(v->background(update,"正在更新…",()->engine.update(),"下载支持"));c.addView(update,new LinearLayout.LayoutParams(-1,dp(48)));
+        Button diagnose=button("检查下载功能",false);diagnose.setOnClickListener(v->background(diagnose,"检查中…",()->engine.diagnose(),"下载功能检查"));add(c,diagnose,10,0);
+        settingsPanel("下载支持",c);
     }
 
     private void showAboutSettings() {
         LinearLayout c=column();
         c.addView(text("拾流 "+BuildConfig.VERSION_NAME,16,INK,true));
         add(c,text("Android 7.0+ · 本地下载\n默认最高可用画质，无广告。",13,MUTED,false),8,16);
-        add(c,text("覆盖升级保留账号、下载记录和视频库。登录状态仍由原平台决定。",13,MUTED,false),0,12);
-        c.addView(text("实际画质取决于源站和账号权限。抖音仍为实验性支持，部分链接可能无法解析。",13,MUTED,false));
+        add(c,text("更新会保留账号、下载记录和视频库。",13,MUTED,false),0,12);
+        c.addView(text("可用画质取决于视频和账号权限。部分抖音链接可能无法解析。",13,MUTED,false));
         Button license=button("开源与第三方组件",false);add(c,license,18,0);
         license.setOnClickListener(v->showMessage("开源组件","本项目：GPL-3.0-or-later\nyoutubedl-android 0.18.1：GPLv3\naria2c 1.37.0：GPL-2.0-or-later；Android wrapper 0.18.1：GPLv3\nyt-dlp：Unlicense；FFmpeg 及其依赖遵循各自许可。\n\n抖音实验补丁基于 yt-dlp #17826，固定提交 728fe46fbaa97d6f03efcaf9e766d4db63338b8d。\n\n完整来源、许可证与构建说明随工程提供。"));
         settingsPanel("关于拾流",c);
@@ -912,7 +924,9 @@ public final class MainActivity extends Activity {
         if(request==LOGIN_REQUEST){
             loginOpening=false;refreshSettingsSummary();showLoginSettings();return;
         }
-        if(request!=COOKIE_REQUEST||result!=RESULT_OK||data==null||data.getData()==null)return;
+        if(request!=COOKIE_REQUEST)return;
+        LoginPlatform importPlatform=LoginPlatform.fromId(cookieImportPlatform);cookieImportPlatform=null;
+        if(result!=RESULT_OK||data==null||data.getData()==null)return;
         Uri selected=data.getData();
         io.execute(()->{
             String message;
@@ -921,10 +935,11 @@ public final class MainActivity extends Activity {
                 ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[8192];int count;
                 while((count=source.read(buffer))!=-1){if(bytes.size()+count>2*1024*1024)throw new IOException("Cookie 文件过大（最多 2 MB）");bytes.write(buffer,0,count);}
                 String contents=bytes.toString(StandardCharsets.UTF_8.name());
-                new AccountStore(this).importLegacy(contents);
-                message="已按平台保存到本机。重新解析链接即可使用账号当前可用的内容与画质。";
+                AccountStore accounts=new AccountStore(this);
+                if(importPlatform==null)accounts.importLegacy(contents);else accounts.importForPlatform(importPlatform,contents);
+                message="登录信息已保存，请重新解析视频链接。";
             }catch(Exception e){message=friendly(e);}String finalMessage=message;
-            main.post(()->{if(!isDestroyed()){if("settings".equals(tab))showTab("settings");showMessage("Cookie 导入",finalMessage);}});
+            main.post(()->{if(!isDestroyed()){if("settings".equals(tab))showTab("settings");showMessage("导入登录信息",finalMessage);}});
         });
     }
 
@@ -950,13 +965,14 @@ public final class MainActivity extends Activity {
         if(ready){if(!updates.shouldNotifyReady(state.offer.code))return;updates.notifiedReady(state.offer.code);}
         else{if(!updates.shouldNotify(state.offer.code))return;updates.notified(state.offer.code);}
         new PocketDialog.Builder(this).setTitle(ready?"拾流更新已下载":"拾流有新版本 "+state.offer.version)
-                .setMessage(ready?"打开更新页后会自动复核并进入系统安装确认，最后一步由你确认。现有数据保留。":"安装包 "+UpdateActivity.size(state.offer.size)+"。可查看更新内容后决定下载，完成后进入系统安装确认。")
+                .setMessage(ready?"打开更新页即可继续安装，现有数据会保留。":"安装包 "+UpdateActivity.size(state.offer.size)+"。可查看更新内容后再下载。")
                 .setNegativeButton("稍后",null).setPositiveButton("查看更新",(d,w)->startActivity(new Intent(this,UpdateActivity.class))).show();
     };
     private final Runnable appUpdateCheck=()->AppUpdates.get(this).checkIfDue();
     @Override protected void onResume(){super.onResume();foreground=true;clipboardCheckPending=true;main.post(checkClipboard);AppUpdates.get(this).listen(appUpdateListener);main.postDelayed(appUpdateCheck,1500);main.removeCallbacks(poll);main.post(poll);if(libraryView!=null)libraryView.refresh();}
     @Override protected void onPause(){foreground=false;main.removeCallbacks(checkClipboard);hideClipboardOffer();AppUpdates.get(this).unlisten(appUpdateListener);main.removeCallbacks(appUpdateCheck);if(openSwipeRow!=null)openSwipeRow.close(false);queueTouchActive=false;super.onPause();main.removeCallbacks(poll);if(input!=null)draft=input.getText().toString();getPreferences(0).edit().putString("draft",draft).apply();persistInspectionInbox();}
     @Override protected void onSaveInstanceState(Bundle state){
+        state.putString("cookie_import_platform",cookieImportPlatform);
         super.onSaveInstanceState(state);state.putBoolean("link_editor_expanded",linkEditorExpanded);state.putString("inspection_message",lastInspectionMessage);state.putString("inspection_details",lastInspectionDetails);state.putString("draft",input!=null?input.getText().toString():draft);state.putString("tab",tab);state.putString("queue_filter",queueFilter);state.putString("quality_selection",new JSONObject(qualitySelections).toString());
         if(libraryView!=null)libraryState=libraryView.saveUiState();if(libraryState!=null)state.putBundle("library_state",libraryState);
         try{org.json.JSONArray media=new org.json.JSONArray();for(Engine.Media m:inspectedMedia)media.put(m.toJson());state.putString("inspection_media",media.toString());}catch(Exception ignored){}

@@ -51,7 +51,7 @@ public final class AccountUiRenderTest {
             Dialog manager=ShadowDialog.getLatestDialog();assertTrue(manager.isShowing());
             View content=manager.getWindow().getDecorView();
             for(LoginPlatform platform:LoginPlatform.values())assertNotNull(findText(content,platform.title));
-            assertNotNull(findText(content,"从 Cookie 文件导入"));
+            assertNotNull(findText(content,"导入登录信息"));
             assertNotNull("Fresh accounts should expose login directly",findText(content,"登录"));
             capture(content,"013-account-manager-empty");
 
@@ -80,7 +80,7 @@ public final class AccountUiRenderTest {
             Dialog saved=ShadowDialog.getLatestDialog();View savedContent=saved.getWindow().getDecorView();
             assertNotNull(findButton(savedContent,"打开官方登录页"));
             assertNotNull(findButton(savedContent,"清除本机登录信息"));
-            assertNotNull(findText(savedContent,"是否仍然有效，以源站实际响应为准。"));
+            assertNotNull(findText(savedContent,"登录可能已过期，无法下载时请重新登录。"));
             PocketSwitch enabled=findSwitch(savedContent);assertNotNull(enabled);assertTrue(enabled.isChecked());
             capture(savedContent,"013-account-saved-metadata-fixture");saved.dismiss();
             invoke(activity,"showTab",new Class<?>[]{String.class},"new");drain(activity);
