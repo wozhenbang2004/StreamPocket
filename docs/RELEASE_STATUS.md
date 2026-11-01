@@ -1,9 +1,9 @@
 # 安装与版本
 
-当前稳定版 **0.3.2 / versionCode 22**（0.3.3 / versionCode 23 已构建，待发布），应用名“拾流”。支持 Android 7.0+ / ARM64，包名为 `dev.streampocket.localtest`，沿用既有安装身份。
+当前版本 **0.3.3 / versionCode 23**，应用名“拾流”。支持 Android 7.0+ / ARM64，包名为 `dev.streampocket.localtest`，沿用既有安装身份。
 
-- [安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.2/StreamPocket-arm64-v8a.apk)
-- [版本更新内容](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.2)
+- [安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.3/StreamPocket-arm64-v8a.apk)
+- [版本更新内容](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.3)
 - [应用内更新](APP_UPDATES.md)
 - [第三方对应源码](THIRD_PARTY_SOURCES.md)
 
@@ -26,4 +26,4 @@
 
 0.3.3 成品：65216962 字节，SHA-256 `149e809d2abd793df6b5be39ab58cda330ebee15047110ecc6c0a5953358ef01`；证书 SHA-256 `67d2d8e285c629f3c9076a9f00f12d4a79c9139d452aa2b876dae803df8373fd`，与 0.3.2 一致。非 debuggable，包名/版本/ARM64/minSdk、zipalign 16KB 与 APK 签名校验通过。最后修订后播放器/分屏15项重点用例、Lint及Release构建 exit 0。
 
-0.3.3 发布状态：代码已提交，原签名成品已验证；GitHub Release 尚未发布，当前 latest 仍为 0.3.2。安装包与更新清单已就绪，正式发布待确认。
+0.3.3 发行资产包括固定名安装包、带版本号安装包与 update-manifest.json；两个 APK 字节相同。源代码与本标签对应，第三方原生源码入口保持不变。
