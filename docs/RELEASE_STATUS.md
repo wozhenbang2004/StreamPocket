@@ -1,12 +1,20 @@
 # 安装与版本
 
-当前版本 **0.3.1 / versionCode 21**，应用名“拾流”。支持 Android 7.0+ / ARM64，包名为 `dev.streampocket.localtest`，沿用既有安装身份。
+当前版本 **0.3.2 / versionCode 22**，应用名“拾流”。支持 Android 7.0+ / ARM64，包名为 `dev.streampocket.localtest`，沿用既有安装身份。
 
-- [安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.1/StreamPocket-arm64-v8a.apk)
-- [版本更新内容](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.1)
+- [安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.2/StreamPocket-arm64-v8a.apk)
+- [版本更新内容](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.2)
 - [应用内更新](APP_UPDATES.md)
 - [第三方对应源码](THIRD_PARTY_SOURCES.md)
 
 已有拾流直接覆盖安装，不必卸载或清除数据。来源安装权限由系统管理，最后一步由用户确认。
 
 应用源码随该 Release 标签提供；原生组件保持不变，其对应源码八分片继续保留在 v0.2.9-test 的固定链接中。请按第三方源码说明合并、校验后查看构建配方与许可证。
+
+## 2026-11-01 发布范围
+
+用户追加明确要求：“发布啊，也要发布啊，release 推送更新。”授权将已推送开发分支中的链接/剪贴板体验、三列视频库、下滑切换、失败记录与恢复提示作为正式版本发布，并提供应用内更新。
+
+发行检查：版本递增至 22；恢复原签名并与 0.3.1 清单中的公开证书摘要核对；构建非 debuggable Release；发布固定名称 APK 和更新清单；发布后回读 `/releases/latest`，校验远端清单与安装包。测试与设备验证边界见 [TESTING](TESTING.md)。
+
+本次签名成品：65,204,674 字节，SHA-256 `28b73ecc3f3a7607a3264e4c67e4cff70d5b4cf45b5d363d8b07d5fbc8aac42c`；证书 SHA-256 `67d2d8e285c629f3c9076a9f00f12d4a79c9139d452aa2b876dae803df8373fd`。带版本号与应用内更新 APK 使用相同字节；更新清单单独作为 Release 资产分发，不写入 APK。

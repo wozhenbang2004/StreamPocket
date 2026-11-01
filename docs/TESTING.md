@@ -48,3 +48,5 @@ Robolectric 使用隔离文件、PackageManager / DownloadManager fixture 与原
 同日视频浏览与错误恢复批次：`testDebugUnitTest lintDebug assembleDebug` exit 0，258 项测试、0 失败/错误/跳过，Lint 无 Error/Fatal。在原 `c8b5a8f` 的 VideoLibraryView / PlayerActivity 上，三列选择和下滑切换两条新增旅程均先复现未满足；当前实现通过。定点检查另发现 Drawable 设置覆盖图案内边距，已通过实际 View padding 与命中尺寸断言修正。
 
 当前渲染证据：[三列与缩小图标](design/assets/media-experience-20261101/three-columns.png)、[保留的失败记录与重试](design/assets/media-experience-20261101/failed-link.png)、[播放器控制层](design/assets/media-experience-20261101/player-controls.png)。封面色块和播放器时钟均为明确的离线夹具，不冒充真实视频解码。下滑测试执行真实触摸分发并核对数据库中的上一条进度、下一条标记、跨分页/筛选顺序、取消、后台与重建；手机手指操作、硬件解码、真实源站和正式签名覆盖安装仍未验证。需求与交互边界见 [MEDIA_EXPERIENCE](MEDIA_EXPERIENCE.md)。
+
+0.3.2 发行构建：版本递增至 22 后，`testDebugUnitTest lintDebug assembleRelease` exit 0（258 项、0 失败/错误/跳过，Lint 无 Error/Fatal）。成品为非 debuggable、`dev.streampocket.localtest`、minSdk 24、ARM64；zipalign 16KB 检查和 APK v2/v3 签名验证通过，证书 SHA-256 与 0.3.1 更新清单一致。固定名与带版本号的 APK 字节相同，清单使用签名后成品的大小和 SHA-256。成品身份核验不代替设备覆盖安装；本轮未操作用户手机。

@@ -2,9 +2,17 @@
 
 Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下载到手机，再播放、整理、标记和剪辑。
 
-**当前版本：0.3.1** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.1/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.1)
+**当前版本：0.3.2** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.2/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.2)
 
-开发分支增加了链接预览与草稿保护、三列视频库、下滑切换视频、可见的解析失败记录和按原因提供的恢复提示，尚未发布新的正式安装包。交互与验证范围见 [视频浏览与失败恢复](docs/MEDIA_EXPERIENCE.md) 和 [下载流程](docs/DOWNLOAD_FLOW.md)。
+交互与验证范围见 [视频浏览与失败恢复](docs/MEDIA_EXPERIENCE.md) 和 [下载流程](docs/DOWNLOAD_FLOW.md)。
+
+## 0.3.2 更新
+
+- 剪贴板先预览链接与来源，再勾选解析；手动粘贴去重追加，保留未提交草稿。
+- 输入时显示有效链接数量，无效内容就近提示；提交后收起空输入区，优先展示解析结果与画质。
+- 视频库增加三列网格，保留双列和列表；缩小卡片更多、播放图案，保留点击范围。
+- 播放画面中间向下滑可切换到当前筛选和排序中的下一个视频，保存上一条进度；更多菜单提供同一入口。
+- 解析失败保留链接、原因和重新解析入口，重开应用仍可重试；按网络、权限、文件缺失等原因给出恢复提示。
 
 ## 0.3.1 更新
 
@@ -47,7 +55,7 @@ Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下
 
 ## 安装与更新
 
-1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.1) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
+1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.2) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
 2. 已安装拾流时直接覆盖更新，**不要卸载或清除数据**。新版沿用原安装身份和签名，保留账号、下载记录、视频库、标记与草稿。
 3. 应用内打开 **设置 → 高级与关于 → 应用更新**。确认下载后，本页显示进度，校验完成自动进入系统安装确认；最后一步由你确认。
 
