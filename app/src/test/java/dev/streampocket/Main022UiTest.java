@@ -50,10 +50,10 @@ public final class Main022UiTest {
             MainActivity a=c.create(initial()).start().resume().visible().get();
             EditText input=field(a,"input",EditText.class);assertEquals(2,input.getMinLines());assertEquals(4,input.getMaxLines());capture(a.getWindow().getDecorView(),"00-light-home-link-fixture");
             Engine.Media m=fixtureMedia();invoke(a,"showMedia",new Class<?>[]{java.util.List.class},Collections.singletonList(m));drain(a);
-            View page=a.getWindow().getDecorView();assertNotNull(find(page,m.title));assertNotNull(find(page,"1920 × 1080 · 预计 128.0 MB"));assertNotNull(find(page,"加入队列"));
+            View page=a.getWindow().getDecorView();assertNotNull(find(page,m.title));assertNotNull(find(page,"1920 × 1080 · 预计 128.0 MB"));assertNotNull(find(page,"下载视频"));
             assertTrue("Inline media must not create a task until the user chooses download",TaskStore.all(a).isEmpty());
             assertTrue(ShadowDialog.getLatestDialog()==null||!ShadowDialog.getLatestDialog().isShowing());
-            assertTrue("Editor stays available for the next share",input.isShown());assertTrue(field(a,"parse",Button.class).isShown());assertTrue(find(page,"加入队列").isShown());
+            assertTrue("Editor stays available for the next share",input.isShown());assertTrue(field(a,"parse",Button.class).isShown());assertTrue(find(page,"下载视频").isShown());
             capture(page,"01-inline-resolved-metadata-fixture");
             find(page,"画质：最高可用画质  ▾").performClick();
             PocketDialog quality=(PocketDialog)ShadowDialog.getLatestDialog();quality.getListView().performItemClick(quality.getListView().getChildAt(1),1,1);drain(a);

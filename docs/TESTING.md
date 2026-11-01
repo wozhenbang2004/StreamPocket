@@ -40,3 +40,7 @@ Robolectric 使用隔离文件、PackageManager / DownloadManager fixture 与原
 
 
 0.3.1 增加来源多选的取消/应用/清除/页面恢复、实时链接识别不启动解析、画布按住临时2×及松手/CANCEL原倍速恢复检查。视频库宽/竖画面和播放器分组工具使用许可参考静态帧渲染；画面在最终布局与异步绑定之后设置，避免被色块fixture覆盖。已有点击、长按、滚动、面板拖拽、返回、横竖屏和共享播放入口回归保留。以上为隔离View/状态测试，手机手指操作、MediaCodec硬件播放及OEM安装需设备单独验证。
+
+2026-11-01 链接入口体验修订：`testDebugUnitTest lintDebug assembleDebug` 全部 exit 0，249 项测试通过，Lint 无 Error/Fatal。`BatchDownloadUiTest` 的 15 项检查覆盖原有队列行为，以及剪贴板预览、多选/全选/清空、选空禁用、返回不解析、已处理不重复、未处理回前台恢复、手动粘贴保留草稿、多条剪贴板、无效输入、结果收起和 320dp 小屏深色面板。新增的粘贴保留草稿、无效输入禁用两项检查，在 `849a8c8` 原 MainActivity 上均先复现失败，再在当前实现通过。
+
+实际查看了当前原生 View 渲染：[剪贴板选择](design/assets/link-intake-20261101/clipboard-review.png)、[小屏深色与 100 条链接](design/assets/link-intake-20261101/clipboard-small-dark.png)、[结果优先与继续添加](design/assets/link-intake-20261101/ready.png)。它们使用明确的离线样例，灰色封面为未提供缩略图的占位状态；不代表源站联调、真机输入法/手势或硬件解码通过。本轮构建为开发验证包，未发布新的正式安装更新。

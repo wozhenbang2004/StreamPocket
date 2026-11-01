@@ -97,7 +97,18 @@ public final class PocketDialog extends Dialog {
         list.setOnItemClickListener((parent,view,at,id)->{
             if(spec.multi!=null){spec.multi[at]=!spec.multi[at];list.setItemChecked(at,spec.multi[at]);adapter.notifyDataSetChanged();if(spec.multiClick!=null)spec.multiClick.onClick(this,at,spec.multi[at]);}
             else{selected=at;adapter.notifyDataSetChanged();if(spec.itemClick!=null)spec.itemClick.onClick(this,at);if(!spec.single)dismiss();}
-        });surface.addView(list,new LinearLayout.LayoutParams(-1,0,1));
+        });
+        if(spec.multi!=null&&spec.bulkActions){
+            LinearLayout choices=new LinearLayout(getContext());choices.setGravity(Gravity.CENTER_VERTICAL);
+            choices.addView(text("批量选择",12,p.muted,false),new LinearLayout.LayoutParams(0,-2,1));
+            for(boolean checked:new boolean[]{true,false}){
+                Button action=PocketButton.of(getContext(),checked?"全选":"清空",PocketButton.Role.QUIET);action.setTextSize(12);
+                action.setOnClickListener(v->{for(int n=0;n<spec.multi.length;n++){boolean changed=spec.multi[n]!=checked;spec.multi[n]=checked;list.setItemChecked(n,checked);if(changed&&spec.multiClick!=null)spec.multiClick.onClick(this,n,checked);}adapter.notifyDataSetChanged();});
+                choices.addView(action,new LinearLayout.LayoutParams(dp(48),dp(48)));
+            }
+            surface.addView(choices,new LinearLayout.LayoutParams(-1,-2));
+        }
+        surface.addView(list,new LinearLayout.LayoutParams(-1,0,1));
     }
     private TextView text(CharSequence value,int size,int color,boolean bold){TextView v=new TextView(getContext());v.setText(value);v.setTextSize(size);v.setTextColor(color);v.setLineSpacing(dp(3),1);if(bold)v.setTypeface(null,android.graphics.Typeface.BOLD);return v;}
     private void darkFields(View view){if(view instanceof PocketEditText)((PocketEditText)view).dark();if(view instanceof ViewGroup)for(int n=0;n<((ViewGroup)view).getChildCount();n++)darkFields(((ViewGroup)view).getChildAt(n));}
@@ -113,7 +124,7 @@ public final class PocketDialog extends Dialog {
     }
     public static final class Builder{
         private final Context context;private CharSequence title,message;private View custom;private CharSequence[] items;
-        private boolean single,cancelable=true,dark;private int selected=-1;private boolean[] multi;
+        private boolean single,cancelable=true,dark,bulkActions;private int selected=-1;private boolean[] multi;
         private DialogInterface.OnClickListener itemClick;private DialogInterface.OnMultiChoiceClickListener multiClick;private DialogInterface.OnCancelListener onCancel;
         private final SparseArray<CharSequence> labels=new SparseArray<>();private final SparseArray<DialogInterface.OnClickListener> clicks=new SparseArray<>();
         public Builder(Context c){context=c;}public Builder(Context c,int theme){this(c);dark=theme==android.R.style.Theme_Material_Dialog_Alert;}
@@ -121,6 +132,7 @@ public final class PocketDialog extends Dialog {
         public Builder setItems(CharSequence[] value,DialogInterface.OnClickListener click){items=value;itemClick=click;return this;}
         public Builder setSingleChoiceItems(CharSequence[] value,int checked,DialogInterface.OnClickListener click){items=value;single=true;selected=checked;itemClick=click;return this;}
         public Builder setMultiChoiceItems(CharSequence[] value,boolean[] checked,DialogInterface.OnMultiChoiceClickListener click){items=value;multi=checked;multiClick=click;return this;}
+        public Builder setMultiChoiceBulkActions(boolean enabled){bulkActions=enabled;return this;}
         public Builder setPositiveButton(CharSequence label,DialogInterface.OnClickListener click){labels.put(BUTTON_POSITIVE,label);clicks.put(BUTTON_POSITIVE,click);return this;}
         public Builder setNegativeButton(CharSequence label,DialogInterface.OnClickListener click){labels.put(BUTTON_NEGATIVE,label);clicks.put(BUTTON_NEGATIVE,click);return this;}
         public Builder setNeutralButton(CharSequence label,DialogInterface.OnClickListener click){labels.put(BUTTON_NEUTRAL,label);clicks.put(BUTTON_NEUTRAL,click);return this;}
