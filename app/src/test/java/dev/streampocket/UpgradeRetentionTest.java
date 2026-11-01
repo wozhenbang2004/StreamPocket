@@ -77,6 +77,7 @@ public final class UpgradeRetentionTest {
         accounts.save(LoginPlatform.X,HEADER+row(".x.com",true,"/",true,0,"auth_token","synthetic-x"),"网页登录");
         accounts.save(LoginPlatform.BILIBILI,HEADER+row(".bilibili.com",true,"/",true,0,"SESSDATA","synthetic-bili"),"网页登录");
         accounts.save(LoginPlatform.DOUYIN,HEADER+row(".douyin.com",true,"/",true,0,"sessionid","synthetic-douyin"),"文件导入");
+        accounts.save(LoginPlatform.YOUTUBE,HEADER+row(".youtube.com",true,"/",true,0,"SAPISID","synthetic-youtube"),"文件导入");
         accounts.setEnabled(LoginPlatform.BILIBILI,false);
         Map<String,byte[]> encrypted=new LinkedHashMap<>();
         for(LoginPlatform p:LoginPlatform.values()) encrypted.put(p.id,Files.readAllBytes(session(p).toPath()));

@@ -221,7 +221,7 @@ public final class VideoFirstPlayerUiTest {
             androidx.media3.common.TrackGroup audio=new androidx.media3.common.TrackGroup(new androidx.media3.common.Format.Builder().setSampleMimeType("audio/mp4a-latm").build());
             Tracks tracks=new Tracks(Collections.singletonList(new Tracks.Group(audio,false,new int[]{androidx.media3.common.C.FORMAT_HANDLED},new boolean[]{true})));
             assertTrue((Boolean)invoke(activity,"rejectUnrenderableTracks",new Class<?>[]{Tracks.class},tracks));assertFalse(clock.getPlayWhenReady());
-            assertTrue(field(activity,"status",TextView.class).getText().toString().contains("没有可播放的视频轨"));assertEquals(View.GONE,field(activity,"transitionCover",ImageView.class).getVisibility());
+            assertTrue(field(activity,"status",TextView.class).getText().toString().contains("没有可播放的画面"));assertEquals(View.GONE,field(activity,"transitionCover",ImageView.class).getVisibility());
         }
     }
 

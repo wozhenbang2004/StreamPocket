@@ -15,11 +15,11 @@ public final class RecoveryMessagesTest {
     }
     @Test public void sourceAccessMissingContentAndUnavailableQualityAreNotNetworkTimeouts(){
         assertEquals(SourceFailure.Kind.ACCESS,SourceFailure.kind("HTTP Error 403: Forbidden"));assertFalse(SourceFailure.retryable(new Exception("HTTP Error 403")));assertTrue(CoreRules.inspectionMessage(new Exception("HTTP Error 404")).contains("原平台"));
-        assertTrue(CoreRules.inspectionMessage(new Exception("requested format is not available")).contains("其他可用画质"));assertTrue(CoreRules.inspectionMessage(new Exception("unsupported url")).contains("具体视频页面"));
+        assertTrue(CoreRules.inspectionMessage(new Exception("requested format is not available")).contains("其他可用画质"));assertTrue(CoreRules.inspectionMessage(new Exception("unsupported url")).contains("视频页面链接"));
         assertEquals(SourceFailure.Kind.OTHER,SourceFailure.kind("tweet 210403404429123 was rejected"));
     }
     @Test public void certificateStorageAndUnknownFailuresKeepRecoveryAndDiagnostics(){
         assertTrue(CoreRules.userMessage(new Exception("certificate verify failed")).contains("手机时间"));assertTrue(CoreRules.userMessage(new Exception("ENOSPC no space left")).contains("腾出空间"));
-        String unknown=CoreRules.inspectionMessage(new Exception("opaque extractor problem"));assertTrue(unknown.contains("失败记录"));assertTrue(unknown.contains("详情"));assertFalse(unknown.contains("opaque"));
+        String unknown=CoreRules.inspectionMessage(new Exception("opaque extractor problem"));assertTrue(unknown.contains("链接已保留"));assertTrue(unknown.contains("重试"));assertFalse(unknown.contains("opaque"));
     }
 }

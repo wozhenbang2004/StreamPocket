@@ -44,6 +44,7 @@ public final class ProductCopyUiTest {
             assertEquals(1,count(decor,"检查更新"));assertFalse(text.contains("GitHub"));assertFalse(text.contains("SHA"));assertFalse(text.contains("versionCode"));
             assertFalse(text.contains("复制问题信息"));capture(decor,"update.png");
             find(decor,"更新帮助").performClick();Dialog help=ShadowDialog.getLatestDialog();
+            capture(help.getWindow().getDecorView(),"update-help.png");
             assertNotNull(find(help.getWindow().getDecorView(),"复制问题信息"));help.dismiss();
         } finally {
             ExecutorService worker=(ExecutorService)field(updates,"worker");worker.shutdown();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));singleton.set(null,null);
