@@ -38,7 +38,7 @@ final class InspectionInbox {
     }
     void fail(Job job, Throwable failure) {
         job.state = "failed"; job.cancelled = false;
-        job.message = failure instanceof InterruptedException ? "已取消解析，可以重试" : CoreRules.inspectionMessage(failure);
+        job.message = failure instanceof InterruptedException ? "已取消解析，可以重试" : CoreRules.inspectionMessage(failure, job.url);
         String details = CoreRules.cleanLog(failure.toString()); job.details = details.substring(0, Math.min(details.length(), 6000));
     }
     boolean retry(Job job) {

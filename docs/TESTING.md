@@ -29,7 +29,7 @@ Robolectric 使用隔离文件、PackageManager / DownloadManager fixture 与原
   --tests dev.streampocket.Main022UiTest
 ```
 
-`DownloadFlowSelfTest` 也可与 `CoreRules`、`SourceFailure`、`SourceScheduler`、`LinkBatch` 直接用 JDK 17 编译执行，无需 Android SDK。截图超时用例在 0.2.10 原规则上复现失败。0.2.10 的三项播放器断言仍针对早期合并标签，在未改产品代码的基线中复现；现断言分别核对精确毫秒时间、名称及现有点击父容器，保留原有标记数据检查。
+`DownloadFlowSelfTest` 也可与 `CoreRules`、`SourceFailure`、`SourceScheduler`、`LinkBatch`、`YouTubeLinks` 直接用 JDK 17 编译执行，无需 Android SDK。截图超时用例在 0.2.10 原规则上复现失败。0.2.10 的三项播放器断言仍针对早期合并标签，在未改产品代码的基线中复现；现断言分别核对精确毫秒时间、名称及现有点击父容器，保留原有标记数据检查。
 
 0.2.12 的 `BatchDownloadUiTest` 覆盖解析 A 运行时追加 B/C/剪贴板、保留已有结果/失败身份/草稿、不自动下载、冷启动恢复结果与画质、取消状态恢复。`VideoFirstPlayerUiTest` 覆盖首帧封面立即隐藏、TextureView、主播放期间不自动准备第二路预览、无视频轨暂停报错。它们是离线原生 View 与播放器时钟 fixture，不代表真机硬件解码已通过。
 
@@ -56,3 +56,6 @@ Robolectric 使用隔离文件、PackageManager / DownloadManager fixture 与原
 重点用例使用真实 MotionEvent / View 分发（两指、多指抬起、放大后点按与拖动、短滑和取消）、IME commitText、原数据库/稳定排序、两路独立播放器时钟、音频焦点瞬失/duck、结束重播、Activity result 发送与接收。接收测试明确让数据库保留旧 checkpoint，再验证精确 result 位置获胜；不是已完成手机端双IO压力测试。
 
 实际查看当前 412dp 原生布局：[上下分屏](design/assets/player-033/split-portrait.jpg)、[左右并列](design/assets/player-033/split-side-by-side.jpg)。图中是获许可静态参考帧，明确标“布局夹具”，不是双路硬件解码证据。真机手指操作、设备双解码上限、截图中 X 链接与代理环境、OEM 覆盖安装未执行；安装包的签名和身份核验单独记录于 RELEASE_STATUS。
+
+
+0.3.4：新增4项 URL/元数据回归在475bd21上先复现失败；修复后全套274项测试、0失败/错误/跳过，`testDebugUnitTest lintDebug assembleRelease` exit0。新增YouTube短链/Shorts/别名去重、单视频与无列表扩张、画质/分轨选择、错误优先级、失败重建和重试、视频库来源持久化；原生View实际点击1080p与下载，核对任务URL和selector。独立审查指出并修复JavaScript警告遮住429等真实错误的问题，混合日志回归通过。YouTube真实网络与手机设备未验证。

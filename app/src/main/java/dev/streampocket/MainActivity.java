@@ -349,7 +349,7 @@ public final class MainActivity extends Activity {
     private void showLinkMessage(String message,boolean error){main.removeCallbacks(previewLinks);linkEditorExpanded=true;updateLinkEditor();if(linkHint!=null){linkHint.setText(message);linkHint.setTextColor(error?palette.danger:MUTED);linkHint.announceForAccessibility(message);}}
     private void hideLinkKeyboard(){if(input!=null){input.clearFocus();android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);if(keyboard!=null)keyboard.hideSoftInputFromWindow(input.getWindowToken(),0);}}
     private void updateLinkEditor(){if(linkEditor==null||addLinkRow==null)return;boolean work=parsing||!inspectionInbox.jobs.isEmpty()||!inspectedMedia.isEmpty();boolean expanded=!work||!draft.trim().isEmpty()||linkEditorExpanded;linkEditor.setVisibility(expanded?View.VISIBLE:View.GONE);addLinkRow.setVisibility(expanded?View.GONE:View.VISIBLE);}
-    private static String linkLabel(String url){String platform;switch(SourceScheduler.platform(url)){case "x":platform="X / Twitter";break;case "bilibili":platform="哔哩哔哩";break;case "douyin":platform="抖音";break;default:try{platform=new URI(url).getHost();}catch(Exception invalid){platform="视频链接";}}
+    private static String linkLabel(String url){String platform;switch(SourceScheduler.platform(url)){case "x":platform="X / Twitter";break;case "bilibili":platform="哔哩哔哩";break;case "douyin":platform="抖音";break;case "youtube":platform="YouTube";break;default:try{platform=new URI(url).getHost();}catch(Exception invalid){platform="视频链接";}}
         String visible=url.replaceFirst("(?i)^https?://","");if(visible.length()>200)visible=visible.substring(0,140)+"…"+visible.substring(visible.length()-50);return platform+"\n"+visible;}
 
     private void analyze() {
@@ -394,7 +394,7 @@ public final class MainActivity extends Activity {
         if(input==null||linkHint==null||!"new".equals(tab))return;
         linkHint.setTextColor(MUTED);if(linkPreview!=null)linkPreview.removeAllViews();
         updateInspectionButton();
-        if(draft.trim().isEmpty()){linkHint.setText("支持 X、哔哩哔哩、抖音等链接，可批量粘贴");return;}
+        if(draft.trim().isEmpty()){linkHint.setText("支持 YouTube、X、哔哩哔哩、抖音，可批量粘贴");return;}
         try{LinkBatch.Result links=LinkBatch.parse(draft);linkHint.setText("识别到 "+links.urls.size()+" 个链接"+(links.duplicates>0?" · "+links.duplicates+" 个重复已合并":"")+(!links.invalid.isEmpty()?" · "+links.invalid.size()+" 个无效链接已跳过":""));
             if(links.urls.size()==1)linkHint.append(" · "+linkLabel(links.urls.get(0)).split("\n",2)[0]);
             if(linkPreview!=null&&links.urls.size()>1){for(int n=0;n<Math.min(3,links.urls.size());n++){String label=linkLabel(links.urls.get(n));TextView preview=text(label.replace("\n"," · "),12,MUTED,false);preview.setContentDescription(label);preview.setMaxLines(1);preview.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);preview.setPadding(0,dp(4),0,dp(4));linkPreview.addView(preview);}
@@ -403,7 +403,7 @@ public final class MainActivity extends Activity {
     }
     private void updateInspectionButton(){if(parse!=null){try{LinkBatch.Result links=LinkBatch.parse(draft);parse.setText((parsing?"追加解析 · ":"解析链接 · ")+links.urls.size()+" 个");parse.setEnabled(true);}catch(IllegalArgumentException invalid){parse.setText("解析链接");parse.setEnabled(false);}}}
     private void persistInspectionInbox(){getPreferences(0).edit().putString("inspection_inbox",inspectionInbox.json()).putString("inspection_quality",new JSONObject(qualitySelections).toString()).apply();}
-    private static String inspectionFailureMessage(InspectionInbox.Job job){return job.message.contains("取消")||job.details.isEmpty()?job.message:CoreRules.inspectionMessage(new Exception(job.details));}
+    private static String inspectionFailureMessage(InspectionInbox.Job job){return job.message.contains("取消")||job.details.isEmpty()?job.message:CoreRules.inspectionMessage(new Exception(job.details),job.url);}
     private void cancelAnalysis() {
         if(activeInspection==null)return;activeInspection.cancelled=true;activeInspection.state="cancelling";engine.cancelInspect();persistInspectionInbox();if("new".equals(tab))renderInspection();
     }

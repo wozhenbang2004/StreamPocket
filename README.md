@@ -2,7 +2,7 @@
 
 Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下载到手机，再播放、整理、标记和剪辑。
 
-**当前版本：0.3.3** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.3/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.3)
+**当前版本：0.3.4** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.4/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.4)
 
 交互与验证范围见 [视频浏览与失败恢复](docs/MEDIA_EXPERIENCE.md) 和 [下载流程](docs/DOWNLOAD_FLOW.md)。
 
@@ -50,7 +50,7 @@ Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下
 
 ## 功能
 
-- **本地下载**：支持 X/Twitter、哔哩哔哩、抖音及 yt-dlp 支持的网站；显示源站实际可用画质，多视频可逐项选择。
+- **本地下载**：支持 YouTube（含 Shorts）、X/Twitter、哔哩哔哩、抖音及 yt-dlp 支持的网站；显示源站实际可用画质，多视频可逐项选择。
 - **下载管理**：队列、通知、真实进度、暂停/继续、取消和重试；支持 1 / 4 / 8 路配置，音视频分轨自动合并后保存。
 - **视频库**：封面与标题点按播放，网格/列表切换、搜索、来源和合集筛选；续播位置、播放进度、多选分享、文件重命名。
 - **本地播放**：完整画幅、横屏、倍速、上次位置、拖动缩略预览；时间点和片段标记可命名、跳转或送入剪辑。
@@ -63,7 +63,7 @@ Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下
 
 ## 安装与更新
 
-1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.3) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
+1. 在 [Release](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.4) 下载 `StreamPocket-arm64-v8a.apk`，用手机打开安装；按系统提示允许此来源安装应用。
 2. 已安装拾流时直接覆盖更新，**不要卸载或清除数据**。新版沿用原安装身份和签名，保留账号、下载记录、视频库、标记与草稿。
 3. 应用内打开 **设置 → 高级与关于 → 应用更新**。确认下载后，本页显示进度，校验完成自动进入系统安装确认；最后一步由你确认。
 

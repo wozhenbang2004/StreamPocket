@@ -402,7 +402,8 @@ public final class Engine {
         media.filesize = data.optLong("filesize",-1);
         if(media.filesize<=0){media.filesize=data.optLong("filesize_approx",-1);media.filesizeEstimated=media.filesize>0;}
         String host = new URI(source).getHost().toLowerCase(Locale.ROOT);
-        media.platform = host.equals("x.com") || host.endsWith(".x.com") || host.contains("twitter.com") ? "X / Twitter"
+        media.platform = YouTubeLinks.matches(source) ? "YouTube"
+                : host.equals("x.com") || host.endsWith(".x.com") || host.contains("twitter.com") ? "X / Twitter"
                 : host.contains("bilibili.com") || host.equals("b23.tv") ? "哔哩哔哩"
                 : host.contains("douyin.com") ? "抖音 · 实验性" : host;
         media.qualities.add(new Quality("best", "最高可用画质", "bv*+ba/b"));
@@ -419,7 +420,7 @@ public final class Engine {
         return media;
     }
 
-    public static String normalizeUrl(String text) { return CoreRules.normalizeUrl(text); }
+    public static String normalizeUrl(String text) { return YouTubeLinks.normalizeVideo(CoreRules.normalizeUrl(text)); }
     public static String cleanLog(String text) { return CoreRules.cleanLog(text); }
     public static String userMessage(Throwable error) { return CoreRules.userMessage(error); }
     public static String inspectionMessage(Throwable error) { return CoreRules.inspectionMessage(error); }

@@ -52,6 +52,34 @@ public final class BatchDownloadUiTest {
             assertTrue(field(a,"linkHint",TextView.class).getText().toString().contains("识别到 2 个链接"));assertEquals(draft,field(a,"input",EditText.class).getText().toString());assertTrue(inbox(a).jobs.isEmpty());assertNull(field(a,"activeInspection",Object.class));
         }
     }
+
+    @Test public void youtubeShortLinkUsesExistingQualitySelectionAndOnlyDownloadsAfterConfirmation()throws Exception{
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()){
+            MainActivity a=c.get();
+            set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{
+                Engine.Media item=media(Engine.normalizeUrl(url),"YouTube 接入 · 离线布局样例");item.platform="YouTube";
+                item.qualities.add(new Engine.Quality("1080","1080p","bv*[height=1080]+ba/b[height=1080]"));
+                return Collections.singletonList(item);
+            });
+            EditText input=field(a,"input",EditText.class);input.setText("youtu.be/BaW_jenozKc?si=share");
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200));
+            assertTrue(field(a,"linkHint",TextView.class).getText().toString().contains("YouTube"));
+            invoke(a,"analyze",new Class<?>[0]);drain(a);
+            assertEquals(1,inbox(a).media.size());assertTrue(TaskStore.all(a).isEmpty());
+            assertNotNull(find(a.getWindow().getDecorView(),"下载视频"));
+            assertEquals("YouTube",inbox(a).media.get(0).platform);
+            find(a.getWindow().getDecorView(),"画质：最高可用画质  ▾").performClick();
+            PocketDialog quality=(PocketDialog)org.robolectric.shadows.ShadowDialog.getLatestDialog();
+            quality.getListView().performItemClick(null,1,1);
+            assertNotNull(find(a.getWindow().getDecorView(),"画质：1080p  ▾"));
+            capture(a,"youtube-ready-fixture.png");
+            find(a.getWindow().getDecorView(),"下载视频").performClick();drain(a);
+            assertEquals(1,TaskStore.all(a).size());
+            JSONObject task=TaskStore.all(a).get(0);
+            assertEquals("https://www.youtube.com/watch?v=BaW_jenozKc",task.optString("url"));
+            assertEquals("bv*[height=1080]+ba/b[height=1080]",task.getJSONObject("quality").optString("selector"));
+        }
+    }
     @Test public void failedLinkStaysVisibleAfterColdStartAndCanBeReparsedInPlace()throws Exception{
         String jobId;
         try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()){

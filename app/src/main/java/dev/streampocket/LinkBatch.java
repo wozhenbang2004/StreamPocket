@@ -12,7 +12,7 @@ public final class LinkBatch {
     private LinkBatch() {}
     public static final int MAX_LINKS = 100;
     private static final Pattern LINK = Pattern.compile(
-            "(?i)(?:https?://|(?<![\\w.@/])(?:(?:www|m|mobile)\\.)?(?:x\\.com|twitter\\.com|bilibili\\.com|b23\\.tv|(?:v|www)\\.douyin\\.com)/)[^\\s<>\\\"『』「」。，！？；、,;]+?(?=https?://|[\\s<>\\\"『』「」。，！？；、,;]|$)");
+            "(?i)(?:https?://|(?<![\\w.@/])(?:(?:www|m|mobile|music)\\.)?(?:x\\.com|twitter\\.com|bilibili\\.com|b23\\.tv|(?:v|www)\\.douyin\\.com|youtube\\.com|youtube-nocookie\\.com|youtu\\.be)/)[^\\s<>\\\"『』「」。，！？；、,;]+?(?=https?://|[\\s<>\\\"『』「」。，！？；、,;]|$)");
     private static final Pattern TWEET = Pattern.compile("/(?:[^/]+/status|i/web/status)/(\\d+)(/(?:video|photo)/\\d+)?(?:/.*)?");
 
     public static Result parse(String text) {
@@ -44,6 +44,8 @@ public final class LinkBatch {
     static String identity(String url) {
         try {
             URI uri = new URI(url);
+            String youtubeId = YouTubeLinks.videoId(url);
+            if (!youtubeId.isEmpty()) return "youtube:video:" + youtubeId;
             if (CoreRules.isTwitterUrl(url)) {
                 Matcher tweet = TWEET.matcher(uri.getPath());
                 if (tweet.matches()) return "x:status:" + tweet.group(1) + (tweet.group(2) == null ? "" : tweet.group(2));

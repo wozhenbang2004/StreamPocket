@@ -26,6 +26,7 @@ public final class SourceScheduler {
         int failures;
     }
     public static String platform(String url) {
+        if (YouTubeLinks.matches(url)) return "youtube";
         if (CoreRules.isTwitterUrl(url)) return "x";
         if (CoreRules.isBilibiliUrl(url)) return "bilibili";
         try {

@@ -303,7 +303,7 @@ public final class DownloadService extends Service {
                     else {
                         SourceScheduler.SHARED.outcomeForUrl(task.optString("url"), failure);
                         log.append('\n').append(Engine.cleanLog(failure.toString()));
-                        patch(id, "failed", -1, "下载未完成", Engine.userMessage(failure));
+                        patch(id, "failed", -1, "下载未完成", CoreRules.userMessage(failure, task.optString("url")));
                         try { TaskStore.update(this, id, new JSONObject().put("log", log.substring(Math.max(0, log.length() - 6000)))); }
                         catch (Exception ignored) {}
                     }

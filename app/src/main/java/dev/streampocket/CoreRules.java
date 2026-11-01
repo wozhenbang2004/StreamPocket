@@ -102,6 +102,16 @@ public final class CoreRules {
         return message;
     }
 
+    public static String inspectionMessage(Throwable error, String url) {
+        String youtube = YouTubeLinks.matches(url) ? YouTubeLinks.failureMessage(error) : "";
+        return youtube.isEmpty() ? inspectionMessage(error) : youtube;
+    }
+
+    public static String userMessage(Throwable error, String url) {
+        String youtube = YouTubeLinks.matches(url) ? YouTubeLinks.failureMessage(error) : "";
+        return youtube.isEmpty() ? userMessage(error) : youtube;
+    }
+
     public static String userMessage(Throwable error) {
         String text = cleanLog(error == null ? "" : error.toString());
         String lower = text.toLowerCase(Locale.ROOT);

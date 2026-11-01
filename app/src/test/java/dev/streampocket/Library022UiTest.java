@@ -65,6 +65,21 @@ public final class Library022UiTest {
         for(File file:files)file.delete(); app.deleteDatabase("media-library.db");
     }
 
+    @Test public void youtubeSourceCanBeSelectedAndKeepsItsNameAfterReturn()throws Exception{
+        seed("youtube","YouTube 视频库 · 离线样例","https://youtu.be/BaW_jenozKc",1024,1920,1080);
+        seed("other","其他来源 · 离线样例","https://x.com/reference/status/10",1024,1920,1080);open();
+        field(library,"sourceButton",TextView.class).performClick();
+        PocketDialog dialog=(PocketDialog)ShadowDialog.getLatestDialog();
+        int youtube=-1;for(int n=0;n<dialog.getListView().getAdapter().getCount();n++)
+            if("YouTube".equals(dialog.getListView().getAdapter().getItem(n).toString()))youtube=n;
+        assertTrue(youtube>=0);dialog.getListView().performItemClick(null,youtube,youtube);
+        dialog.getButton(PocketDialog.BUTTON_POSITIVE).performClick();await();
+        assertEquals(1,field(library,"grid",GridView.class).getAdapter().getCount());
+        assertEquals("YouTube",field(library,"sourceButton",TextView.class).getText().toString());
+        Bundle saved=library.saveUiState();assertTrue(saved.getStringArrayList("sources").contains("youtube"));
+        capture("youtube-source-fixture.png");
+    }
+
     @Test public void multipleSourceFiltersApplyAtomicallySurviveReturnAndCanBeCleared()throws Exception{
         seed("x","X 样例","https://x.com/a/status/1",1024,1920,1080);seed("b","B站样例","https://www.bilibili.com/video/BV1test",2048,1080,1920);seed("d","抖音样例","https://v.douyin.com/sample",3072,1080,1920);open();
         field(library,"sourceButton",TextView.class).performClick();PocketDialog cancel=(PocketDialog)ShadowDialog.getLatestDialog();cancel.getListView().performItemClick(null,0,0);assertEquals(3,field(library,"grid",GridView.class).getAdapter().getCount());cancel.getButton(PocketDialog.BUTTON_NEGATIVE).performClick();await();assertEquals(3,field(library,"grid",GridView.class).getAdapter().getCount());

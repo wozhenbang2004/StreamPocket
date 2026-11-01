@@ -69,6 +69,16 @@ public final class LibraryStoreTest {
         assertNotNull("Queue history deletion must not erase the library", store.video(id));
     }
 
+    @Test public void completedYouTubeVideoHasAnIndependentSourceFilter() throws Exception {
+        long id=store.upsertCompletedDownload(completed("youtube").put("url","https://youtu.be/BaW_jenozKc")
+                .put("media",new JSONObject().put("platform","YouTube").put("duration",10)));
+        assertEquals("youtube",store.video(id).optString("source"));
+        assertEquals(1,store.listVideos("","youtube",0,30,0).size());
+        assertEquals(0,store.listVideos("","x",0,30,0).size());
+        store.close();store=new LibraryStore(app);
+        assertEquals(id,store.listVideos("","youtube",0,30,0).get(0).optLong("id"));
+    }
+
     @Test public void removalKeepsFileAndLedgerWhileExplicitReimportRestoresRecord() throws Exception {
         JSONObject task = completed("one");
         app.getSharedPreferences("tasks", 0).edit().putString("items", new JSONArray().put(task).toString()).commit();

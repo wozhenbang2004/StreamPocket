@@ -244,7 +244,7 @@ public final class VideoLibraryView extends LinearLayout {
     }
 
     private void chooseSource() {
-        String[] labels={"X","哔哩哔哩","抖音","其他平台","我的导出"},values={"x","bilibili","douyin","other","export"};boolean[] checked=new boolean[values.length];
+        String[] labels={"X","哔哩哔哩","抖音","YouTube","其他平台","我的导出"},values={"x","bilibili","douyin","youtube","other","export"};boolean[] checked=new boolean[values.length];
         for(int n=0;n<values.length;n++)checked[n]=selectedSources.contains(values[n]);
         new PocketDialog.Builder(activity).setTitle("选择视频来源").setMultiChoiceItems(labels,checked,(dialog,at,value)->checked[at]=value)
                 .setPositiveButton("应用筛选",(dialog,which)->{selectedSources.clear();for(int n=0;n<values.length;n++)if(checked[n])selectedSources.add(values[n]);source=selectedSources.size()==1?selectedSources.iterator().next():"";endSelection();restoreFirst=-1;updateCollectionLabel();load(true);})
@@ -447,7 +447,7 @@ public final class VideoLibraryView extends LinearLayout {
         TextView v = text(value, 14, INK, false); v.setGravity(Gravity.CENTER); v.setPadding(dp(8), 0, dp(8), 0); v.setSingleLine(true); v.setEllipsize(TextUtils.TruncateAt.END); v.setBackground(shape(palette.control, border, 16)); UiTheme.press(v); return v;
     }
     private static String sourceLabel(String value) {
-        if (value.equals("x")) return "X"; if (value.equals("bilibili")) return "B站"; if (value.equals("douyin")) return "抖音"; if (value.equals("export")) return "我的导出"; return "其他平台";
+        if (value.equals("youtube")) return "YouTube"; if (value.equals("x")) return "X"; if (value.equals("bilibili")) return "B站"; if (value.equals("douyin")) return "抖音"; if (value.equals("export")) return "我的导出"; return "其他平台";
     }
     private static String duration(long ms) { long seconds = Math.max(0, ms / 1000); return seconds >= 3600 ? String.format(Locale.ROOT, "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60) : String.format(Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60); }
 

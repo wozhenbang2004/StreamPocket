@@ -468,6 +468,7 @@ public final class LibraryStore implements Closeable {
         String scheme = Uri.parse(value).getScheme(); return "content".equals(scheme) || "file".equals(scheme);
     }
     private static String source(String url, String platform) {
+        if (YouTubeLinks.matches(url) || "YouTube".equalsIgnoreCase(platform)) return "youtube";
         String value = (url + " " + platform).toLowerCase(Locale.ROOT);
         if (value.contains("bilibili") || value.contains("b23.tv") || value.contains("哔哩")) return "bilibili";
         if (value.contains("douyin") || value.contains("抖音")) return "douyin";
