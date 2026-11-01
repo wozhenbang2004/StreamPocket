@@ -22,6 +22,16 @@ import static org.junit.Assert.*;
 @Config(sdk=35,qualifiers="w320dp-h640dp-mdpi")
 @LooperMode(LooperMode.Mode.PAUSED)
 public final class PocketComponentsTest {
+    @Test public void unstyledFieldAcceptsTouchFocusAndImeTyping(){
+        try(ActivityController<Activity> c=Robolectric.buildActivity(Activity.class).setup()){
+            PocketEditText field=new PocketEditText(c.get());c.get().setContentView(field);layout(field,280,100);
+            assertTrue("Typing must work without the paste button",field.isFocusableInTouchMode());
+            assertTrue(field.requestFocus());
+            android.view.inputmethod.InputConnection connection=field.onCreateInputConnection(new android.view.inputmethod.EditorInfo());
+            assertNotNull(connection);assertTrue(connection.commitText("https://x.com/test/status/123",1));
+            assertEquals("https://x.com/test/status/123",field.getText().toString());
+        }
+    }
     @Test public void draggingTabsCanCancelAndCommitWithoutMovingLabels(){
         try(ActivityController<Activity> c=Robolectric.buildActivity(Activity.class).setup()){
             int[] selected={0},calls={0};PocketTabs tabs=new PocketTabs(c.get(),new String[]{"全部","进行中","已完成","失败"},0,index->{selected[0]=index;calls[0]++;});c.get().setContentView(tabs);layout(tabs,288,48);

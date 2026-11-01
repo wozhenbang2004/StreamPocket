@@ -5,7 +5,7 @@ import java.util.Locale;
 /** Classifies source errors, never explanatory account notes added by the UI. */
 public final class SourceFailure {
     private SourceFailure() {}
-    public enum Kind { TIMEOUT, NETWORK, RATE_LIMIT, AUTH, CHALLENGE, PERMISSION, NOT_FOUND, UNSUPPORTED, STORAGE, CERTIFICATE, ACCESS, OTHER }
+    public enum Kind { TIMEOUT, NETWORK, RATE_LIMIT, AUTH, CHALLENGE, PERMISSION, NOT_FOUND, UNSUPPORTED, NO_FORMATS, STORAGE, CERTIFICATE, ACCESS, OTHER }
 
     public static Kind kind(Throwable failure) { return kind(failure == null ? "" : failure.toString()); }
     public static Kind kind(String message) {
@@ -31,6 +31,7 @@ public final class SourceFailure {
                 || text.contains("authentication required") || text.contains("http error 401") || text.contains("401 unauthorized")
                 || text.contains("cookies have expired") || text.contains("invalid cookies") || text.contains("登录后")
                 || text.contains("会员专享")||text.contains("private video")||text.contains("members-only")) return Kind.AUTH;
+        if(text.contains("no video formats")||text.contains("no usable video"))return Kind.NO_FORMATS;
         if(text.contains("unsupported url")||text.contains("requested format")||text.contains("no video could be found")||text.contains("no video formats")||text.contains("no usable video"))return Kind.UNSUPPORTED;
         return Kind.OTHER;
     }

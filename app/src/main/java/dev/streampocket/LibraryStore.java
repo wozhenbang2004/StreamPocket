@@ -120,13 +120,17 @@ public final class LibraryStore implements Closeable {
     }
     /** Seek by the same stable ordering as the catalogue, including beyond its loaded page. */
     public long nextVideoId(long currentId,String query,List<String> sources,long collectionId,String order){
+        return adjacentVideoId(currentId,query,sources,collectionId,order,true);
+    }
+    public long adjacentVideoId(long currentId,String query,List<String> sources,long collectionId,String order,boolean forward){
         JSONObject current=video(currentId);if(current==null)return 0;
         List<String> args=new ArrayList<>();StringBuilder where=videoFilter(query,sources,collectionId,args);
-        String later="(created_at<? OR (created_at=? AND id<?))";
-        if("source".equals(order)){where.append(" AND (source COLLATE NOCASE>? OR (source COLLATE NOCASE=? AND ").append(later).append("))");args.add(current.optString("source"));args.add(current.optString("source"));}
+        String compare=forward?"<":">",later="(created_at"+compare+"? OR (created_at=? AND id"+compare+"?))";
+        if("source".equals(order)){where.append(" AND (source COLLATE NOCASE").append(forward?">":"<").append("? OR (source COLLATE NOCASE=? AND ").append(later).append("))");args.add(current.optString("source"));args.add(current.optString("source"));}
         else where.append(" AND ").append(later);
         args.add(String.valueOf(current.optLong("createdAt")));args.add(String.valueOf(current.optLong("createdAt")));args.add(String.valueOf(currentId));
-        try(Cursor c=helper.getReadableDatabase().query("video",new String[]{"id"},where.toString(),args.toArray(new String[0]),null,null,videoOrder(order),"1")){return c.moveToFirst()?c.getLong(0):0;}
+        String sort=forward?videoOrder(order):("source".equals(order)?"source COLLATE NOCASE DESC,created_at ASC,id ASC":"created_at ASC,id ASC");
+        try(Cursor c=helper.getReadableDatabase().query("video",new String[]{"id"},where.toString(),args.toArray(new String[0]),null,null,sort,"1")){return c.moveToFirst()?c.getLong(0):0;}
     }
     private static String videoOrder(String order){return "source".equals(order)?"source COLLATE NOCASE,created_at DESC,id DESC":"created_at DESC,id DESC";}
     private static StringBuilder videoFilter(String query,List<String> sources,long collectionId,List<String> args){

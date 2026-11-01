@@ -168,7 +168,8 @@ public final class Engine {
         } finally { RUNTIME_LOCK.writeLock().unlock(); }
     }
 
-    YoutubeDLRequest request(String url, String processId) throws Exception {
+    YoutubeDLRequest request(String url, String processId) throws Exception {return request(url,processId,true);}
+    YoutubeDLRequest request(String url, String processId,boolean useAccount) throws Exception {
         String normalized = normalizeUrl(url);
         YoutubeDLRequest request = new YoutubeDLRequest(normalized);
         // Some Bilibili CDN nodes reject a plain GET but accept a complete byte
@@ -192,7 +193,7 @@ public final class Engine {
         File snapshot = cookieSnapshot(processId);
         File parent = snapshot.getParentFile();
         if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException("无法创建登录凭据临时目录");
-        try { new AccountStore(app).writeSnapshot(snapshot); }
+        try { if(useAccount)new AccountStore(app).writeSnapshot(snapshot);else try(FileOutputStream empty=new FileOutputStream(snapshot)){empty.write("# Netscape HTTP Cookie File\n".getBytes(StandardCharsets.UTF_8));} }
         catch (Exception failure) { snapshot.delete(); throw failure; }
         request.addOption("--cookies", snapshot.getAbsolutePath());
         String proxy = app.getSharedPreferences("config", Context.MODE_PRIVATE).getString("proxy", "");
@@ -272,7 +273,7 @@ public final class Engine {
         String url = normalizeUrl(input);
         boolean twitter = CoreRules.isTwitterUrl(url);
         boolean signedIn = twitter && hasTwitterLoginCookie();
-        List<String> apis = twitter && !signedIn ? SourceScheduler.SHARED.twitterApis() : Collections.singletonList("");
+        List<String> apis = twitter ? (signedIn?java.util.Arrays.asList("","syndication"):SourceScheduler.SHARED.twitterApis()) : Collections.singletonList("");
         StringBuilder failures = new StringBuilder();
         for (String api : apis) {
             for (int retry = 0; retry < 2; retry++) {
@@ -284,7 +285,8 @@ public final class Engine {
                     RUNTIME_LOCK.readLock().lockInterruptibly();
                     try {
                         inspectProcess = processId;
-                        YoutubeDLRequest request = request(url, processId);
+                        boolean publicTwitter=twitter&&signedIn&&!api.isEmpty();
+                        YoutubeDLRequest request = request(url, processId,!publicTwitter);
                         if (!api.isEmpty()) request.addOption("--extractor-args", "twitter:api=" + api);
                         request.addOption("--dump-single-json");
                         request.addOption("--dump-json");
@@ -296,7 +298,7 @@ public final class Engine {
                         if (inspectCancelled || cancelled.getAsBoolean()) throw new InterruptedException("解析已取消");
                         List<Media> results = mediaFromMetadata(root, url);
                         if (results.isEmpty()) throw new IOException("源站没有返回可下载的完整视频。\n" + cleanLog(response.getErr()));
-                        for (Media media : results) media.twitterApi = api;
+                        for (Media media : results) {media.twitterApi = api;media.publicTwitter=publicTwitter;}
                         lease.outcome(null);
                         return results;
                     } catch (Exception error) {
@@ -308,6 +310,10 @@ public final class Engine {
                                 .append(reason.substring(0, Math.min(reason.length(), 3500))).append("\n\n");
                         SourceFailure.Kind kind = SourceFailure.kind(error);
                         if (SourceFailure.retryable(error) && retry == 0) continue;
+                        // A logged-in extractor can miss public formats. Try the public
+                        // endpoint once only for that error, never for auth/limits/access.
+                        if(twitter&&signedIn&&api.isEmpty()&&kind!=SourceFailure.Kind.NO_FORMATS)
+                            throw new IOException(failures.toString().trim(),error);
                         // One platform limit is shared across APIs. Do not hammer other endpoints after it.
                         if (kind == SourceFailure.Kind.RATE_LIMIT || kind == SourceFailure.Kind.AUTH
                                 || kind == SourceFailure.Kind.CHALLENGE || SourceFailure.retryable(error))
@@ -328,6 +334,11 @@ public final class Engine {
         try {
             JSONObject data = lastJsonObject(output == null ? "" : output);
             if (hasMedia(data)) return data;
+            // dump-json may contain a valid earlier entry followed by an empty
+            // playlist/card. Keep actual playable entries, not the final null.
+            JSONArray recovered=new JSONArray();
+            for(String line:(output==null?"":output).split("\\r?\\n"))try{JSONObject item=new JSONObject(line);if(hasMedia(item)&&item.optInt("playlist_index",0)>0)recovered.put(item);}catch(Exception ignored){}
+            if(recovered.length()>0)return new JSONObject().put("entries",recovered);
         } catch (Exception noMetadata) { /* The useful error belongs to stderr, not the JSON parser. */ }
         String error = cleanLog(stderr == null ? "" : stderr).trim();
         if (error.isEmpty()) error = "解析器没有返回有效视频数据。";
@@ -348,7 +359,7 @@ public final class Engine {
         return !data.isNull("url") && !data.optString("url").isEmpty() && !data.optString("id").isEmpty();
     }
 
-    private List<Media> mediaFromMetadata(JSONObject root, String url) throws Exception {
+    static List<Media> mediaFromMetadata(JSONObject root, String url) throws Exception {
         List<Media> results = new ArrayList<>();
         JSONArray entries = root.optJSONArray("entries");
         if (entries == null) {
@@ -374,14 +385,14 @@ public final class Engine {
         throw new Exception("解析器未返回可用的视频信息；请检查链接、登录状态或更新下载内核。");
     }
 
-    private Media parseMedia(JSONObject data, String source, int playlistIndex) throws Exception {
+    private static Media parseMedia(JSONObject data, String source, int playlistIndex) throws Exception {
         String live = data.optString("live_status");
         if (data.optBoolean("is_live") || "is_live".equals(live) || "is_upcoming".equals(live)) {
             throw new Exception("暂不下载直播或尚未发布的视频；请在直播结束、完整回放可用后重试。");
         }
         Media media = new Media();
         media.url = source;
-        media.playlistIndex = playlistIndex;
+        media.playlistIndex = Math.max(0,data.optInt("playlist_index",playlistIndex));
         media.id = data.optString("id", "video");
         media.title = data.optString("title", "未命名视频");
         media.uploader = data.optString("uploader", data.optString("channel", ""));
@@ -423,6 +434,7 @@ public final class Engine {
     public static final class Media {
         public String url = "", id = "", title = "", uploader = "", platform = "";
         public String twitterApi = "", thumbnail = "";
+        public boolean publicTwitter;
         public int width, height;
         public long filesize=-1;
         public boolean filesizeEstimated;
@@ -433,13 +445,13 @@ public final class Engine {
             JSONArray choices = new JSONArray(); for (Quality quality : qualities) choices.put(quality.toJson());
             return new JSONObject().put("url", url).put("id", id).put("title", title).put("uploader", uploader)
                     .put("thumbnail",thumbnail).put("width",width).put("height",height).put("filesize",filesize).put("filesizeEstimated",filesizeEstimated)
-                    .put("platform", platform).put("duration", duration).put("playlistIndex", playlistIndex).put("twitterApi", twitterApi).put("qualities", choices);
+                    .put("platform", platform).put("duration", duration).put("playlistIndex", playlistIndex).put("twitterApi", twitterApi).put("publicTwitter",publicTwitter).put("qualities", choices);
         }
         public static Media fromJson(JSONObject json) {
             Media media = new Media(); media.url = json.optString("url"); media.id = json.optString("id");
             media.title = json.optString("title"); media.uploader = json.optString("uploader"); media.platform = json.optString("platform");
             media.duration = json.optLong("duration"); media.playlistIndex = json.optInt("playlistIndex");
-            media.twitterApi = json.optString("twitterApi", "");
+            media.twitterApi = json.optString("twitterApi", "");media.publicTwitter=json.optBoolean("publicTwitter",false);
             media.thumbnail=json.optString("thumbnail", ""); media.width=Math.max(0,json.optInt("width",0));media.height=Math.max(0,json.optInt("height",0));
             media.filesize=json.optLong("filesize",-1);media.filesizeEstimated=json.optBoolean("filesizeEstimated");
             JSONArray choices = json.optJSONArray("qualities"); if (choices != null) for (int i = 0; i < choices.length(); i++) {

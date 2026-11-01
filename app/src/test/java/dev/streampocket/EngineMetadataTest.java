@@ -38,6 +38,17 @@ public final class EngineMetadataTest {
         JSONObject root = Engine.metadataFromResponse("{\"id\":\"post\",\"entries\":[{\"id\":\"clip\",\"url\":\"https://example.invalid/clip.mp4\"},null]}\n", "ERROR: second item unavailable", 1);
         assertEquals("post",root.getString("id"));
     }
+    @Test public void retainsEarlierPlayableDumpWhenLastCardHasNoFormats() throws Exception {
+        JSONObject root=Engine.metadataFromResponse("{\"id\":\"clip\",\"playlist_index\":2,\"url\":\"https://example.org/video.mp4\"}\n{\"entries\":[null]}\n","ERROR: [twitter] card: No video formats found!",1);
+        assertEquals("clip",root.getJSONArray("entries").getJSONObject(0).getString("id"));
+        assertEquals(2,root.getJSONArray("entries").getJSONObject(0).getInt("playlist_index"));
+        assertEquals(2,Engine.mediaFromMetadata(root,"https://x.com/i/status/123").get(0).playlistIndex);
+    }
+    @Test public void noFormatsExplainsUncertaintyWithoutCallingItANetworkFailure(){
+        java.io.IOException error=new java.io.IOException("ERROR: [twitter] 2116424978870456755: No video formats found!");
+        assertEquals(SourceFailure.Kind.NO_FORMATS,SourceFailure.kind(error));assertFalse(SourceFailure.retryable(error));assertTrue(CoreRules.inspectionMessage(error).contains("不能确定是代理故障"));
+        assertEquals(SourceFailure.Kind.TIMEOUT,SourceFailure.kind("ERROR: connection timed out"));
+    }
     @Test public void redactsCredentialsInPreservedParserError() throws Exception {
         try {
             Engine.metadataFromResponse("null", "Cookie: auth_token=private-value\nHTTP 403", 1);

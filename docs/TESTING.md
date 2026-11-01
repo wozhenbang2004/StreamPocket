@@ -50,3 +50,9 @@ Robolectric 使用隔离文件、PackageManager / DownloadManager fixture 与原
 当前渲染证据：[三列与缩小图标](design/assets/media-experience-20261101/three-columns.png)、[保留的失败记录与重试](design/assets/media-experience-20261101/failed-link.png)、[播放器控制层](design/assets/media-experience-20261101/player-controls.png)。封面色块和播放器时钟均为明确的离线夹具，不冒充真实视频解码。下滑测试执行真实触摸分发并核对数据库中的上一条进度、下一条标记、跨分页/筛选顺序、取消、后台与重建；手机手指操作、硬件解码、真实源站和正式签名覆盖安装仍未验证。需求与交互边界见 [MEDIA_EXPERIENCE](MEDIA_EXPERIENCE.md)。
 
 0.3.2 发行构建：版本递增至 22 后，`testDebugUnitTest lintDebug assembleRelease` exit 0（258 项、0 失败/错误/跳过，Lint 无 Error/Fatal）。成品为非 debuggable、`dev.streampocket.localtest`、minSdk 24、ARM64；zipalign 16KB 检查和 APK v2/v3 签名验证通过，证书 SHA-256 与 0.3.1 更新清单一致。固定名与带版本号的 APK 字节相同，清单使用签名后成品的大小和 SHA-256。成品身份核验不代替设备覆盖安装；本轮未操作用户手机。
+
+0.3.3：在 3fbc5a3 原 PocketEditText / PlayerActivity 上，两项新增回归先复现失败：触摸聚焦/IME 输入连接、控制层可见时画面偏右位置下滑下一条。修复后整套 262 项测试、Lint、Debug 和 Release 构建通过；独立审查修正手指抬起连续性、缩放后单击、音频焦点、重播、X 媒体序号与分屏返回进度后，再对 Player022UiTest / SplitPlayerUiTest 的 15 项重点用例复验。
+
+重点用例使用真实 MotionEvent / View 分发（两指、多指抬起、放大后点按与拖动、短滑和取消）、IME commitText、原数据库/稳定排序、两路独立播放器时钟、音频焦点瞬失/duck、结束重播、Activity result 发送与接收。接收测试明确让数据库保留旧 checkpoint，再验证精确 result 位置获胜；不是已完成手机端双IO压力测试。
+
+实际查看当前 412dp 原生布局：[上下分屏](design/assets/player-033/split-portrait.jpg)、[左右并列](design/assets/player-033/split-side-by-side.jpg)。图中是获许可静态参考帧，明确标“布局夹具”，不是双路硬件解码证据。真机手指操作、设备双解码上限、截图中 X 链接与代理环境、OEM 覆盖安装未执行；安装包的签名和身份核验单独记录于 RELEASE_STATUS。

@@ -1,9 +1,9 @@
 # 安装与版本
 
-当前版本 **0.3.2 / versionCode 22**，应用名“拾流”。支持 Android 7.0+ / ARM64，包名为 `dev.streampocket.localtest`，沿用既有安装身份。
+当前版本 **0.3.3 / versionCode 23**，应用名“拾流”。支持 Android 7.0+ / ARM64，包名为 `dev.streampocket.localtest`，沿用既有安装身份。
 
-- [安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.2/StreamPocket-arm64-v8a.apk)
-- [版本更新内容](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.2)
+- [安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.3/StreamPocket-arm64-v8a.apk)
+- [版本更新内容](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.3)
 - [应用内更新](APP_UPDATES.md)
 - [第三方对应源码](THIRD_PARTY_SOURCES.md)
 
@@ -18,3 +18,10 @@
 发行检查：版本递增至 22；恢复原签名并与 0.3.1 清单中的公开证书摘要核对；构建非 debuggable Release；发布固定名称 APK 和更新清单；发布后回读 `/releases/latest`，校验远端清单与安装包。测试与设备验证边界见 [TESTING](TESTING.md)。
 
 本次签名成品：65,204,674 字节，SHA-256 `28b73ecc3f3a7607a3264e4c67e4cff70d5b4cf45b5d363d8b07d5fbc8aac42c`；证书 SHA-256 `67d2d8e285c629f3c9076a9f00f12d4a79c9139d452aa2b876dae803df8373fd`。带版本号与应用内更新 APK 使用相同字节；更新清单单独作为 Release 资产分发，不写入 APK。
+
+
+## 0.3.3 追加范围
+
+沿用用户对本项目“release 推送更新”的授权，处理同日实机反馈：输入聚焦、普通画面上下刷视频、双指缩放及条件复原、双视频分屏与 X 无画质的有限恢复。保留原包名与签名，递增至 versionCode 23。功能、手势和资源边界见 MEDIA_EXPERIENCE；验证记录见 TESTING。
+
+0.3.3 成品：65216962 字节，SHA-256 `149e809d2abd793df6b5be39ab58cda330ebee15047110ecc6c0a5953358ef01`；证书 SHA-256 `67d2d8e285c629f3c9076a9f00f12d4a79c9139d452aa2b876dae803df8373fd`，与 0.3.2 一致。非 debuggable，包名/版本/ARM64/minSdk、zipalign 16KB 与 APK 签名校验通过。最后修订后播放器/分屏15项重点用例、Lint及Release构建 exit 0。

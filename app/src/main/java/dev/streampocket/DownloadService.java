@@ -200,7 +200,7 @@ public final class DownloadService extends Service {
             File root = getExternalFilesDir("downloads");
             if (root == null) root = new File(getFilesDir(), "downloads");
             File directory = new File(root, id);
-            YoutubeDLRequest request = engine.request(media.url, "download-" + id);
+            YoutubeDLRequest request = engine.request(media.url, "download-" + id,!media.publicTwitter);
             boolean preservingNative = DownloadTuning.hasNativeResume(directory);
             String transferMode = engine.configureDownload(request, media.url, preservingNative, "download-" + id);
             TaskStore.update(this, id, new JSONObject().put("transferReason", preservingNative

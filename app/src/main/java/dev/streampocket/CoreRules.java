@@ -89,6 +89,8 @@ public final class CoreRules {
     }
 
     public static String inspectionMessage(Throwable error) {
+        if(SourceFailure.kind(error)==SourceFailure.Kind.NO_FORMATS)
+            return "源站返回了帖子信息，但没有提供可下载的视频画质。这条错误不能确定是代理故障。请先在原平台打开同一链接；能播放时可更新解析器或检查登录状态后重试。失败链接已保留。";
         if (SourceFailure.kind(error) != SourceFailure.Kind.OTHER) return userMessage(error);
         String text = cleanLog(error == null ? "" : error.toString()).toLowerCase(Locale.ROOT);
         if (text.contains("certificate") || text.contains("ssl")) return "解析连接的证书验证失败，请查看错误详情。视频尚未开始下载。";
@@ -113,6 +115,7 @@ public final class CoreRules {
         if (kind == SourceFailure.Kind.TIMEOUT) return "连接源站超时，暂时没有收到响应。请检查网络或代理后重试，链接记录已保留。";
         if (kind == SourceFailure.Kind.NETWORK) return lower.contains("resolve host")||lower.contains("name resolution")||lower.contains("unknownhost")?"无法解析网站地址。请检查网络、DNS 或代理配置后重试，链接记录已保留。":"无法连接源站，或连接已中断。请检查网络、代理和源站是否可访问，再重试。";
         if (kind == SourceFailure.Kind.AUTH) return "源站要求登录或当前账号权限不足。请在账号管理中检查此平台的登录状态。";
+        if(kind==SourceFailure.Kind.NO_FORMATS)return "源站没有提供可用视频画质。请在原平台确认能播放，再更新解析器或检查登录状态后重新解析。";
         if(kind==SourceFailure.Kind.UNSUPPORTED)return lower.contains("requested format")?"所选画质暂时不可用。请重新解析链接，再选择其他可用画质。":"暂时无法从这个链接取得视频。请复制具体视频页面的链接，或更新解析器后重新解析。";
         if (lower.contains("ffmpeg") || lower.contains("dlopen") || lower.contains("libc++") || lower.contains("native")) return "视频处理组件暂时无法运行。请在设置中检查解析器与组件状态，更新后重试；详情保留了原始错误。";
         if (lower.contains("captcha") || lower.contains("verification") || lower.contains("verify") || lower.contains("验证")) return "平台要求验证。请在账号管理中正常完成网页登录与验证，保存后重试。抖音目前属于实验性支持。";

@@ -20,7 +20,9 @@ public final class PocketEditText extends EditText {
     private int originalHeight=Integer.MIN_VALUE,errorHeight;
     private final TextPaint errorPaint=new TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG);
     public PocketEditText(Context context){
-        super(context,null,0);setTextSize(14);setPadding(dp(12),dp(12),dp(12),dp(12));setMinHeight(dp(48));skin(UiTheme.get(context));
+        super(context,null,android.R.attr.editTextStyle);
+        setFocusable(true);setFocusableInTouchMode(true);setCursorVisible(true);setShowSoftInputOnFocus(true);
+        setTextSize(14);setPadding(dp(12),dp(12),dp(12),dp(12));setMinHeight(dp(48));skin(UiTheme.get(context));
         errorPaint.setTextSize(12*getResources().getDisplayMetrics().scaledDensity);
     }
     void dark(){skin(UiTheme.darkPalette());}

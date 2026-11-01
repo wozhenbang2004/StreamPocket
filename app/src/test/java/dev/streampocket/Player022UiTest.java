@@ -165,10 +165,10 @@ public final class Player022UiTest {
             assertTrue(s.clock.position>50000 && s.clock.position<70000);
             assertEquals(View.GONE,field(s.a,"previewBubble",View.class).getVisibility());
             s.clock.volume=.4f;
-            swipe(surface,.85f,.75f,.85f,.25f);assertEquals(.4f,s.clock.volume,.001f);
+            swipe(surface,.95f,.75f,.95f,.25f);assertEquals(.4f,s.clock.volume,.001f);
             app.getSharedPreferences("config",0).edit().putBoolean("player_gestures",true).commit();
-            swipe(surface,.85f,.75f,.85f,.25f);assertTrue(s.clock.volume>.4f && s.clock.volume<=1f);
-            swipe(surface,.15f,.75f,.15f,.25f);assertTrue(s.a.getWindow().getAttributes().screenBrightness>0f);
+            swipe(surface,.95f,.75f,.95f,.25f);assertTrue(s.clock.volume>.4f && s.clock.volume<=1f);
+            swipe(surface,.05f,.75f,.05f,.25f);assertTrue(s.a.getWindow().getAttributes().screenBrightness>0f);
             assertEquals("Window brightness must not rewrite the system setting",127,Settings.System.getInt(app.getContentResolver(),Settings.System.SCREEN_BRIGHTNESS));
         }
     }
@@ -192,19 +192,48 @@ public final class Player022UiTest {
             capture(a,"04-private-jpeg-cover-awaiting-real-video-frame-fixture");
         } finally {c.destroy();idle();}
     }
-    @Test public void centerDragMovesSheetBeforeReleaseAndCancellationClosesThePartialReveal() throws Exception {
-        try(Session s=open()) {
-            PlayerView surface=field(s.a,"playerView",PlayerView.class);surface.hideController();idle();
-            long down=SystemClock.uptimeMillis();dispatch(surface,MotionEvent.ACTION_DOWN,.5f,.75f,down);
-            dispatch(surface,MotionEvent.ACTION_MOVE,.5f,.68f,down);layout(s.a);
-            View overlay=field(s.a,"sheetOverlay",View.class),sheet=field(s.a,"sheetBody",View.class);
-            assertEquals(View.VISIBLE,overlay.getVisibility());assertTrue("Panel follows MOVE, not only UP",sheet.getTranslationY()>0);
-            float partial=sheet.getTranslationY();dispatch(surface,MotionEvent.ACTION_MOVE,.5f,.58f,down);
-            assertTrue("Further upward movement reveals more sheet",sheet.getTranslationY()<partial);
-            dispatch(surface,MotionEvent.ACTION_CANCEL,.5f,.58f,down);idle();assertEquals(View.GONE,overlay.getVisibility());
-            dispatch(surface,MotionEvent.ACTION_DOWN,.5f,.75f,down);dispatch(surface,MotionEvent.ACTION_MOVE,.5f,.30f,down);dispatch(surface,MotionEvent.ACTION_UP,.5f,.30f,down);idle();layout(s.a);
-            assertEquals(View.VISIBLE,overlay.getVisibility());assertEquals(0f,sheet.getTranslationY(),.01f);
+    @Test public void offCenterSwipeWorksWithVisibleControlsAndUpReturnsToPrevious() throws Exception {
+        long next;File other=new File(app.getCacheDir(),"off-center-fixture.mp4");try(FileOutputStream out=new FileOutputStream(other)){out.write(new byte[]{1,2,3});}
+        try(LibraryStore db=new LibraryStore(app)){next=db.upsertCompletedDownload(new JSONObject().put("id","off-center").put("status","completed").put("title","第二个").put("uri",android.net.Uri.fromFile(other)).put("mime","video/mp4").put("completedAt",1));}
+        try(Session session=open()){
+            PlayerView view=field(session.a,"playerView",PlayerView.class);view.showController();idle();
+            swipe(view,.78f,.25f,.78f,.58f);await(session.a);assertEquals("The whole canvas must work, even with controls visible",next,field(session.a,"videoId",Long.class).longValue());
+            swipe(view,.22f,.65f,.22f,.30f);await(session.a);assertEquals(videoId,field(session.a,"videoId",Long.class).longValue());
+            assertEquals(View.GONE,field(session.a,"sheetOverlay",View.class).getVisibility());
         }
+    }
+    @Test public void pinchZoomDoesNotSeekOrSwitchAndResetAppearsOnlyWhenMagnified() throws Exception {
+        try(Session session=open()){
+            PlayerView view=field(session.a,"playerView",PlayerView.class);view.hideController();
+            Button reset=field(session.a,"resetZoom",Button.class);assertEquals(View.GONE,reset.getVisibility());
+            long down=SystemClock.uptimeMillis();dispatch(view,MotionEvent.ACTION_DOWN,.4f,.5f,down);
+            multi(view,MotionEvent.ACTION_POINTER_DOWN|1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT,.4f,.6f,down);
+            for(int n=0;n<5;n++)multi(view,MotionEvent.ACTION_MOVE,.4f-.06f*n,.6f+.06f*n,down);
+            float beforeLift=view.getVideoSurfaceView().getTranslationX();
+            multi(view,MotionEvent.ACTION_POINTER_UP,.16f,.84f,down);
+            dispatch(view,MotionEvent.ACTION_MOVE,.85f,.5f,down);
+            assertTrue("Lifting pointer zero must not jump by the finger separation",Math.abs(view.getVideoSurfaceView().getTranslationX()-beforeLift)<view.getWidth()*.05f);
+            dispatch(view,MotionEvent.ACTION_UP,.85f,.5f,down);await(session.a);
+            assertEquals(videoId,field(session.a,"videoId",Long.class).longValue());assertEquals(34250,session.clock.position);
+            assertEquals(View.VISIBLE,reset.getVisibility());assertTrue(view.getVideoSurfaceView().getScaleX()>1f);
+            view.hideController();long tap=SystemClock.uptimeMillis();dispatch(view,MotionEvent.ACTION_DOWN,.5f,.4f,tap);dispatch(view,MotionEvent.ACTION_UP,.5f,.4f,tap);Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400));assertTrue("Magnifying must not hide playback controls permanently",view.isControllerFullyVisible());view.hideController();
+            swipe(view,.5f,.3f,.5f,.75f);await(session.a);assertEquals("A zoomed drag pans instead of changing video",videoId,field(session.a,"videoId",Long.class).longValue());
+            reset.performClick();assertEquals(1f,view.getVideoSurfaceView().getScaleX(),.001f);assertEquals(View.GONE,reset.getVisibility());
+            view.showController();assertTrue(view.findViewById(R.id.sp_player_more).performClick());assertEquals(View.VISIBLE,field(session.a,"sheetOverlay",View.class).getVisibility());
+        }
+    }
+    @Test public void splitResultPositionWinsOverTheStaleDatabaseCheckpoint() throws Exception {
+        try(Session session=open()){
+            session.c.pause().stop();await(session.a);
+            try(LibraryStore db=new LibraryStore(app)){assertEquals(34250,db.video(videoId).optLong("playbackMs"));}
+            session.a.onActivityResult(74,android.app.Activity.RESULT_OK,new Intent().putExtra("video_id",videoId).putExtra("position_ms",67500L).putExtra("should_play",true));await(session.a);
+            assertEquals(67500,field(session.a,"positionMs",Long.class).longValue());assertTrue(field(session.a,"restoredPosition",Boolean.class));assertFalse(field(session.a,"splitReturning",Boolean.class));
+        }
+    }
+    private static void multi(PlayerView view,int action,float left,float right,long down){
+        MotionEvent.PointerProperties[] props={new MotionEvent.PointerProperties(),new MotionEvent.PointerProperties()};MotionEvent.PointerCoords[] coords={new MotionEvent.PointerCoords(),new MotionEvent.PointerCoords()};
+        for(int n=0;n<2;n++){props[n].id=n;props[n].toolType=MotionEvent.TOOL_TYPE_FINGER;coords[n].x=(n==0?left:right)*view.getWidth();coords[n].y=.5f*view.getHeight();coords[n].pressure=1;coords[n].size=1;}
+        MotionEvent e=MotionEvent.obtain(down,SystemClock.uptimeMillis()+20,action,2,props,coords,0,0,1,1,0,0,android.view.InputDevice.SOURCE_TOUCHSCREEN,0);view.dispatchTouchEvent(e);e.recycle();idle();
     }
     @Test public void sheetHandleTracksReversalCancelAndCloseWithoutBreakingBackPriority() throws Exception {
         try(Session s=open()) {
@@ -261,15 +290,15 @@ public final class Player022UiTest {
     private static Object invoke(Object owner,String name,Class<?>[] types,Object... args) throws Exception {Method m=owner.getClass().getDeclaredMethod(name,types);m.setAccessible(true);return m.invoke(owner,args);}
     private static TextView find(View view,String text){if(view instanceof TextView&&text.contentEquals(((TextView)view).getText()))return (TextView)view;if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++){TextView result=find(((ViewGroup)view).getChildAt(i),text);if(result!=null)return result;}return null;}
     private static final class Session implements AutoCloseable {final ActivityController<PlayerActivity> c;final PlayerActivity a;final Clock clock;Session(ActivityController<PlayerActivity> c,PlayerActivity a,Clock clock){this.c=c;this.a=a;this.clock=clock;}@Override public void close(){c.pause().stop().destroy();idle();}}
-    private static final class Clock implements InvocationHandler {
-        long position=34250;boolean play,scrub;float volume=1f;
+    static final class Clock implements InvocationHandler {
+        long position=34250;boolean play,scrub;int playbackState=Player.STATE_READY;float volume=1f;
         ExoPlayer proxy(){return (ExoPlayer)Proxy.newProxyInstance(ExoPlayer.class.getClassLoader(),new Class<?>[]{ExoPlayer.class},this);}
         @Override public Object invoke(Object proxy,Method method,Object[] args){
             switch(method.getName()){
                 case "getApplicationLooper":return Looper.getMainLooper();case "getAvailableCommands":return Player.Commands.EMPTY;case "isCommandAvailable":return false;
                 case "isScrubbingModeEnabled":return scrub;case "setScrubbingModeEnabled":scrub=(Boolean)args[0];return null;
                 case "addListener":case "removeListener":case "setImageOutput":return null;
-                case "getPlaybackState":return Player.STATE_READY;case "getPlayerError":return null;case "getCurrentTimeline":return Timeline.EMPTY;case "getCurrentTracks":return Tracks.EMPTY;
+                case "getPlaybackState":return playbackState;case "getPlayerError":return null;case "getCurrentTimeline":return Timeline.EMPTY;case "getCurrentTracks":return Tracks.EMPTY;
                 case "getMediaMetadata":case "getPlaylistMetadata":return MediaMetadata.EMPTY;case "getVideoSize":return VideoSize.UNKNOWN;case "getCurrentCues":return CueGroup.EMPTY_TIME_ZERO;
                 case "getPlaybackParameters":return PlaybackParameters.DEFAULT;case "getPlaybackSuppressionReason":case "getRepeatMode":case "getCurrentMediaItemIndex":return 0;
                 case "getShuffleModeEnabled":case "isPlayingAd":return false;case "getCurrentMediaItem":return null;
