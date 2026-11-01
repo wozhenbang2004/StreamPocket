@@ -81,7 +81,7 @@ public final class LibraryPlaybackUiTest {
     @Test public void thumbnailAndTitleTouchesOpenPlayerInBothLayouts() throws Exception {
         open();GridView grid=field(library,"grid",GridView.class);
         for(boolean list:new boolean[]{false,true}){
-            if(list){described(library,"切换详细列表").performClick();layout();}
+            if(list){described(library,"选择视频库视图").performClick();((PocketDialog)ShadowDialog.getLatestDialog()).getListView().performItemClick(null,2,2);layout();}
             View cell=grid.getChildAt(0);ImageView menu=field(cell.getTag(),"menu",ImageView.class);
             assertTrue("More remains a separate keyboard-focusable action",menu.isFocusable());
             tap(field(cell.getTag(),"cover",ImageView.class));assertPlaybackIntent();
@@ -97,7 +97,7 @@ public final class LibraryPlaybackUiTest {
         Shadows.shadowOf(Looper.getMainLooper()).idle();layout();
         GridView grid=field(library,"grid",GridView.class);
         for(boolean list:new boolean[]{false,true}){
-            if(list){described(library,"切换详细列表").performClick();layout();}
+            if(list){described(library,"选择视频库视图").performClick();((PocketDialog)ShadowDialog.getLatestDialog()).getListView().performItemClick(null,2,2);layout();}
             View cell=grid.getChildAt(0);ImageView cover=field(cell.getTag(),"cover",ImageView.class);assertNotNull(cover.getDrawable());
             tap(cover);Intent intent=Shadows.shadowOf(activity).getNextStartedActivity();assertNotNull(intent);
             assertEquals(videoId,intent.getLongExtra("video_id",0));
@@ -109,7 +109,7 @@ public final class LibraryPlaybackUiTest {
     @Test public void overflowAndLongPressSelectionDoNotAccidentallyPlay() throws Exception {
         open();GridView grid=field(library,"grid",GridView.class);
         for(boolean list:new boolean[]{false,true}){
-            if(list){described(library,"切换详细列表").performClick();layout();}
+            if(list){described(library,"选择视频库视图").performClick();((PocketDialog)ShadowDialog.getLatestDialog()).getListView().performItemClick(null,2,2);layout();}
             View cell=grid.getChildAt(0);tap(field(cell.getTag(),"menu",ImageView.class));
             PocketDialog menu=(PocketDialog)ShadowDialog.getLatestDialog();assertNotNull(menu);assertTrue(menu.isShowing());assertNull(Shadows.shadowOf(activity).getNextStartedActivity());menu.dismiss();
             View cover=field(cell.getTag(),"cover",ImageView.class);Rect rect=bounds(library,cover);long time=SystemClock.uptimeMillis();
@@ -166,7 +166,7 @@ public final class LibraryPlaybackUiTest {
         open();GridView grid=field(library,"grid",GridView.class);assertEquals(1,grid.getAdapter().getCount());
         tap(field(grid.getChildAt(0).getTag(),"title",TextView.class));assertPlaybackIntent();
         ActivityController<PlayerActivity> player=Robolectric.buildActivity(PlayerActivity.class,new Intent(app,PlayerActivity.class).putExtra("video_id",videoId));
-        try{PlayerActivity view=player.create().get();awaitOwner(view);assertEquals(uri,field(view,"mediaUri",Uri.class));assertTrue(field(view,"missing",Boolean.class));assertNull(field(view,"player",Object.class));assertTrue(field(view,"status",TextView.class).getText().toString().contains("撤销访问"));assertEquals(View.VISIBLE,field(view,"retryButton",View.class).getVisibility());}
+        try{PlayerActivity view=player.create().get();awaitOwner(view);assertEquals(uri,field(view,"mediaUri",Uri.class));assertTrue(field(view,"missing",Boolean.class));assertNull(field(view,"player",Object.class));assertTrue(field(view,"status",TextView.class).getText().toString().contains("权限"));assertEquals(View.VISIBLE,field(view,"retryButton",View.class).getVisibility());}
         finally{player.destroy();}
         try(LibraryStore store=new LibraryStore(app)){assertEquals(1,store.markers(videoId).size());}
     }
@@ -187,7 +187,7 @@ public final class LibraryPlaybackUiTest {
     private static void tapRoot(ViewGroup root,View target){Rect rect=bounds(root,target);long time=SystemClock.uptimeMillis();for(int action:new int[]{MotionEvent.ACTION_DOWN,MotionEvent.ACTION_UP}){MotionEvent e=MotionEvent.obtain(time,SystemClock.uptimeMillis(),action,rect.centerX(),rect.centerY(),0);root.dispatchTouchEvent(e);e.recycle();}Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(150));}
     private static void layoutRoot(View root,int width,int height){root.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY));root.layout(0,0,width,height);Shadows.shadowOf(Looper.getMainLooper()).idle();}
 
-    private void assertPlaybackIntent(){Intent intent=Shadows.shadowOf(activity).getNextStartedActivity();assertNotNull("A normal cover/title touch must launch playback",intent);assertEquals(PlayerActivity.class.getName(),intent.getComponent().getClassName());assertEquals(activity.getPackageName(),intent.getComponent().getPackageName());assertEquals(videoId,intent.getLongExtra("video_id",0));assertNull(Shadows.shadowOf(activity).getNextStartedActivity());}
+    private void assertPlaybackIntent(){Intent intent=Shadows.shadowOf(activity).getNextStartedActivity();assertNotNull("A normal cover/title touch must launch playback",intent);assertEquals(PlayerActivity.class.getName(),intent.getComponent().getClassName());assertEquals(activity.getPackageName(),intent.getComponent().getPackageName());assertEquals(videoId,intent.getLongExtra("video_id",0));assertNotNull(intent.getStringExtra("library_order"));assertNotNull(intent.getStringArrayListExtra("library_sources"));assertNull(Shadows.shadowOf(activity).getNextStartedActivity());}
     private void open() throws Exception {library=new VideoLibraryView(activity);activity.setContentView(library);library.refresh();await();}
     private void await() throws Exception {ExecutorService io=field(library,"io",ExecutorService.class);for(int i=0;i<8;i++){io.submit(()->{}).get(5,TimeUnit.SECONDS);Shadows.shadowOf(Looper.getMainLooper()).idle();if(!field(library,"loading",Boolean.class))break;}layout();}
     private void layout(){int w=dp(412),h=dp(780);library.measure(View.MeasureSpec.makeMeasureSpec(w,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(h,View.MeasureSpec.EXACTLY));library.layout(0,0,w,h);Shadows.shadowOf(Looper.getMainLooper()).idle();}

@@ -44,3 +44,7 @@ Robolectric 使用隔离文件、PackageManager / DownloadManager fixture 与原
 2026-11-01 链接入口体验修订：`testDebugUnitTest lintDebug assembleDebug` 全部 exit 0，249 项测试通过，Lint 无 Error/Fatal。`BatchDownloadUiTest` 的 15 项检查覆盖原有队列行为，以及剪贴板预览、多选/全选/清空、选空禁用、返回不解析、已处理不重复、未处理回前台恢复、手动粘贴保留草稿、多条剪贴板、无效输入、结果收起和 320dp 小屏深色面板。新增的粘贴保留草稿、无效输入禁用两项检查，在 `849a8c8` 原 MainActivity 上均先复现失败，再在当前实现通过。
 
 实际查看了当前原生 View 渲染：[剪贴板选择](design/assets/link-intake-20261101/clipboard-review.png)、[小屏深色与 100 条链接](design/assets/link-intake-20261101/clipboard-small-dark.png)、[结果优先与继续添加](design/assets/link-intake-20261101/ready.png)。它们使用明确的离线样例，灰色封面为未提供缩略图的占位状态；不代表源站联调、真机输入法/手势或硬件解码通过。本轮构建为开发验证包，未发布新的正式安装更新。
+
+同日视频浏览与错误恢复批次：`testDebugUnitTest lintDebug assembleDebug` exit 0，258 项测试、0 失败/错误/跳过，Lint 无 Error/Fatal。在原 `c8b5a8f` 的 VideoLibraryView / PlayerActivity 上，三列选择和下滑切换两条新增旅程均先复现未满足；当前实现通过。定点检查另发现 Drawable 设置覆盖图案内边距，已通过实际 View padding 与命中尺寸断言修正。
+
+当前渲染证据：[三列与缩小图标](design/assets/media-experience-20261101/three-columns.png)、[保留的失败记录与重试](design/assets/media-experience-20261101/failed-link.png)、[播放器控制层](design/assets/media-experience-20261101/player-controls.png)。封面色块和播放器时钟均为明确的离线夹具，不冒充真实视频解码。下滑测试执行真实触摸分发并核对数据库中的上一条进度、下一条标记、跨分页/筛选顺序、取消、后台与重建；手机手指操作、硬件解码、真实源站和正式签名覆盖安装仍未验证。需求与交互边界见 [MEDIA_EXPERIENCE](MEDIA_EXPERIENCE.md)。

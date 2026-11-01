@@ -94,27 +94,32 @@ public final class CoreRules {
         if (text.contains("certificate") || text.contains("ssl")) return "解析连接的证书验证失败，请查看错误详情。视频尚未开始下载。";
         if (text.contains("no video could be found in this tweet") || text.contains("tweet is unavailable") || text.contains("tombstone"))
             return "X 没有向当前访问状态返回此帖的视频。帖子可能受限或已失效；如在 X 中能播放，可在设置的账号管理中登录后重试。";
-        if (text.contains("requested format") || text.contains("unsupported url")) return "这个链接暂时无法解析，请查看错误详情。";
+        if(text.contains("没有返回可用视频")||text.contains("no video"))return "源站没有返回可用视频。请确认复制的是具体视频页面，并在原平台检查内容是否仍能播放。链接记录已保留，可重新解析。";
         String message = userMessage(error);
-        if (message.startsWith("下载未完成")) return "解析失败，尚未开始下载。点击下方查看具体错误。";
+        if (message.startsWith("操作未完成")) return "暂时未能解析出视频。链接已留在失败记录，可重新解析；错误详情可查看或复制。";
         return message;
     }
 
     public static String userMessage(Throwable error) {
         String text = cleanLog(error == null ? "" : error.toString());
         String lower = text.toLowerCase(Locale.ROOT);
-        if (lower.contains("no space") || lower.contains("enospc")) return "手机存储空间不足。腾出空间后可重试，临时文件会保留。";
-        if (lower.contains("ffmpeg") || lower.contains("dlopen") || lower.contains("libc++") || lower.contains("native")) return "视频合并组件无法运行，可能与本机系统或原生库兼容性有关。请查看详情。";
         SourceFailure.Kind kind = SourceFailure.kind(error);
+        if(kind==SourceFailure.Kind.STORAGE)return "手机存储空间不足。请腾出空间后重试，已有任务记录会保留。";
+        if(kind==SourceFailure.Kind.PERMISSION)return "没有读取或保存文件的权限。请重新授予文件访问权限；来自其他应用的文件可重新选择或导入后重试。";
+        if(kind==SourceFailure.Kind.NOT_FOUND)return lower.contains("filenotfound")||lower.contains("no such file")||lower.contains("file does not exist")?"找不到原文件，可能已被移动或删除。请恢复文件或重新下载，已有记录仍保留。":"找不到链接对应的内容。请在原平台确认内容仍有效，再重新复制链接并解析。";
+        if(kind==SourceFailure.Kind.CERTIFICATE)return "无法验证网站的安全证书。请检查手机时间、网络或代理配置后重试。";
+        if(kind==SourceFailure.Kind.ACCESS)return "源站拒绝访问此内容（403）。请先在原平台确认能否观看，再检查地区、账号权限或代理配置后重试。";
         if (kind == SourceFailure.Kind.RATE_LIMIT) return "平台请求过于频繁，已进入冷却。稍后重试，登录状态会保留。";
-        if (kind == SourceFailure.Kind.TIMEOUT) return "连接源站超时。请检查网络与代理后重试；这不代表登录已失效。";
-        if (kind == SourceFailure.Kind.NETWORK) return "连接源站失败。请检查网络与代理，稍后重试；登录状态会保留。";
+        if (kind == SourceFailure.Kind.TIMEOUT) return "连接源站超时，暂时没有收到响应。请检查网络或代理后重试，链接记录已保留。";
+        if (kind == SourceFailure.Kind.NETWORK) return lower.contains("resolve host")||lower.contains("name resolution")||lower.contains("unknownhost")?"无法解析网站地址。请检查网络、DNS 或代理配置后重试，链接记录已保留。":"无法连接源站，或连接已中断。请检查网络、代理和源站是否可访问，再重试。";
         if (kind == SourceFailure.Kind.AUTH) return "源站要求登录或当前账号权限不足。请在账号管理中检查此平台的登录状态。";
+        if(kind==SourceFailure.Kind.UNSUPPORTED)return lower.contains("requested format")?"所选画质暂时不可用。请重新解析链接，再选择其他可用画质。":"暂时无法从这个链接取得视频。请复制具体视频页面的链接，或更新解析器后重新解析。";
+        if (lower.contains("ffmpeg") || lower.contains("dlopen") || lower.contains("libc++") || lower.contains("native")) return "视频处理组件暂时无法运行。请在设置中检查解析器与组件状态，更新后重试；详情保留了原始错误。";
         if (lower.contains("captcha") || lower.contains("verification") || lower.contains("verify") || lower.contains("验证")) return "平台要求验证。请在账号管理中正常完成网页登录与验证，保存后重试。抖音目前属于实验性支持。";
         if (lower.contains("fresh cookies")) return "未能获取视频详情，可能与会话或解析接口有关。可更新解析器，或在账号管理中重新登录并保存后重试。";
         if (lower.contains("unsupported url") || lower.contains("no video") || lower.contains("not available") || lower.contains("requested format")) return "当前链接或所选画质暂不可下载。请尝试最高可用画质，或更新内核后重试。";
-        if (lower.contains("timed out") || lower.contains("timeout") || lower.contains("network") || lower.contains("unable to download") || lower.contains("403") || lower.contains("429")) return "网络连接或平台访问失败。请检查网络与代理，稍后重试；频繁请求也可能触发平台限制。";
-        return "下载未完成，请查看详情并重试。已下载的临时数据会保留。";
+        if (lower.contains("network") || lower.contains("unable to download")) return "网络或源站暂时不可用。请确认原链接能正常访问，再检查网络或代理后重试。";
+        return "操作未完成，已有记录保留。可稍后重试，或查看并复制错误详情。";
     }
 
 }

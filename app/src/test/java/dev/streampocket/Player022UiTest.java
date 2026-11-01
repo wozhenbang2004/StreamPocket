@@ -80,6 +80,27 @@ public final class Player022UiTest {
             assertEquals(AspectRatioFrameLayout.RESIZE_MODE_FIT,surface.getResizeMode());
         }
     }
+    @Test public void downSwipeMovesToNextAndPersistsTheOldPositionWithoutCrossWriting()throws Exception{
+        long next;File other=new File(app.getCacheDir(),"player-next-fixture.mp4");try(FileOutputStream out=new FileOutputStream(other)){out.write(new byte[]{1,2,3});}
+        try(LibraryStore store=new LibraryStore(app)){next=store.upsertCompletedDownload(new JSONObject().put("id","next-fixture").put("status","completed").put("title","下一个视频").put("uri",android.net.Uri.fromFile(other)).put("mime","video/mp4").put("completedAt",1).put("media",new JSONObject().put("duration",80)));}
+        try(Session s=open()){
+            PlayerView surface=field(s.a,"playerView",PlayerView.class);surface.hideController();swipe(surface,.5f,.3f,.5f,.34f);await(s.a);assertEquals(videoId,field(s.a,"videoId",Long.class).longValue());
+            long down=SystemClock.uptimeMillis();dispatch(surface,MotionEvent.ACTION_DOWN,.5f,.3f,down);dispatch(surface,MotionEvent.ACTION_MOVE,.5f,.65f,down);dispatch(surface,MotionEvent.ACTION_CANCEL,.5f,.65f,down);await(s.a);assertEquals(videoId,field(s.a,"videoId",Long.class).longValue());
+            swipe(surface,.5f,.3f,.5f,.65f);await(s.a);assertEquals(next,field(s.a,"videoId",Long.class).longValue());
+            try(LibraryStore store=new LibraryStore(app)){assertEquals(s.clock.position,store.video(videoId).optLong("playbackMs"));assertEquals(0,store.video(next).optLong("playbackMs"));assertEquals(2,store.markers(videoId).size());assertTrue(store.markers(next).isEmpty());}
+            Bundle saved=new Bundle();s.a.onSaveInstanceState(saved);assertEquals(next,saved.getLong("video_id"));
+            ActivityController<PlayerActivity> restored=Robolectric.buildActivity(PlayerActivity.class,new Intent(app,PlayerActivity.class).putExtra("video_id",videoId));try{PlayerActivity returned=restored.create(saved).get();await(returned);assertEquals(next,field(returned,"videoId",Long.class).longValue());assertEquals(android.net.Uri.fromFile(other),field(returned,"mediaUri",android.net.Uri.class));}finally{restored.destroy();}
+            invoke(s.a,"playNextVideo",new Class<?>[0]);await(s.a);assertEquals(next,field(s.a,"videoId",Long.class).longValue());assertTrue(field(s.a,"gestureHint",TextView.class).getText().toString().contains("最后一个"));
+        }finally{other.delete();}
+    }
+    @Test public void cancelledNextLookupNeverSwitchesAfterReturningFromBackground()throws Exception{
+        try(LibraryStore store=new LibraryStore(app)){store.upsertCompletedDownload(new JSONObject().put("id","paused-next-fixture").put("status","completed").put("title","后台时不可跳转").put("uri",android.net.Uri.fromFile(new File(app.getCacheDir(),"paused-next.mp4"))).put("mime","video/mp4").put("completedAt",1));}
+        try(Session s=open()){
+            java.util.concurrent.CountDownLatch gate=new java.util.concurrent.CountDownLatch(1),entered=new java.util.concurrent.CountDownLatch(1);
+            field(s.a,"io",ExecutorService.class).execute(()->{entered.countDown();try{gate.await(3,TimeUnit.SECONDS);}catch(InterruptedException ignored){}});assertTrue(entered.await(2,TimeUnit.SECONDS));
+            try{invoke(s.a,"playNextVideo",new Class<?>[0]);s.c.pause();gate.countDown();await(s.a);s.c.resume();assertEquals(videoId,field(s.a,"videoId",Long.class).longValue());}finally{gate.countDown();}
+        }
+    }
     /** Fixed-source behavior: animated Media3 keeps ONLY_PROGRESS_VISIBLE for 2s.
      * https://github.com/androidx/media/blob/1.9.4/libraries/ui/src/main/java/androidx/media3/ui/PlayerControlViewLayoutManager.java
      * Whole-overlay disappearance therefore uses the public single-stage timer;

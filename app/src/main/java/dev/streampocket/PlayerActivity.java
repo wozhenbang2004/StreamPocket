@@ -73,6 +73,8 @@ public final class PlayerActivity extends Activity {
     private int videoWidth,videoHeight,measuredWidth,measuredHeight,loadGeneration,visibleMarkers=40;
     private float speed=1f,heldSpeed=1f;
     private boolean pressBoost;
+    private boolean nextPending;
+    private int nextRequest;
     private boolean started,resumed,destroyed,loaded,missing,fullscreen,bookmarkPending,rangePending;
     private boolean shouldPlay=true,restoredPosition,playbackResourceClaimed,scrubbing;
     private String sheetMode="";
@@ -126,7 +128,7 @@ public final class PlayerActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         UiTheme.apply(this);
         getWindow().requestFeature(Window.FEATURE_ACTIVITY_TRANSITIONS);
-        super.onCreate(state); videoId=getIntent().getLongExtra("video_id",0);
+        super.onCreate(state); videoId=state==null?getIntent().getLongExtra("video_id",0):state.getLong("video_id",getIntent().getLongExtra("video_id",0));
         String transitionName=getIntent().getStringExtra("transition_name");
         coverTransition=UiTheme.motionEnabled(this) && ("sp-video-"+videoId).equals(transitionName);
         if (coverTransition) {
@@ -316,20 +318,22 @@ public final class PlayerActivity extends Activity {
                 gestureBrightness=getWindow().getAttributes().screenBrightness;
                 if (gestureBrightness<0) { try {gestureBrightness=android.provider.Settings.System.getInt(getContentResolver(),android.provider.Settings.System.SCREEN_BRIGHTNESS)/255f;} catch (android.provider.Settings.SettingNotFoundException unavailable) {gestureBrightness=.5f;} }
                 gestureVolume=player==null?1f:player.getVolume();
-            } else if (action==MotionEvent.ACTION_MOVE && player!=null && !missing) {
+            } else if (action==MotionEvent.ACTION_MOVE && loaded) {
                 if(canvasVelocity!=null)canvasVelocity.addMovement(event);
                 float dx=event.getX()-gestureDownX,dy=event.getY()-gestureDownY;
                 if (gestureMode==0 && Math.max(Math.abs(dx),Math.abs(dy))>dp(14)) {
-                    if (Math.abs(dx)>Math.abs(dy)*1.3f) gestureMode=1;
+                    if (Math.abs(dx)>Math.abs(dy)*1.3f && player!=null&&!missing) gestureMode=1;
                     else if (Math.abs(dy)>Math.abs(dx)*1.3f) {
-                        if (gestureDownX>view.getWidth()*.35f && gestureDownX<view.getWidth()*.65f && dy<0) {gestureMode=3;canvasSheetDrag=true;showSheet("info",true);}
-                        else if (getSharedPreferences("config",0).getBoolean("player_gestures",false)) gestureMode=2;
+                        if (gestureDownX>view.getWidth()*.35f && gestureDownX<view.getWidth()*.65f && dy>0) {gestureMode=4;playerView.animate().cancel();}
+                        else if (gestureDownX>view.getWidth()*.35f && gestureDownX<view.getWidth()*.65f && dy<0 && player!=null&&!missing) {gestureMode=3;canvasSheetDrag=true;showSheet("info",true);}
+                        else if (player!=null&&!missing&&getSharedPreferences("config",0).getBoolean("player_gestures",false)) gestureMode=2;
                     }
                     if (gestureMode!=0) { MotionEvent cancel=MotionEvent.obtain(event);cancel.setAction(MotionEvent.ACTION_CANCEL);gestures.onTouchEvent(cancel);cancel.recycle(); }
                 }
                 if (gestureMode==1) {
                     long span=Math.min(180000,Math.max(1000,playbackDuration()));gestureTarget=boundedPosition(gesturePosition+(long)(dx/Math.max(1,view.getWidth())*span));
                     scrubbing=true;playerView.setControllerShowTimeoutMs(0);playerView.showController();updateScrubPreview(gestureTarget);showHint("定位 · "+time(gestureTarget));
+                } else if(gestureMode==4){playerView.setTranslationY(Math.min(dp(96),Math.max(0,dy)*.25f));showHint(dy>=nextSwipeDistance()?"松手播放下一个视频":"继续下滑，切换下一个视频");
                 } else if(gestureMode==3) {setSheetOffset(sheetTravel()+dy);
                 } else if (gestureMode==2) {
                     float delta=-dy/Math.max(1,view.getHeight());
@@ -339,6 +343,7 @@ public final class PlayerActivity extends Activity {
                 }
             } else if (action==MotionEvent.ACTION_UP) {
                 int mode=gestureMode;
+                if(mode==4){float distance=event.getY()-gestureDownY;cancelCanvasGesture();if(distance>=nextSwipeDistance())playNextVideo();return true;}
                 if (mode==1 && player!=null && !missing) {player.seekTo(gestureTarget);positionMs=gestureTarget;savePosition();}
                 if(mode==3){float velocity=0;if(canvasVelocity!=null){canvasVelocity.addMovement(event);canvasVelocity.computeCurrentVelocity(1000);velocity=canvasVelocity.getYVelocity();}settleSheet(velocity<-dp(650)||(velocity<dp(650)&&sheetOffset<sheetTravel()*.70f),true);}
                 if (mode!=0) {canvasSheetDrag=false;cancelCanvasGesture();return true;}
@@ -349,7 +354,24 @@ public final class PlayerActivity extends Activity {
     }
     private void recycleCanvasVelocity(){if(canvasVelocity!=null){canvasVelocity.recycle();canvasVelocity=null;}}
     private void endPressBoost(){if(pressBoost){pressBoost=false;if(player!=null)player.setPlaybackSpeed(heldSpeed);}}
-    private void cancelCanvasGesture() { endPressBoost(); if(canvasSheetDrag&&gestureMode==3&&sheetAnimator==null)settleSheet(false,true);canvasSheetDrag=false;recycleCanvasVelocity();gestureMode=0; if(scrubbing){scrubbing=false;hidePreview();resetControllerTimeout();} }
+    private void cancelCanvasGesture() { endPressBoost();if(gestureMode==4){playerView.animate().cancel();playerView.animate().translationY(0).setDuration(UiTheme.motionEnabled(this)?160:0).start();} if(canvasSheetDrag&&gestureMode==3&&sheetAnimator==null)settleSheet(false,true);canvasSheetDrag=false;recycleCanvasVelocity();gestureMode=0; if(scrubbing){scrubbing=false;hidePreview();resetControllerTimeout();} }
+    private float nextSwipeDistance(){return Math.max(dp(72),playerView.getHeight()*.12f);}
+    private void playNextVideo(){
+        if(nextPending||destroyed||!loaded)return;
+        if(bookmarkPending||rangePending){showHint("正在保存标记，请稍候再切换");return;}
+        nextPending=true;final int request=++nextRequest;final long currentId=videoId;
+        String query=getIntent().getStringExtra("library_query"),order=getIntent().getStringExtra("library_order");long collection=getIntent().getLongExtra("library_collection",0);
+        List<String> sources=getIntent().getStringArrayListExtra("library_sources");
+        io.execute(()->{long next=0;Exception failure=null;try{next=store.nextVideoId(currentId,query,sources,collection,order);}catch(Exception error){failure=error;}final long target=next;final Exception problem=failure;
+            main.post(()->{if(destroyed||request!=nextRequest)return;nextPending=false;if(!resumed||videoId!=currentId)return;
+                if(problem!=null){showHint("暂时无法读取下一个视频，请返回视频库刷新");return;}
+                if(target<=0){showHint("已经是当前列表的最后一个视频");return;}
+                releasePlayer();clearMarkerFrames();markers=new ArrayList<>();video=null;mediaUri=null;videoId=target;getIntent().putExtra("video_id",target);
+                positionMs=0;durationMs=0;lastQueuedPosition=Long.MIN_VALUE;restoredPosition=false;shouldPlay=true;firstFrameRendered=false;coverTransition=false;coverGeneration++;
+                if(transitionCover!=null){transitionCover.setImageDrawable(null);transitionCover.setVisibility(View.GONE);}loadVideo();showHint("正在打开下一个视频");
+            });
+        });
+    }
     /** Highlight ticks are a visual overlay only; they never change media/ad state. */
     private final class HighlightTicks extends View {
         private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -451,6 +473,7 @@ public final class PlayerActivity extends Activity {
                 sheetTitle.setText("播放手势");
                 info("单击","显示或隐藏控制"); info("双击左右","快退 / 快进 "+seekSeconds()+" 秒");
                 info("横向滑动","预览并调整播放位置");info("按住画面","临时 2×，松手恢复原倍速"); info("中间上滑","打开视频信息");
+                info("中间下滑","播放当前列表的下一个视频，短滑或取消不切换");
                 info("两侧上下滑",getSharedPreferences("config",0).getBoolean("player_gestures",false)?"左侧亮度 · 右侧视频音量":"已关闭，可在设置开启");
                 info("精彩标记","底栏标记此刻，顶栏“标记”查看列表");
             } else if ("info".equals(mode)) {
@@ -465,6 +488,7 @@ public final class PlayerActivity extends Activity {
                 actionRow(creative,"精彩标记","查看、跳转和管理已保存的时间点","bookmark",()->showSheet("markers"));
                 clipButton=actionRow(creative,"截取片段","选择时间范围并导出","scissors",this::openEditor);clipButton.setEnabled(player!=null&&!missing);
                 LinearLayout viewing=actionGroup(menuPanel);actionRow(viewing,"视频信息","来源、画面与本地文件","info",()->showSheet("info"));
+                actionRow(viewing,"下一个视频","也可在画面中间向下滑动","play",()->{closeSheet();playNextVideo();});
                 actionRow(viewing,"画面比例 · "+(fillVideo?"填充裁切":"完整显示"),"保留完整画幅，按需切换","crop",()->showSheet("aspect"));
                 actionRow(viewing,"播放手势","点击、滑动与按住倍速","gesture",()->showSheet("gestures"));
             }
@@ -558,25 +582,26 @@ public final class PlayerActivity extends Activity {
         if (total<=0) { rangeFeedback.setText("正在读取完整视频时长，请稍后再保存。"); return; }
         if (end<=start) { rangeFeedback.setText("结束时间必须晚于开始时间。"); return; }
         if (start>=total || end>total) { rangeFeedback.setText("片段时间不能超过视频时长 "+preciseTime(total)+"。"); return; }
-        final String name=rangeName.getText().toString().trim(); rangePending=true; saveRangeButton.setEnabled(false); rangeFeedback.setText("正在保存…");
+        final String name=rangeName.getText().toString().trim();final long id=videoId; rangePending=true; saveRangeButton.setEnabled(false); rangeFeedback.setText("正在保存…");
         io.execute(()->{ try {
-            store.addRangeMarker(videoId,start,end,name); List<JSONObject> saved=store.markers(videoId);
-            main.post(()->{ if (!destroyed) { rangePending=false; saveRangeButton.setEnabled(true); markers=saved; renderMarkers(); closeSheet(); toast("已保存精彩片段"); } });
+            store.addRangeMarker(id,start,end,name); List<JSONObject> saved=store.markers(id);
+            main.post(()->{ if (!destroyed&&videoId==id) { rangePending=false; saveRangeButton.setEnabled(true); markers=saved; renderMarkers(); closeSheet(); toast("已保存精彩片段"); } });
         } catch (RuntimeException error) { main.post(()->{ if (!destroyed) { rangePending=false; saveRangeButton.setEnabled(true); rangeFeedback.setText("保存失败，输入已保留，请重试。"); } }); } });
     }
 
     private void loadVideo() {
-        int generation=++loadGeneration; releasePlayer(); loaded=false; missing=false; measuredDuration=0; measuredWidth=0; measuredHeight=0;
+        int generation=++loadGeneration;final long requestedId=videoId; releasePlayer(); loaded=false; missing=false; measuredDuration=0; measuredWidth=0; measuredHeight=0;
         setMediaActions(false); errorPanel.setVisibility(View.VISIBLE); status.setText("正在读取本地视频…"); retryButton.setVisibility(View.GONE);
         io.execute(()->{ try {
-            JSONObject item=videoId>0?store.video(videoId):null; List<JSONObject> saved=videoId>0?store.markers(videoId):new ArrayList<>();
+            JSONObject item=requestedId>0?store.video(requestedId):null; List<JSONObject> saved=requestedId>0?store.markers(requestedId):new ArrayList<>();
+            String accessError=item!=null&&item.optBoolean("missing",true)?unreadableVideoMessage(Uri.parse(item.optString("uri",""))):null;
             main.post(()->{
                 if (destroyed || generation!=loadGeneration) return; markers=saved; video=item; renderMarkers();
                 if (item==null) { title.setText("视频记录不存在"); showError("视频记录不存在，请返回视频库选择其他视频。",false); return; }
                 title.setText(item.optString("title","本地视频")); durationMs=Math.max(0,item.optLong("durationMs")); videoWidth=item.optInt("width"); videoHeight=item.optInt("height"); if (highlightTicks!=null) highlightTicks.setMarkers(markers,durationMs);
                 if (!restoredPosition) positionMs=Math.max(0,item.optLong("playbackMs")); restoredPosition=true;
-                mediaUri=Uri.parse(item.optString("uri","")); missing=item.optBoolean("missing",true) || !("content".equals(mediaUri.getScheme()) || "file".equals(mediaUri.getScheme())); loaded=true;
-                if (missing) { showError("原视频无法打开，可能已移动、删除或撤销访问。已有精彩标记仍保留。",true); return; }
+                mediaUri=Uri.parse(item.optString("uri","")); missing=accessError!=null || !("content".equals(mediaUri.getScheme()) || "file".equals(mediaUri.getScheme())); loaded=true;
+                if (missing) { showError(accessError!=null?accessError:"视频文件地址已失效。请恢复原文件或重新下载；已有精彩标记仍保留。",true); return; }
                 previewLoader.setSource(mediaUri,durationMs); errorPanel.setVisibility(View.GONE); ensurePlayer();
             });
         } catch (Exception failure) { main.post(()->{ if (!destroyed && generation==loadGeneration) showError("本地视频记录读取失败，请重试。",true); }); } });
@@ -628,8 +653,14 @@ public final class PlayerActivity extends Activity {
         showError(tracks.containsType(C.TRACK_TYPE_VIDEO)?"当前设备无法选择此文件的视频轨，已暂停播放。":"此文件没有可播放的视频轨，已暂停播放。",true);return true;
     }
     private String playbackError(PlaybackException error) {
-        if (error.errorCode==PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND || error.errorCode==PlaybackException.ERROR_CODE_IO_NO_PERMISSION) return "原视频无法读取，可能已删除或权限失效。精彩标记仍保留。";
-        return "此视频暂时无法播放，可能是文件不完整或解码器不支持。"+error.getErrorCodeName();
+        if(error.errorCode==PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND)return CoreRules.userMessage(new java.io.FileNotFoundException("file does not exist"));
+        if(error.errorCode==PlaybackException.ERROR_CODE_IO_NO_PERMISSION)return CoreRules.userMessage(new SecurityException("permission denied"));
+        return "暂时无法播放这个视频，文件可能不完整或格式不受支持。请重新下载，或尝试用其他播放器打开。";
+    }
+    private String unreadableVideoMessage(Uri uri){
+        if(!"file".equals(uri.getScheme())&&!"content".equals(uri.getScheme()))return "视频文件地址已失效。请重新导入或下载，已有精彩标记仍保留。";
+        try(android.content.res.AssetFileDescriptor file=getContentResolver().openAssetFileDescriptor(uri,"r")){return file==null?CoreRules.userMessage(new java.io.FileNotFoundException("file does not exist"))+"已有精彩标记仍保留。":null;}
+        catch(Exception error){return CoreRules.userMessage(error)+"已有精彩标记仍保留。";}
     }
     private void persistActualMetadata() {
         if (player==null) return; long previousDuration=durationMs,actual=player.getDuration(); if (actual!=C.TIME_UNSET && actual>0) durationMs=actual;
@@ -637,15 +668,15 @@ public final class PlayerActivity extends Activity {
         if (highlightTicks!=null) highlightTicks.setMarkers(markers,durationMs);
         if (durationMs==measuredDuration && videoWidth==measuredWidth && videoHeight==measuredHeight) return;
         measuredDuration=durationMs; measuredWidth=videoWidth; measuredHeight=videoHeight;
-        final long duration=durationMs; final int width=videoWidth,height=videoHeight;
-        io.execute(()->{ try { store.updateMetadata(videoId,duration,width,height); } catch (RuntimeException ignored) {} });
+        final long duration=durationMs,id=videoId; final int width=videoWidth,height=videoHeight;
+        io.execute(()->{ try { store.updateMetadata(id,duration,width,height); } catch (RuntimeException ignored) {} });
     }
 
     private void addMarker() {
-        if (player==null || bookmarkPending || missing) return; final long at=Math.max(0,player.getCurrentPosition()); bookmarkPending=true; bookmarkButton.setEnabled(false);
+        if (player==null || bookmarkPending || missing) return; final long at=Math.max(0,player.getCurrentPosition()),id=videoId; bookmarkPending=true; bookmarkButton.setEnabled(false);
         io.execute(()->{ try {
-            store.addMarker(videoId,at,""); List<JSONObject> saved=store.markers(videoId);
-            main.post(()->{ if (!destroyed) { markers=saved; bookmarkPending=false; bookmarkButton.setEnabled(player!=null && !missing); renderMarkers(); showHint("已标记 · "+time(at)); } });
+            store.addMarker(id,at,""); List<JSONObject> saved=store.markers(id);
+            main.post(()->{ if (!destroyed&&videoId==id) { markers=saved; bookmarkPending=false; bookmarkButton.setEnabled(player!=null && !missing); renderMarkers(); showHint("已标记 · "+time(at)); } });
         } catch (RuntimeException failure) { main.post(()->{ if (!destroyed) { bookmarkPending=false; bookmarkButton.setEnabled(player!=null && !missing); toast("标记保存失败，请重试"); } }); } });
     }
     private static final class MarkerFrame {
@@ -725,13 +756,14 @@ public final class PlayerActivity extends Activity {
         dialog.setOnShowListener(ignored->dialog.getButton(PocketDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             final long start,end;try{start=parseTime(from.getText().toString());end=range?parseTime(to.getText().toString()):0;long total=playbackDuration();if(start>total||total<=0||range&&(end<=start||end>total))throw new IllegalArgumentException();}
             catch(IllegalArgumentException invalid){error.setText("请检查时间，不能超过原片时长。");return;}
-            dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(false);String label=name.getText().toString().trim();
-            io.execute(()->{try{store.editMarker(videoId,marker.optLong("id"),start,end,label);List<JSONObject> saved=store.markers(videoId);main.post(()->{if(!destroyed){markers=saved;renderMarkers();dialog.dismiss();}});}
+            dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(false);String label=name.getText().toString().trim();final long id=videoId;
+            io.execute(()->{try{store.editMarker(id,marker.optLong("id"),start,end,label);List<JSONObject> saved=store.markers(id);main.post(()->{if(!destroyed&&videoId==id){markers=saved;renderMarkers();dialog.dismiss();}});}
             catch(RuntimeException failure){main.post(()->{if(!destroyed){error.setText("保存失败，输入已保留，请重试。");dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(true);}});}});
         }));dialog.show();
     }
     private void updateMarker(Runnable operation) {
-        io.execute(()->{ try { operation.run(); List<JSONObject> saved=store.markers(videoId); main.post(()->{ if (!destroyed) { markers=saved; renderMarkers(); } }); }
+        final long id=videoId;
+        io.execute(()->{ try { operation.run(); List<JSONObject> saved=store.markers(id); main.post(()->{ if (!destroyed&&videoId==id) { markers=saved; renderMarkers(); } }); }
             catch (RuntimeException failure) { main.post(()->{ if (!destroyed) toast("标记更新失败，请重试"); }); } });
     }
     private void openEditor() { if (player==null || missing) return; savePosition(); startActivity(new Intent(this,EditorActivity.class).putExtra("video_id",videoId).putExtra("position_ms",positionMs)); }
@@ -742,7 +774,7 @@ public final class PlayerActivity extends Activity {
     }
     private void savePosition() {
         if (player!=null) positionMs=Math.max(0,player.getCurrentPosition()); if (videoId<=0 || !loaded || missing || destroyed || lastQueuedPosition==positionMs) return;
-        final long at=positionMs; lastQueuedPosition=at; io.execute(()->{ try { store.savePlayback(videoId,at); } catch (RuntimeException ignored) {} });
+        final long at=positionMs,id=videoId; lastQueuedPosition=at; io.execute(()->{ try { store.savePlayback(id,at); } catch (RuntimeException ignored) {} });
     }
     private void releasePlayer() { endPressBoost();
         main.removeCallbacks(checkpoint);main.removeCallbacks(videoStartupCheck); scrubbing=false; hidePreview(); if(previewLoader!=null) previewLoader.pausePreparation();
@@ -773,12 +805,13 @@ public final class PlayerActivity extends Activity {
     @Override protected void onStart() { super.onStart(); started=true; ensurePlayer(); }
     @Override protected void onResume() { super.onResume(); resumed=true; ensurePlayer(); if (player!=null) player.setPlayWhenReady(shouldPlay); markerList.post(this::bindVisibleMarkerFrames);immersive(); }
     @Override protected void onPause() {
+        nextRequest++;nextPending=false;
         cancelCanvasGesture();cancelSheetAnimation();if(!sheetMode.isEmpty())settleSheet(true,false);
         clearMarkerFrames();if (player!=null) { shouldPlay=player.getPlayWhenReady(); savePosition(); } resumed=false; releasePlayer(); super.onPause();
     }
     @Override protected void onStop() { started=false; releasePlayer(); super.onStop(); }
     @Override protected void onSaveInstanceState(Bundle state) {
-        if (player!=null) positionMs=Math.max(0,player.getCurrentPosition()); state.putLong("position_ms",positionMs); state.putFloat("speed",speed);
+        if (player!=null) positionMs=Math.max(0,player.getCurrentPosition());state.putLong("video_id",videoId); state.putLong("position_ms",positionMs); state.putFloat("speed",speed);
         state.putBoolean("fill_video",fillVideo); state.putBoolean("should_play",resumed && player!=null?player.getPlayWhenReady():shouldPlay); state.putBoolean("range_open","range".equals(sheetMode));
         state.putString("range_start",rangeStart.getText().toString()); state.putString("range_end",rangeEnd.getText().toString()); state.putString("range_name",rangeName.getText().toString()); super.onSaveInstanceState(state);
     }

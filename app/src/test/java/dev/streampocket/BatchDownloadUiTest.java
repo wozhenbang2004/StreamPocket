@@ -52,6 +52,16 @@ public final class BatchDownloadUiTest {
             assertTrue(field(a,"linkHint",TextView.class).getText().toString().contains("识别到 2 个链接"));assertEquals(draft,field(a,"input",EditText.class).getText().toString());assertTrue(inbox(a).jobs.isEmpty());assertNull(field(a,"activeInspection",Object.class));
         }
     }
+    @Test public void failedLinkStaysVisibleAfterColdStartAndCanBeReparsedInPlace()throws Exception{
+        String jobId;
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()){
+            MainActivity a=c.get();set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{throw new java.net.UnknownHostException("example.invalid");});field(a,"input",EditText.class).setText("https://b23.tv/retry-visible");invoke(a,"analyze",new Class<?>[0]);drain(a);
+            assertEquals(1,inbox(a).count("failed"));jobId=inbox(a).jobs.get(0).id;assertNotNull(find(a.getWindow().getDecorView(),"重新解析"));assertNotNull(find(a.getWindow().getDecorView(),CoreRules.inspectionMessage(new java.net.UnknownHostException("example.invalid"))));capture(a,"failed-link-visible-fixture.png");
+        }
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()){
+            MainActivity a=c.get();assertEquals(jobId,inbox(a).jobs.get(0).id);set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->Collections.singletonList(media(url,"重新解析成功的离线样例")));find(a.getWindow().getDecorView(),"重新解析").performClick();drain(a);assertEquals(0,inbox(a).count("failed"));assertEquals(1,inbox(a).media.size());assertTrue(TaskStore.all(a).isEmpty());
+        }
+    }
     @Test public void manualPasteAppendsAllClipboardItemsWithoutReplacingTheDraftOrRepeatingLinks()throws Exception{
         android.content.ClipboardManager clipboard=(android.content.ClipboardManager)app.getSystemService(Context.CLIPBOARD_SERVICE);
         android.content.ClipData data=android.content.ClipData.newPlainText("fixture","分享 https://x.com/u/status/123");data.addItem(new android.content.ClipData.Item("https://b23.tv/second"));clipboard.setPrimaryClip(data);
@@ -166,7 +176,7 @@ public final class BatchDownloadUiTest {
             inbox(a).retryFailed();invoke(a,"startNextInspection",new Class<?>[0]);
             assertTrue(entered.await(3,TimeUnit.SECONDS));assertNotNull("Cancel belongs beside the current link",find(a.getWindow().getDecorView(),"取消"));invoke(a,"cancelAnalysis",new Class<?>[0]);drain(a);
             assertEquals(1,inbox(a).count("failed"));assertEquals("https://b23.tv/failed",inbox(a).jobs.get(0).url);
-            assertNotNull(find(a.getWindow().getDecorView(),"重试失败"));
+            assertNotNull("A single cancelled link keeps its inline retry action",find(a.getWindow().getDecorView(),"重新解析"));
         } finally {controller.pause().stop().destroy();}
     }
     @Test public void inboxPersistsResultsAndInterruptedJobsWithoutLosingTheirIdentity() throws Exception {

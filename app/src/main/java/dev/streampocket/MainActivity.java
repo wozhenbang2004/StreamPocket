@@ -207,8 +207,16 @@ public final class MainActivity extends Activity {
                 LinearLayout current=row();TextView source=text(linkLabel(activeInspection.url),12,MUTED,false);source.setMaxLines(2);source.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);current.addView(source,new LinearLayout.LayoutParams(0,-2,1));
                 Button stop=quietButton(activeInspection.cancelled?"正在取消":"取消");stop.setTextSize(12);stop.setEnabled(!activeInspection.cancelled);stop.setOnClickListener(v->cancelAnalysis());current.addView(stop,new LinearLayout.LayoutParams(dp(64),dp(48)));add(inspectionResults,current,0,8);
             }
-            if(failed>0){LinearLayout retry=row();retry.addView(text(failed+" 个失败，可单独重试",12,MUTED,false),new LinearLayout.LayoutParams(0,-2,1));
+            if(failed>1){LinearLayout retry=row();retry.addView(text("也可批量重新解析",12,MUTED,false),new LinearLayout.LayoutParams(0,-2,1));
                 Button all=quietButton("重试失败");all.setTextSize(12);all.setTextColor(ACCENT);all.setOnClickListener(v->{inspectionInbox.retryFailed();persistInspectionInbox();startNextInspection();renderInspection();});retry.addView(all,new LinearLayout.LayoutParams(dp(88),dp(48)));add(inspectionResults,retry,0,8);}
+            int shown=0;for(InspectionInbox.Job job:new ArrayList<>(inspectionInbox.jobs))if(job.state.equals("failed")&&shown++<3){
+                LinearLayout failedItem=column();failedItem.setPadding(dp(12),dp(8),dp(12),dp(8));failedItem.setBackground(shape(SURFACE,12,0));
+                TextView link=text(linkLabel(job.url).replace("\n"," · "),13,INK,true);link.setMaxLines(1);link.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);failedItem.addView(link);
+                add(failedItem,text(inspectionFailureMessage(job),12,MUTED,false),6,0);LinearLayout actions=row();
+                Button details=quietButton("错误详情");details.setTextSize(12);details.setEnabled(!job.details.isEmpty());details.setOnClickListener(v->showMessage("解析错误详情",job.details));actions.addView(details,new LinearLayout.LayoutParams(0,dp(48),1));
+                Button retry=quietButton("重新解析");retry.setTextColor(ACCENT);retry.setTextSize(13);retry.setOnClickListener(v->{inspectionInbox.retry(job);persistInspectionInbox();startNextInspection();renderInspection();});actions.addView(retry,new LinearLayout.LayoutParams(dp(96),dp(48)));failedItem.addView(actions);add(inspectionResults,failedItem,0,8);
+            }
+            if(failed>3)add(inspectionResults,text("另有 "+(failed-3)+" 条失败记录，可在查看队列中重试",12,MUTED,false),0,8);
         }
         if(inspectedMedia.isEmpty())return;
         LinearLayout heading=row();heading.addView(text("待下载 · "+inspectedMedia.size()+" 个视频",16,INK,true),new LinearLayout.LayoutParams(0,-2,1));
@@ -235,7 +243,7 @@ public final class MainActivity extends Activity {
         PocketDialog panel=new PocketDialog.Builder(this).setTitle("解析队列").setView(scroll).setNegativeButton("返回",null).create();
         for(InspectionInbox.Job job:new ArrayList<>(inspectionInbox.jobs)){
             LinearLayout line=row();LinearLayout labels=column();TextView link=text(job.url,13,INK,false);link.setMaxLines(2);link.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);labels.addView(link);
-            String state=job.state.equals("failed")?job.message:job.state.equals("parsing")?"正在解析":job.state.equals("cancelling")?"正在取消":"等待解析";
+            String state=job.state.equals("failed")?inspectionFailureMessage(job):job.state.equals("parsing")?"正在解析":job.state.equals("cancelling")?"正在取消":"等待解析";
             add(labels,text(state,12,job.state.equals("failed")?palette.danger:MUTED,false),4,0);line.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
             Button action=quietButton(job.state.equals("failed")?"重试":job==activeInspection?"取消":"移除");action.setTextSize(12);action.setTextColor(ACCENT);action.setEnabled(!job.cancelled);action.setOnClickListener(v->{
                 if(job==activeInspection)cancelAnalysis();else if(job.state.equals("failed"))inspectionInbox.retry(job);else inspectionInbox.remove(job);
@@ -395,6 +403,7 @@ public final class MainActivity extends Activity {
     }
     private void updateInspectionButton(){if(parse!=null){try{LinkBatch.Result links=LinkBatch.parse(draft);parse.setText((parsing?"追加解析 · ":"解析链接 · ")+links.urls.size()+" 个");parse.setEnabled(true);}catch(IllegalArgumentException invalid){parse.setText("解析链接");parse.setEnabled(false);}}}
     private void persistInspectionInbox(){getPreferences(0).edit().putString("inspection_inbox",inspectionInbox.json()).putString("inspection_quality",new JSONObject(qualitySelections).toString()).apply();}
+    private static String inspectionFailureMessage(InspectionInbox.Job job){return job.message.contains("取消")||job.details.isEmpty()?job.message:CoreRules.inspectionMessage(new Exception(job.details));}
     private void cancelAnalysis() {
         if(activeInspection==null)return;activeInspection.cancelled=true;activeInspection.state="cancelling";engine.cancelInspect();persistInspectionInbox();if("new".equals(tab))renderInspection();
     }
@@ -956,7 +965,7 @@ public final class MainActivity extends Activity {
 
     private static boolean isActive(String s){return Arrays.asList("queued","downloading","merging","saving","cancelling","pausing").contains(s);}
     private static String statusName(String s){switch(s){case"queued":return"等待下载";case"downloading":return"正在下载";case"merging":return"正在合并音视频";case"saving":return"正在保存到手机";case"completed":return"已保存";case"cancelling":return"正在取消";case"cancelled":return"已取消";case"pausing":return"正在暂停";case"paused":return"已暂停，断点保留";case"interrupted":return"上次下载中断，可重试";default:return"下载失败";}}
-    private String friendly(Exception e){String m=e.getMessage();if(m==null||m.trim().isEmpty())return"操作未完成，请重试或检查内核。";return Engine.cleanLog(m);}
+    private String friendly(Exception e){String m=e.getMessage();return e instanceof IllegalArgumentException&&m!=null&&!m.trim().isEmpty()?Engine.cleanLog(m):CoreRules.userMessage(e);}
     private void action(LinearLayout row,String label,Runnable click){Button b=quietButton(label);b.setMinWidth(0);b.setPadding(dp(10),0,dp(10),0);b.setTextSize(12);b.setOnClickListener(v->click.run());row.addView(b,new LinearLayout.LayoutParams(-2,dp(44)));}
     private void divider(LinearLayout c){View v=new View(this);v.setBackgroundColor(LINE);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(1));p.topMargin=dp(23);p.bottomMargin=dp(23);c.addView(v,p);}
     private void showMessage(String title,String message){TextView t=text(message,14,INK,false);t.setTextIsSelectable(true);t.setPadding(dp(22),dp(15),dp(22),dp(12));ScrollView s=new ScrollView(this);s.addView(t);new PocketDialog.Builder(this).setTitle(title).setView(s).setPositiveButton("知道了",null).show();}

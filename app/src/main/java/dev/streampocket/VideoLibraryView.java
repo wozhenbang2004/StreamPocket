@@ -62,6 +62,7 @@ public final class VideoLibraryView extends LinearLayout {
     private final EditText search;
     private boolean released, loading, more = true, selectionMode, writing;
     private boolean listMode;
+    private int gridColumns;
     private String order = "date";
     private final Set<Long> selectedIds = new LinkedHashSet<>();
     private int restoreFirst = -1, restoreTop;
@@ -76,6 +77,7 @@ public final class VideoLibraryView extends LinearLayout {
         super(host); activity = host; palette = UiTheme.get(host); INK=palette.ink; MUTED=palette.muted; BORDER=palette.line;
         store = new LibraryStore(host); covers = new ThumbnailRepository(host);
         listMode = "list".equals(host.getSharedPreferences("config",0).getString("library_view","grid"));
+        gridColumns=host.getSharedPreferences("config",0).getInt("library_columns",2)==3?3:2;
         order = "source".equals(host.getSharedPreferences("config",0).getString("library_order","date")) ? "source" : "date";
         setOrientation(VERTICAL); setBackgroundColor(palette.bg); setPadding(dp(20), dp(8), dp(20), 0);
         LinearLayout heading = new LinearLayout(host); heading.setGravity(Gravity.CENTER_VERTICAL);
@@ -83,8 +85,8 @@ public final class VideoLibraryView extends LinearLayout {
         heading.addView(headingTitle, new LinearLayout.LayoutParams(0, dp(56), 1));
         searchToggle = iconControl("search", "搜索视频"); searchToggle.setOnClickListener(v -> toggleSearch());
         heading.addView(searchToggle, new LinearLayout.LayoutParams(dp(48), dp(48)));
-        viewToggle = iconControl(listMode ? "grid" : "list", listMode ? "切换网格视图" : "切换详细列表");
-        viewToggle.setOnClickListener(v -> setListMode(!listMode)); heading.addView(viewToggle, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        viewToggle = iconControl("grid", "选择视频库视图");
+        viewToggle.setOnClickListener(v -> chooseViewMode()); heading.addView(viewToggle, new LinearLayout.LayoutParams(dp(48), dp(48)));
         View menu = iconControl("sort", "视频库更多操作"); menu.setOnClickListener(v -> showLibraryMenu());
         heading.addView(menu, new LinearLayout.LayoutParams(dp(48), dp(48))); addView(heading);
 
@@ -115,7 +117,7 @@ public final class VideoLibraryView extends LinearLayout {
         shareSelection=selectionAction("分享",this::shareSelected); collectSelection=selectionAction("合集",this::collectSelected); removeSelection=selectionAction("移除",this::removeSelected);
         addView(selectionBar,new LinearLayout.LayoutParams(-1,dp(48)));
 
-        grid = new GridView(host); configureColumns(); grid.setHorizontalSpacing(dp(12)); grid.setVerticalSpacing(dp(18)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+        grid = new GridView(host); configureColumns(); grid.setVerticalSpacing(dp(18)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
         grid.setClipToPadding(false); grid.setPadding(0, dp(4), 0, dp(20)); grid.setSelector(android.R.color.transparent); grid.setAdapter(adapter);
         grid.setOnItemClickListener((parent, view, position, id) -> {
             if(position<0||position>=videos.size())return;
@@ -134,17 +136,18 @@ public final class VideoLibraryView extends LinearLayout {
     }
 
     private void configureColumns() {
-        int columns=listMode || getResources().getConfiguration().screenWidthDp<340 || getResources().getConfiguration().fontScale>=1.35f?1:2;
-        grid.setNumColumns(columns);
+        int columns=listMode?1:gridColumns==3?3:getResources().getConfiguration().screenWidthDp<340 || getResources().getConfiguration().fontScale>=1.35f?1:2;
+        grid.setNumColumns(columns);grid.setHorizontalSpacing(dp(columns==3?8:12));
     }
+    private void chooseViewMode(){new PocketDialog.Builder(activity).setTitle("视频库视图").setSingleChoiceItems(new String[]{"双列网格","三列网格","详细列表"},listMode?2:gridColumns==3?1:0,(dialog,which)->{if(which<2)gridColumns=which==1?3:2;setListMode(which==2);dialog.dismiss();}).setNegativeButton("返回",null).show();}
     private void toggleSearch() {
         boolean reveal=search.getVisibility()!=VISIBLE; search.setVisibility(reveal?VISIBLE:GONE);
         if(reveal){UiTheme.enter(search);search.requestFocus();}
         else {search.clearFocus(); android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE);if(keyboard!=null)keyboard.hideSoftInputFromWindow(search.getWindowToken(),0);}
     }
     private void setListMode(boolean list) {
-        listMode=list; activity.getSharedPreferences("config",0).edit().putString("library_view",list?"list":"grid").apply();
-        viewToggle.setContentDescription(list?"切换网格视图":"切换详细列表"); ((ImageView)viewToggle).setImageDrawable(new LibraryIcon(list?"grid":"list",INK));
+        listMode=list; activity.getSharedPreferences("config",0).edit().putString("library_view",list?"list":"grid").putInt("library_columns",gridColumns).apply();
+        viewToggle.setContentDescription("选择视频库视图"); ((ImageView)viewToggle).setImageDrawable(new LibraryIcon(list?"list":"grid",INK));
         int first=grid.getFirstVisiblePosition(); configureColumns(); adapter.notifyDataSetChanged(); grid.setSelection(first);
     }
     private void showLibraryMenu() {
@@ -160,16 +163,16 @@ public final class VideoLibraryView extends LinearLayout {
     /** The host can retain browsing state across tab changes and theme recreation. */
     public Bundle saveUiState() {
         Bundle state=new Bundle(); state.putString("query",search.getText().toString()); state.putString("source",source); state.putLong("collection",collection);
-        state.putStringArrayList("sources",new ArrayList<>(selectedSources));state.putString("order",order); state.putBoolean("list",listMode); state.putBoolean("search_open",search.getVisibility()==VISIBLE);
+        state.putStringArrayList("sources",new ArrayList<>(selectedSources));state.putString("order",order);state.putInt("columns",gridColumns); state.putBoolean("list",listMode); state.putBoolean("search_open",search.getVisibility()==VISIBLE);
         state.putInt("first",grid.getFirstVisiblePosition()); state.putInt("top",grid.getChildCount()>0?grid.getChildAt(0).getTop():0); return state;
     }
     public void restoreUiState(Bundle state) {
         if(state==null||released)return; main.removeCallbacks(searchChanged); query=state.getString("query",""); source=state.getString("source","");selectedSources.clear();if(state.getStringArrayList("sources")!=null)selectedSources.addAll(state.getStringArrayList("sources"));else if(!source.isEmpty())selectedSources.add(source);collection=state.getLong("collection",0);
-        order="source".equals(state.getString("order"))?"source":"date"; listMode=state.getBoolean("list",listMode); configureColumns();
+        order="source".equals(state.getString("order"))?"source":"date";gridColumns=state.getInt("columns",gridColumns)==3?3:2; listMode=state.getBoolean("list",listMode); configureColumns();
         search.setText(query); main.removeCallbacks(searchChanged); search.setVisibility(state.getBoolean("search_open")||!query.isEmpty()?VISIBLE:GONE);
         updateCollectionLabel();
         restoreFirst=Math.max(0,state.getInt("first",0));restoreTop=state.getInt("top",0);
-        viewToggle.setContentDescription(listMode?"切换网格视图":"切换详细列表"); ((ImageView)viewToggle).setImageDrawable(new LibraryIcon(listMode?"grid":"list",INK));
+        viewToggle.setContentDescription("选择视频库视图"); ((ImageView)viewToggle).setImageDrawable(new LibraryIcon(listMode?"list":"grid",INK));
     }
 
     public void refresh() { if (!released && !loading) load(true, true); }
@@ -269,7 +272,7 @@ public final class VideoLibraryView extends LinearLayout {
         try {
             // The player re-reads this stable ID and its current local URI/access.
             // A stale catalogue 'missing' snapshot must not block a restored file.
-            Intent intent=new Intent(activity,PlayerActivity.class).putExtra("video_id",id);
+            Intent intent=new Intent(activity,PlayerActivity.class).putExtra("video_id",id).putExtra("library_query",query).putExtra("library_collection",collection).putExtra("library_order",order).putStringArrayListExtra("library_sources",new ArrayList<>(selectedSources));
             // Match the download entry. A window-owned shared-element snapshot
             // must never sit above the independent video surface.
             activity.startActivity(intent);
@@ -469,8 +472,8 @@ public final class VideoLibraryView extends LinearLayout {
                 LinearLayout cell=new LinearLayout(activity);cell.setOrientation(listMode?HORIZONTAL:VERTICAL);cell.setGravity(Gravity.CENTER_VERTICAL);cell.setPadding(dp(3),dp(3),dp(3),dp(3));
                 FrameLayout media=new FrameLayout(activity);media.setBackground(shape(palette.dark?0xff232b2d:0xffe6eae6,false,12));media.setClipToOutline(true);
                 ImageView cover=new LibraryCoverView(activity);cover.setScaleType(ImageView.ScaleType.FIT_CENTER);cover.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);media.addView(cover,new FrameLayout.LayoutParams(-1,-1));
-                ImageView play=new ImageView(activity);play.setImageDrawable(new LibraryIcon("play",Color.WHITE));play.setPadding(dp(7),dp(7),dp(7),dp(7));play.setBackground(shape(0x80171a1c,false,16));play.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-                FrameLayout.LayoutParams playParams=new FrameLayout.LayoutParams(dp(28),dp(28),Gravity.BOTTOM|Gravity.START);playParams.leftMargin=dp(8);playParams.bottomMargin=dp(8);media.addView(play,playParams);
+                ImageView play=new ImageView(activity);play.setImageDrawable(new LibraryIcon("play",Color.WHITE));play.setBackground(shape(0x80171a1c,false,12));play.setPadding(dp(6),dp(6),dp(6),dp(6));play.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                FrameLayout.LayoutParams playParams=new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.BOTTOM|Gravity.START);playParams.leftMargin=dp(6);playParams.bottomMargin=dp(6);media.addView(play,playParams);
                 ProgressBar progress=new PocketProgressBar(activity,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);progress.setPadding(0,0,0,0);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(palette.accent));progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x66383E3C));progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
                 media.addView(progress,new FrameLayout.LayoutParams(-1,dp(3),Gravity.BOTTOM));
                 TextView time=text("",11,Color.WHITE,true);time.setGravity(Gravity.CENTER);time.setPadding(dp(6),dp(2),dp(6),dp(2));time.setBackground(shape(0xc2171a1c,false,5));
@@ -484,15 +487,18 @@ public final class VideoLibraryView extends LinearLayout {
                 LinearLayout body=new LinearLayout(activity);body.setOrientation(VERTICAL);LinearLayout top=new LinearLayout(activity);top.setGravity(Gravity.TOP);
                 TextView title=text("",14,INK,false);if(android.os.Build.VERSION.SDK_INT>=28)title.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));else title.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));title.setMaxLines(2);title.setMinLines(listMode?1:2);title.setEllipsize(TextUtils.TruncateAt.END);title.setGravity(Gravity.TOP);title.setPadding(0,listMode?0:dp(8),0,0);
                 top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-                ImageView menu=(ImageView)iconControl("more","视频更多操作");menu.setPadding(dp(16),dp(16),dp(16),dp(16));
+                ImageView menu=(ImageView)iconControl("more","视频更多操作");menu.setPadding(dp(18),dp(18),dp(18),dp(18));
                 if(listMode)top.addView(menu,new LinearLayout.LayoutParams(dp(48),dp(48)));
-                else {menu.setImageDrawable(new LibraryIcon("more",Color.WHITE));menu.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x44ffffff),new android.graphics.drawable.InsetDrawable(shape(0x68171a1c,false,12),dp(10)),null));FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.END);media.addView(menu,mp);}
+                else {menu.setImageDrawable(new LibraryIcon("more",Color.WHITE));menu.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x44ffffff),new android.graphics.drawable.InsetDrawable(shape(0x68171a1c,false,10),dp(14)),null));FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.END);media.addView(menu,mp);}
+                menu.setPadding(dp(18),dp(18),dp(18),dp(18));
                 body.addView(top,new LinearLayout.LayoutParams(-1,-2));
                 TextView meta=text("",12,MUTED,false);meta.setMaxLines(1);meta.setEllipsize(TextUtils.TruncateAt.END);body.addView(meta,new LinearLayout.LayoutParams(-1,-2));
                 TextView context=text("",11,palette.accent,false);context.setSingleLine(true);context.setEllipsize(TextUtils.TruncateAt.END);context.setPadding(dp(6),dp(3),dp(6),dp(3));context.setBackground(shape(palette.accentSoft,false,6));LinearLayout.LayoutParams badge=new LinearLayout.LayoutParams(-2,-2);badge.topMargin=dp(5);body.addView(context,badge);
                 cell.addView(body,new LinearLayout.LayoutParams(listMode?0:-1,-2,listMode?1:0));
                 holder=new Holder(cover,play,progress,time,title,meta,context,menu,checked,listMode);cell.setTag(holder);cell.setFocusable(true);UiTheme.press(cell);recycled=cell;
             }else holder=(Holder)recycled.getTag();
+            View media=(View)holder.cover.getParent();ViewGroup.LayoutParams size=media.getLayoutParams();int columns=grid.getNumColumns();
+            size.height=dp(listMode?82:Math.max(columns==3?84:106,Math.round((getResources().getConfiguration().screenWidthDp-46-(columns-1)*(columns==3?8:12f))/Math.max(1,columns)*.75f)));media.setLayoutParams(size);holder.title.setTextSize(!listMode&&columns==3?12:14);
             JSONObject video=videos.get(position);long id=video.optLong("id");holder.title.setText(video.optString("title","视频"));
             holder.time.setText(video.optBoolean("missing")?"文件不可用":video.optLong("durationMs")>0?duration(video.optLong("durationMs")):"视频");
             int resolution=Math.min(video.optInt("width"),video.optInt("height"));

@@ -4,6 +4,8 @@ Android 本地视频下载与媒体工作区。粘贴链接、选择画质、下
 
 **当前版本：0.3.1** · Android 7.0+ · ARM64 · [下载安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.3.1/StreamPocket-arm64-v8a.apk) · [查看更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.3.1)
 
+开发分支增加了链接预览与草稿保护、三列视频库、下滑切换视频、可见的解析失败记录和按原因提供的恢复提示，尚未发布新的正式安装包。交互与验证范围见 [视频浏览与失败恢复](docs/MEDIA_EXPERIENCE.md) 和 [下载流程](docs/DOWNLOAD_FLOW.md)。
+
 ## 0.3.1 更新
 
 - 视频库突出封面，完整显示横竖画面；统一标题、时长、续播状态和辅助信息，减少画面上的操作干扰。

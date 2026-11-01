@@ -56,7 +56,7 @@ public final class Library022UiTest {
     @Before public void setup() {
         app=RuntimeEnvironment.getApplication(); app.deleteDatabase("media-library.db");
         app.getSharedPreferences("tasks",0).edit().clear().commit();
-        app.getSharedPreferences("config",0).edit().putString("appearance_theme","light").putBoolean("motion_enabled",false).remove("library_view").remove("library_order").commit();
+        app.getSharedPreferences("config",0).edit().putString("appearance_theme","light").putBoolean("motion_enabled",false).remove("library_view").remove("library_order").remove("library_columns").commit();
         controller=Robolectric.buildActivity(Activity.class);activity=controller.get();UiTheme.apply(activity);
         controller.create().start().resume().visible();
     }
@@ -89,7 +89,7 @@ public final class Library022UiTest {
         ImageView cover=(ImageView)field(grid.getChildAt(0).getTag(),"cover",ImageView.class);
         assertEquals(ImageView.ScaleType.FIT_CENTER,cover.getScaleType());
         capture("01-grid-light-bitmap-fixtures");
-        described(library,"切换详细列表").performClick();layout();
+        described(library,"选择视频库视图").performClick();((PocketDialog)ShadowDialog.getLatestDialog()).getListView().performItemClick(null,2,2);layout();
         assertEquals(1,grid.getNumColumns());assertEquals("list",app.getSharedPreferences("config",0).getString("library_view",""));
         capture("02-list-light-bitmap-fixtures");
         described(library,"搜索视频").performClick();EditText input=field(library,"search",EditText.class);assertEquals(View.VISIBLE,input.getVisibility());
@@ -98,6 +98,15 @@ public final class Library022UiTest {
         library.release();library=new VideoLibraryView(activity);library.restoreUiState(state);activity.setContentView(library);library.refresh();await();
         assertEquals("安静房间",field(library,"search",EditText.class).getText().toString());assertEquals(1,field(library,"grid",GridView.class).getAdapter().getCount());
         assertEquals(1,field(library,"grid",GridView.class).getNumColumns());
+    }
+    @Test public void threeColumnChoicePersistsAndSmallIconsKeepLargeTouchTargets()throws Exception{
+        for(int n=0;n<6;n++)seed("three-"+n,"界面样例 · 第 "+(n+1)+" 个视频，完整保留真实长度的中文标题","https://x.com/fixture/status/"+(100+n),1048576,1920,1080);
+        open();described(library,"选择视频库视图").performClick();PocketDialog view=(PocketDialog)ShadowDialog.getLatestDialog();view.getListView().performItemClick(null,1,1);layout();
+        GridView grid=field(library,"grid",GridView.class);assertEquals(3,grid.getNumColumns());assertEquals(3,app.getSharedPreferences("config",0).getInt("library_columns",0));
+        Object holder=grid.getChildAt(0).getTag();ImageView menu=field(holder,"menu",ImageView.class),play=field(holder,"play",ImageView.class);float d=activity.getResources().getDisplayMetrics().density;
+        assertEquals(Math.round(48*d),menu.getLayoutParams().width);assertEquals(Math.round(22*d),play.getLayoutParams().width);assertTrue(menu.getPaddingLeft()>=Math.round(18*d));assertTrue(play.getPaddingLeft()>=Math.round(6*d));
+        capture("three-column-small-controls-fixture");Bundle saved=library.saveUiState();library.release();library=new VideoLibraryView(activity);library.restoreUiState(saved);activity.setContentView(library);library.refresh();await();assertEquals(3,field(library,"grid",GridView.class).getNumColumns());
+        described(library,"选择视频库视图").performClick();((PocketDialog)ShadowDialog.getLatestDialog()).getListView().performItemClick(null,0,0);layout();assertEquals(2,field(library,"grid",GridView.class).getNumColumns());
     }
 
     @Test public void multiSelectionSharesOnlySelectedUrisAndZeroSelectionDisablesActions() throws Exception {

@@ -41,6 +41,15 @@ public final class LibraryStoreTest {
     }
     private JSONObject completed(String taskId) throws Exception { return completed(taskId, Uri.fromFile(fixture).toString(), "本地测试视频"); }
 
+    @Test public void nextVideoUsesStableOrderingFiltersAndCrossesLoadedPageBoundaries()throws Exception{
+        for(int n=0;n<65;n++)store.upsertCompletedDownload(completed("next-"+n,Uri.fromFile(new File(app.getCacheDir(),"next-"+n+".mp4")).toString(),"连续播放样例 "+n).put("completedAt",1000+n/2).put("url",n%3==0?"https://b23.tv/fixture":"https://x.com/u/status/"+(100+n)));
+        List<JSONObject> page=store.listVideos("","",0,30,0),rest=store.listVideos("","",0,30,30);assertEquals(rest.get(0).optLong("id"),store.nextVideoId(page.get(29).optLong("id"),"",null,0,"date"));
+        List<JSONObject> sorted=store.listVideos("","",0,100,0,"source");for(int n=0;n<sorted.size()-1;n++)assertEquals(sorted.get(n+1).optLong("id"),store.nextVideoId(sorted.get(n).optLong("id"),"",null,0,"source"));assertEquals(0,store.nextVideoId(sorted.get(sorted.size()-1).optLong("id"),"",null,0,"source"));
+        List<JSONObject> filtered=store.listVideos("样例","x",0,100,0);assertEquals(filtered.get(1).optLong("id"),store.nextVideoId(filtered.get(0).optLong("id"),"样例",java.util.Collections.singletonList("x"),0,"date"));
+        long group=store.createCollection("连续播放选集");long first=page.get(0).optLong("id"),last=rest.get(5).optLong("id");store.setCollection(first,group,true);store.setCollection(last,group,true);
+        assertEquals(last,store.nextVideoId(first,"",null,group,"date"));assertEquals(0,store.nextVideoId(last,"",null,group,"date"));assertEquals(0,store.nextVideoId(first,"不存在的标题",null,0,"date"));
+    }
+
     @Test public void removedClipCanBeRestoredAtItsPositionWithTheSameIdentity()throws Exception{
         long video=store.upsertCompletedDownload(completed("undo"));long project=store.createProject("撤销样例");long first=store.addClip(project,video,1000,2000),second=store.addClip(project,video,3000,5000);
         JSONObject saved=store.clips(project).get(0);store.removeClip(first);store.restoreClip(saved);store.restoreClip(saved);

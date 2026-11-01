@@ -110,7 +110,27 @@ public final class LibraryStore implements Closeable {
         return listVideosFromSources(query,source==null||source.isEmpty()||source.equals("all")?java.util.Collections.emptyList():java.util.Collections.singletonList(source),collectionId,limit,offset,order);
     }
     public List<JSONObject> listVideosFromSources(String query,List<String> sources,long collectionId,int limit,int offset,String order){
-        StringBuilder where = new StringBuilder("1=1"); List<String> args = new ArrayList<>();
+        List<String> args=new ArrayList<>();StringBuilder where=videoFilter(query,sources,collectionId,args);
+        List<JSONObject> videos = new ArrayList<>();
+        try (Cursor c = helper.getReadableDatabase().query("video", null, where.toString(), args.toArray(new String[0]), null, null,
+                videoOrder(order), Math.max(0, offset) + "," + Math.max(1, Math.min(100, limit)))) {
+            while (c.moveToNext()) videos.add(readVideo(c));
+        }
+        return videos;
+    }
+    /** Seek by the same stable ordering as the catalogue, including beyond its loaded page. */
+    public long nextVideoId(long currentId,String query,List<String> sources,long collectionId,String order){
+        JSONObject current=video(currentId);if(current==null)return 0;
+        List<String> args=new ArrayList<>();StringBuilder where=videoFilter(query,sources,collectionId,args);
+        String later="(created_at<? OR (created_at=? AND id<?))";
+        if("source".equals(order)){where.append(" AND (source COLLATE NOCASE>? OR (source COLLATE NOCASE=? AND ").append(later).append("))");args.add(current.optString("source"));args.add(current.optString("source"));}
+        else where.append(" AND ").append(later);
+        args.add(String.valueOf(current.optLong("createdAt")));args.add(String.valueOf(current.optLong("createdAt")));args.add(String.valueOf(currentId));
+        try(Cursor c=helper.getReadableDatabase().query("video",new String[]{"id"},where.toString(),args.toArray(new String[0]),null,null,videoOrder(order),"1")){return c.moveToFirst()?c.getLong(0):0;}
+    }
+    private static String videoOrder(String order){return "source".equals(order)?"source COLLATE NOCASE,created_at DESC,id DESC":"created_at DESC,id DESC";}
+    private static StringBuilder videoFilter(String query,List<String> sources,long collectionId,List<String> args){
+        StringBuilder where = new StringBuilder("1=1");
         if (query != null && !query.trim().isEmpty()) {
             where.append(" AND (title LIKE ? ESCAPE '\\' OR author LIKE ? ESCAPE '\\')");
             String pattern = "%" + query.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
@@ -118,12 +138,7 @@ public final class LibraryStore implements Closeable {
         }
         if(sources!=null&&!sources.isEmpty()){where.append(" AND source IN (");for(int n=0;n<sources.size();n++){if(n>0)where.append(',');where.append('?');args.add(sources.get(n));}where.append(')');}
         if (collectionId > 0) { where.append(" AND id IN (SELECT video_id FROM collection_video WHERE collection_id=?)"); args.add(String.valueOf(collectionId)); }
-        List<JSONObject> videos = new ArrayList<>();
-        try (Cursor c = helper.getReadableDatabase().query("video", null, where.toString(), args.toArray(new String[0]), null, null,
-                ("source".equals(order) ? "source COLLATE NOCASE,created_at DESC,id DESC" : "created_at DESC,id DESC"), Math.max(0, offset) + "," + Math.max(1, Math.min(100, limit)))) {
-            while (c.moveToNext()) videos.add(readVideo(c));
-        }
-        return videos;
+        return where;
     }
 
     public JSONObject video(long id) {
