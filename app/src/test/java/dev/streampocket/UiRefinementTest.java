@@ -51,6 +51,8 @@ public final class UiRefinementTest {
             assertEquals(0,clicks[0]);assertFalse(button.isPressed());
             assertEquals(0f,button.getTranslationY(),0.001f);assertEquals(1f,button.getScaleX(),0.001f);
             touch(button,MotionEvent.ACTION_DOWN);touch(button,MotionEvent.ACTION_UP);
+            // View posts performClick after UP; PAUSED mode must dispatch that callback.
+            Shadows.shadowOf(Looper.getMainLooper()).idle();
             assertEquals(1,clicks[0]);assertTrue(button.getHeight()>=48);
         }
     }

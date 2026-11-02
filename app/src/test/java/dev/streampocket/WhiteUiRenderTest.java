@@ -121,6 +121,15 @@ public final class WhiteUiRenderTest {
             idle();
             View resultSurface=activity.getWindow().getDecorView();
             capture(resultSurface, "06-quality-inline-fixture");
+            TextView renderedTitle = findText(resultSurface, fixture.title);
+            assertNotNull(renderedTitle);
+            Rect visibleTitle = new Rect();
+            assertTrue(renderedTitle.getGlobalVisibleRect(visibleTitle));
+            assertEquals("The two-line title must not be clipped by baseline alignment",
+                    renderedTitle.getHeight(), visibleTitle.height());
+            assertTrue("The full title layout fits its own measured height",
+                    renderedTitle.getLayout().getHeight() <= renderedTitle.getHeight()
+                            - renderedTitle.getCompoundPaddingTop() - renderedTitle.getCompoundPaddingBottom());
             Button quality = findButton(resultSurface, "最高可用画质");
             assertNotNull("Current quality must remain discoverable", quality);
             quality.performClick();
@@ -163,6 +172,16 @@ public final class WhiteUiRenderTest {
     }
     private static void setField(Object object, String name, Object value) throws Exception {
         Field field = object.getClass().getDeclaredField(name); field.setAccessible(true); field.set(object, value);
+    }
+    private static TextView findText(View view, String text) {
+        if (view instanceof TextView && ((TextView)view).getText().toString().equals(text)) return (TextView)view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group=(ViewGroup)view;
+            for(int i=0;i<group.getChildCount();i++){
+                TextView found=findText(group.getChildAt(i),text);if(found!=null)return found;
+            }
+        }
+        return null;
     }
     private static Button findButton(View view, String part) {
         if (view instanceof Button && ((Button) view).getText().toString().contains(part)) return (Button) view;
