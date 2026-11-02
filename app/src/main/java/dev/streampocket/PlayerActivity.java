@@ -63,8 +63,8 @@ import java.util.concurrent.Executors;
 /** Full video canvas, a window-composited Media3 player, and tools disclosed in dark overlays. */
 @androidx.annotation.OptIn(markerClass=androidx.media3.common.util.UnstableApi.class)
 public final class PlayerActivity extends Activity {
-    private static final int BLACK=0xFF0A0C0F, WHITE=0xFFFAFAFA, MUTED=0xFFA1A1AA, ACCENT=0xFF70B8A8,
-            PANEL=0xFF17191D, LINE=0xFF343E43;
+    private static final int BLACK=0xFF0C0C0C, WHITE=0xFFFAFAFA, MUTED=0xFFAAAAAA, ACCENT=0xFFE8E8E8,
+            PANEL=0xFF1A1A1A, LINE=0xFF383838;
     private static final float[] SPEEDS={.5f,.75f,1f,1.25f,1.5f,2f};
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
@@ -292,7 +292,7 @@ public final class PlayerActivity extends Activity {
     }
     private void buildGestureHint() {
         gestureHint=text("",13,WHITE,false); gestureHint.setGravity(Gravity.CENTER); gestureHint.setPadding(dp(14),dp(9),dp(14),dp(9));
-        gestureHint.setBackground(shape(0xE61B2024,12)); gestureHint.setVisibility(View.GONE);
+        gestureHint.setBackground(shape(0xE6202020,12)); gestureHint.setVisibility(View.GONE);
         gestureHint.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         FrameLayout.LayoutParams hint=new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER_HORIZONTAL|Gravity.TOP);hint.topMargin=dp(72);
         root.addView(gestureHint,hint);
@@ -400,7 +400,7 @@ public final class PlayerActivity extends Activity {
 
     private void buildError() {
         errorPanel=column(); errorPanel.setGravity(Gravity.CENTER); errorPanel.setPadding(dp(24),dp(20),dp(24),dp(20));
-        errorPanel.setBackground(shape(0xDD18181B,12));
+        errorPanel.setBackground(shape(0xDD1A1A1A,12));
         status=text("正在读取本地视频…",14,WHITE,false); status.setGravity(Gravity.CENTER);
         status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); errorPanel.addView(status,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout actions=row(); actions.setGravity(Gravity.CENTER);
@@ -445,7 +445,7 @@ public final class PlayerActivity extends Activity {
         sheetOverlay.setOnClickListener(v->closeSheet());
         sheetBody=column(); sheetBody.setPadding(dp(20),dp(10),dp(20),dp(16)); sheetBody.setBackground(shape(PANEL,16));
         sheetBody.setOnClickListener(v->{});
-        FrameLayout handle=new FrameLayout(this);sheetHandle=handle;handle.setContentDescription("向下拖动收起工具面板");View grip=new View(this);grip.setBackground(shape(0xFF73797C,3));handle.addView(grip,new FrameLayout.LayoutParams(dp(36),dp(4),Gravity.CENTER));sheetBody.addView(handle,new LinearLayout.LayoutParams(-1,dp(20)));
+        FrameLayout handle=new FrameLayout(this);sheetHandle=handle;handle.setContentDescription("向下拖动收起工具面板");View grip=new View(this);grip.setBackground(shape(0xFF777777,3));handle.addView(grip,new FrameLayout.LayoutParams(dp(36),dp(4),Gravity.CENTER));sheetBody.addView(handle,new LinearLayout.LayoutParams(-1,dp(20)));
         LinearLayout heading=row(); sheetTitle=text("",16,WHITE,true); heading.addView(sheetTitle,new LinearLayout.LayoutParams(0,dp(48),1));
         ImageButton close=new ImageButton(this); close.setImageResource(R.drawable.sp_player_close); close.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         close.setPadding(dp(10),dp(10),dp(10),dp(10)); close.setContentDescription("关闭工具面板"); close.setOnClickListener(v->closeSheet()); heading.addView(close,new LinearLayout.LayoutParams(dp(48),dp(48))); sheetBody.addView(heading);
@@ -511,10 +511,10 @@ public final class PlayerActivity extends Activity {
         if(fresh)setSheetOffset(sheetTravel());
         if(!dragging)settleSheet(true,fresh||interrupted);
     }
-    private LinearLayout actionGroup(LinearLayout parent){LinearLayout group=column();group.setBackground(shape(0xFF24282D,16));add(parent,group,12,0);return group;}
+    private LinearLayout actionGroup(LinearLayout parent){LinearLayout group=column();group.setBackground(shape(0xFF282828,16));add(parent,group,12,0);return group;}
     private Button actionRow(LinearLayout parent,String label,String subtitle,String icon,Runnable run){
         FrameLayout row=new FrameLayout(this);Button hit=PocketButton.dark(this,label,PocketButton.Role.QUIET);hit.setGravity(Gravity.TOP|Gravity.START);hit.setPadding(dp(58),dp(14),dp(36),dp(30));hit.setTextSize(14);hit.setContentDescription(label+"，"+subtitle);hit.setOnClickListener(v->run.run());row.addView(hit,new FrameLayout.LayoutParams(-1,-1));
-        ImageView glyph=new ImageView(this);glyph.setImageDrawable(new PocketIcon(icon,0xFFD8DFE2));glyph.setPadding(dp(8),dp(8),dp(8),dp(8));glyph.setBackground(shape(0xFF30363B,10));glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams gp=new FrameLayout.LayoutParams(dp(34),dp(34),Gravity.CENTER_VERTICAL|Gravity.START);gp.leftMargin=dp(12);row.addView(glyph,gp);
+        ImageView glyph=new ImageView(this);glyph.setImageDrawable(new PocketIcon(icon,0xFFDDDDDD));glyph.setPadding(dp(8),dp(8),dp(8),dp(8));glyph.setBackground(shape(0xFF363636,10));glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams gp=new FrameLayout.LayoutParams(dp(34),dp(34),Gravity.CENTER_VERTICAL|Gravity.START);gp.leftMargin=dp(12);row.addView(glyph,gp);
         TextView hint=text(subtitle,12,MUTED,false);hint.setSingleLine(true);hint.setEllipsize(TextUtils.TruncateAt.END);hint.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams hp=new FrameLayout.LayoutParams(-1,dp(24),Gravity.BOTTOM);hp.leftMargin=dp(58);hp.rightMargin=dp(32);hp.bottomMargin=dp(9);row.addView(hint,hp);
         ImageView arrow=new ImageView(this);arrow.setImageDrawable(new PocketIcon("chevron",MUTED));arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams ap=new FrameLayout.LayoutParams(dp(16),dp(16),Gravity.END|Gravity.CENTER_VERTICAL);ap.rightMargin=dp(14);row.addView(arrow,ap);parent.addView(row,new LinearLayout.LayoutParams(-1,dp(72)));return hit;
     }
@@ -719,7 +719,7 @@ public final class PlayerActivity extends Activity {
         for(int i=0;i<Math.min(markers.size(),visibleMarkers);i++){
             JSONObject marker=markers.get(i);long at=markerStart(marker),end=marker.optLong("endMs");String name=marker.optString("label"),location=markerLocation(marker);
             LinearLayout line=row();line.setPadding(0,dp(10),0,dp(10));
-            FrameLayout poster=new FrameLayout(this);poster.setBackground(shape(0xFF2A3035,8));poster.setClipToOutline(true);
+            FrameLayout poster=new FrameLayout(this);poster.setBackground(shape(0xFF303030,8));poster.setClipToOutline(true);
             ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);poster.addView(image,new FrameLayout.LayoutParams(-1,-1));
             TextView placeholder=text("画面待载入",10,MUTED,false);placeholder.setGravity(Gravity.CENTER);poster.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));
             LinearLayout.LayoutParams thumb=new LinearLayout.LayoutParams(dp(92),dp(56));thumb.rightMargin=dp(12);line.addView(poster,thumb);markerFrames.add(new MarkerFrame(image,placeholder,at));
@@ -735,7 +735,7 @@ public final class PlayerActivity extends Activity {
             labels.setFocusable(true);labels.setContentDescription("跳转到 "+preciseTime(at)+(name.isEmpty()?"":", "+name));UiTheme.press(labels);UiTheme.press(poster);
             ImageButton more=new ImageButton(this);more.setImageResource(R.drawable.sp_player_more);more.setPadding(dp(10),dp(10),dp(10),dp(10));more.setBackgroundColor(android.graphics.Color.TRANSPARENT);
             more.setContentDescription("管理 "+location+" 的精彩标记");more.setOnClickListener(v->markerMenu(marker));line.addView(more,new LinearLayout.LayoutParams(dp(48),dp(56)));markerList.addView(line);
-            View divider=new View(this);divider.setBackgroundColor(0xFF30363B);markerList.addView(divider,new LinearLayout.LayoutParams(-1,dp(1)));
+            View divider=new View(this);divider.setBackgroundColor(0xFF363636);markerList.addView(divider,new LinearLayout.LayoutParams(-1,dp(1)));
         }
         if(markers.size()>visibleMarkers)action(markerList,"显示更多标记",()->{visibleMarkers+=40;renderMarkers();});
         if(!markers.isEmpty())add(markerList,text("点画面或文字回到这个时刻",11,MUTED,false),12,4);

@@ -114,17 +114,17 @@ public final class MainActivity extends Activity {
         clipboardNotice=column();clipboardNotice.setVisibility(View.GONE);root.addView(clipboardNotice);
         notice=column();notice.setVisibility(View.GONE);root.addView(notice);
         navigationFrame=new FrameLayout(this);navigationFrame.setBackgroundColor(SURFACE);
-        navigationPill=new View(this);navigationPill.setBackground(shape(palette.accentSoft,16,0));
-        FrameLayout.LayoutParams pill=new FrameLayout.LayoutParams(dp(72),dp(54));pill.topMargin=dp(6);navigationFrame.addView(navigationPill,pill);
-        navigation=row();navigation.setPadding(dp(10),dp(4),dp(10),dp(4));navigationFrame.addView(navigation,new FrameLayout.LayoutParams(-1,dp(68)));
+        navigationPill=new View(this);navigationPill.setBackground(shape(palette.accentSoft,12,0));
+        FrameLayout.LayoutParams pill=new FrameLayout.LayoutParams(dp(56),dp(48));pill.topMargin=dp(6);navigationFrame.addView(navigationPill,pill);
+        navigation=row();navigation.setPadding(dp(10),dp(4),dp(10),dp(4));navigationFrame.addView(navigation,new FrameLayout.LayoutParams(-1,dp(64)));
         String[] labels={"新建","下载","视频库","设置"},ids={"new","queue","library","settings"};
         for(int i=0;i<ids.length;i++){
             final String id=ids[i];Button b=quietButton(labels[i]);destinations[i]=b;
             b.setTextSize(11);b.setPadding(0,dp(6),0,dp(3));b.setMinWidth(0);b.setSingleLine(true);b.setGravity(Gravity.CENTER);
-            b.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x12397D72),null,null));
+            b.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(palette.dark?0x16FFFFFF:0x14000000),null,null));
             b.setOnClickListener(v->showTab(id));navigation.addView(b,new LinearLayout.LayoutParams(0,-1,1));
         }
-        root.addView(navigationFrame,new LinearLayout.LayoutParams(-1,dp(68)));
+        root.addView(navigationFrame,new LinearLayout.LayoutParams(-1,dp(64)));
         setContentView(root);root.requestApplyInsets();showTab(tab);
     }
 
@@ -144,7 +144,7 @@ public final class MainActivity extends Activity {
         }
         final int index=chosen;
         navigationFrame.post(()->{if(isDestroyed())return;float width=(navigation.getWidth()-navigation.getPaddingLeft()-navigation.getPaddingRight())/4f;
-            float x=navigation.getPaddingLeft()+index*width+(width-dp(72))/2;
+            float x=navigation.getPaddingLeft()+index*width+(width-dp(56))/2;
             navigationPill.animate().cancel();if(UiTheme.motionEnabled(this)&&navigationPill.isLaidOut())navigationPill.animate().translationX(x).setDuration(220).setInterpolator(new android.view.animation.OvershootInterpolator(.7f)).start();else navigationPill.setTranslationX(x);
         });
         if("new".equals(tab))showNew();else if("queue".equals(tab))refreshQueue(true);
@@ -164,7 +164,7 @@ public final class MainActivity extends Activity {
     private void showNew() {
         LinearLayout c=scrollContent();c.addView(text("新建下载",22,INK,true));
         add(c,text("粘贴分享文案，选择视频或音频再保存",13,MUTED,false),6,16);
-        LinearLayout form=column();form.setPadding(dp(16),dp(12),dp(16),dp(16));form.setBackground(shape(SURFACE,16,0));
+        LinearLayout form=column();form.setPadding(dp(16),dp(12),dp(16),dp(16));form.setBackground(shape(SURFACE,16,LINE));form.setElevation(dp(2));if(android.os.Build.VERSION.SDK_INT>=28){form.setOutlineAmbientShadowColor(0x18000000);form.setOutlineSpotShadowColor(0x20000000);}
         addLinkRow=row();Button more=quietButton("＋ 继续添加链接");more.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);more.setTextColor(ACCENT);more.setOnClickListener(v->{linkEditorExpanded=true;updateLinkEditor();input.requestFocus();((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(input,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);});addLinkRow.addView(more,new LinearLayout.LayoutParams(0,dp(48),1));
         Button quickPaste=quietButton("粘贴链接");quickPaste.setTextSize(13);quickPaste.setTextColor(ACCENT);quickPaste.setOnClickListener(v->pasteLink());addLinkRow.addView(quickPaste,new LinearLayout.LayoutParams(dp(88),dp(48)));form.addView(addLinkRow);
         linkEditor=column();form.addView(linkEditor,new LinearLayout.LayoutParams(-1,-2));
@@ -177,9 +177,15 @@ public final class MainActivity extends Activity {
         input.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence a,int b,int c,int d){}public void onTextChanged(CharSequence a,int b,int c,int d){}public void afterTextChanged(android.text.Editable value){if(!value.toString().equals(draft)){draft=value.toString();updateInspectionControls();}}});add(linkEditor,input,0,8);
         linkHint=text("",12,MUTED,false);linkHint.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);add(linkEditor,linkHint,0,0);
         linkPreview=column();add(linkEditor,linkPreview,6,0);
-        parse=button("解析链接",true);parse.setOnClickListener(v->analyze());add(linkEditor,parse,12,0);renderLinkHint();
+        parse=button("解析链接",true);parse.setOnClickListener(v->analyze());renderLinkHint();
         Button collection=quietButton("展开合集并选择");collection.setTextSize(13);collection.setTextColor(ACCENT);
-        collection.setOnClickListener(v->showCollection());add(linkEditor,collection,0,0);
+        collection.setOnClickListener(v->showCollection());
+        // One primary action; the optional collection route stays beside it, not another full-width stage.
+        LinearLayout importActions=row();
+        boolean stackActions=getResources().getConfiguration().screenWidthDp<360||getResources().getConfiguration().fontScale>1.2f;
+        if(stackActions){importActions.setOrientation(LinearLayout.VERTICAL);importActions.addView(parse,new LinearLayout.LayoutParams(-1,-2));importActions.addView(collection,new LinearLayout.LayoutParams(-1,-2));}
+        else{importActions.addView(parse,new LinearLayout.LayoutParams(0,dp(48),1));LinearLayout.LayoutParams collectionAction=new LinearLayout.LayoutParams(dp(120),dp(48));collectionAction.leftMargin=dp(8);importActions.addView(collection,collectionAction);}
+        add(linkEditor,importActions,12,0);
         cancel=quietButton("取消解析");cancel.setVisibility(View.GONE);cancel.setOnClickListener(v->cancelAnalysis());linkEditor.addView(cancel,new LinearLayout.LayoutParams(-1,dp(48)));
         feedback=text(lastInspectionMessage,12,MUTED,false);feedback.setTextIsSelectable(true);
         feedback.setVisibility(!lastInspectionMessage.isEmpty()?View.VISIBLE:View.GONE);add(form,feedback,10,0);
@@ -705,8 +711,8 @@ public final class MainActivity extends Activity {
     private void showSupportedPlatforms(){
         showMessage("支持的平台","YouTube、X / Twitter、哔哩哔哩、抖音\n\n试用渠道\n小红书、快手、TikTok、Instagram、Facebook、Pinterest、Pornhub、小黑盒\n\n复制单个视频的分享链接即可尝试。部分内容需要登录或源站验证，可能受地区和网络限制；图文、整批频道和进行中的直播暂不支持。\n\n有声音的视频可在画质选项中选择 MP3 或 M4A。音频保存在下载记录中，可打开或分享。");
     }
-    private void section(LinearLayout c,String title){add(c,text(title,12,MUTED,true),22,8);}
-    private LinearLayout settingsGroup(LinearLayout c){LinearLayout group=column();group.setPadding(dp(14),0,dp(14),0);group.setBackground(shape(SURFACE,16,0));c.addView(group,new LinearLayout.LayoutParams(-1,-2));return group;}
+    private void section(LinearLayout c,String title){add(c,text(title,12,MUTED,true),16,8);}
+    private LinearLayout settingsGroup(LinearLayout c){LinearLayout group=column();group.setPadding(dp(14),0,dp(14),0);group.setBackground(shape(SURFACE,12,LINE));c.addView(group,new LinearLayout.LayoutParams(-1,-2));return group;}
     private void switchRow(LinearLayout parent,String title,String key,boolean fallback){
         LinearLayout r=row();r.setMinimumHeight(dp(56));r.addView(text(title,14,INK,false),new LinearLayout.LayoutParams(0,-2,1));PocketSwitch control=new PocketSwitch(this);control.setMinHeight(dp(48));control.setContentDescription(title);control.setChecked(getSharedPreferences("config",0).getBoolean(key,fallback));control.setOnCheckedChangeListener((v,checked)->{getSharedPreferences("config",0).edit().putBoolean(key,checked).apply();if(key.equals("clipboard_suggestions")&&!checked)hideClipboardOffer();});r.addView(control);parent.addView(r);
     }
@@ -1118,10 +1124,10 @@ public final class MainActivity extends Activity {
     private TextView settingRow(LinearLayout parent,String title,String subtitle,String actionLabel,Runnable click) {
         LinearLayout r=row();r.setPadding(0,dp(8),0,dp(8));r.setMinimumHeight(dp(56));boolean arrowOnly="›".equals(actionLabel);
         TextView summary=text(subtitle,12,MUTED,false);summary.setMaxLines(2);summary.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        if(arrowOnly){r.addView(text(title,14,INK,false),new LinearLayout.LayoutParams(0,-2,1));summary.setGravity(Gravity.END);LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(dp(142),-2);vp.leftMargin=dp(8);r.addView(summary,vp);}
+        if(arrowOnly&&getResources().getConfiguration().screenWidthDp>=360&&getResources().getConfiguration().fontScale<=1.2f){r.addView(text(title,14,INK,false),new LinearLayout.LayoutParams(0,-2,1));summary.setGravity(Gravity.END);LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(dp(142),-2);vp.leftMargin=dp(8);r.addView(summary,vp);}
         else{LinearLayout labels=column();labels.addView(text(title,14,INK,true));add(labels,summary,4,0);r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));}
         TextView arrow=text(actionLabel,arrowOnly?20:13,arrowOnly?MUTED:ACCENT,false);arrow.setGravity(Gravity.CENTER);r.addView(arrow,new LinearLayout.LayoutParams(dp(arrowOnly?22:48),dp(40)));
-        r.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x14397D72),shape(SURFACE,10,0),null));r.setFocusable(true);r.setClickable(true);r.setContentDescription(title+"，"+subtitle+(arrowOnly?"":"，"+actionLabel));r.setOnClickListener(v->click.run());UiTheme.press(r);parent.addView(r,new LinearLayout.LayoutParams(-1,-2));return summary;
+        r.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(palette.dark?0x16FFFFFF:0x14000000),shape(SURFACE,10,0),null));r.setFocusable(true);r.setClickable(true);r.setContentDescription(title+"，"+subtitle+(arrowOnly?"":"，"+actionLabel));r.setOnClickListener(v->click.run());UiTheme.press(r);parent.addView(r,new LinearLayout.LayoutParams(-1,-2));return summary;
     }
 
     private PocketDialog settingsPanel(String title,LinearLayout content) {
@@ -1224,10 +1230,10 @@ public final class MainActivity extends Activity {
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
     private LinearLayout row(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.HORIZONTAL);l.setGravity(Gravity.CENTER_VERTICAL);return l;}
-    private TextView text(String s,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);t.setLineSpacing(dp(3),1);if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);return t;}
+    private TextView text(String s,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);t.setLineSpacing(dp(3),1);if(bold)t.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));return t;}
     private Button button(String title,boolean primary){return PocketButton.of(this,title,primary?PocketButton.Role.PRIMARY:PocketButton.Role.SECONDARY);}
     private Button quietButton(String label){return PocketButton.of(this,label,PocketButton.Role.QUIET);}
-    private StateListDrawable fieldBackground(){StateListDrawable states=new StateListDrawable();GradientDrawable focused=shape(palette.control,12,ACCENT);focused.setStroke(dp(2),ACCENT);states.addState(new int[]{android.R.attr.state_focused},focused);states.addState(new int[]{},shape(palette.control,12,0));return states;}
+    private StateListDrawable fieldBackground(){StateListDrawable states=new StateListDrawable();GradientDrawable focused=shape(SURFACE,10,ACCENT);focused.setStroke(dp(2),ACCENT);states.addState(new int[]{android.R.attr.state_focused},focused);states.addState(new int[]{},shape(palette.control,10,0));return states;}
     private GradientDrawable shape(int color,int radius,int border){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));if(border!=0)d.setStroke(dp(1),border);return d;}
     private void add(LinearLayout parent,View child,int top,int bottom){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(top);p.bottomMargin=dp(bottom);parent.addView(child,p);}
     private static String mediaSummary(Engine.Media media,int selection){
@@ -1240,7 +1246,7 @@ public final class MainActivity extends Activity {
         return value.isEmpty()?"实际大小在开始下载后确定":value;
     }
     private static String duration(long seconds){return String.format(Locale.ROOT,"%d:%02d",Math.max(0,seconds)/60,Math.max(0,seconds)%60);}
-    private ImageView cover(String source,String key,int width,int height){ImageView image=new ImageView(this);image.setBackground(shape(palette.control,12,0));image.setClipToOutline(true);image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setContentDescription("视频封面");artwork.load(image,source,key);return image;}
+    private ImageView cover(String source,String key,int width,int height){ImageView image=new ImageView(this);image.setBackground(shape(palette.control,10,0));image.setClipToOutline(true);image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setContentDescription("视频封面");artwork.load(image,source,key);return image;}
     private void clearArtwork(View view){if(artwork==null||view==null)return;if(view instanceof ImageView)artwork.cancel((ImageView)view);if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)clearArtwork(group.getChildAt(i));}}
     private final class NavIcon extends android.graphics.drawable.Drawable {
         private final int kind,color;private final android.graphics.Paint paint=new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);

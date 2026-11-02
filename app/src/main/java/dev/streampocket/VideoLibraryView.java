@@ -370,7 +370,13 @@ public final class VideoLibraryView extends LinearLayout {
         for(JSONObject group:collections)if(group.optLong("id")==collection){name=group.optString("name");break;}
         collectionButton.setText(collection==0?"全部合集":name);
         sourceButton.setText(selectedSources.isEmpty()?"全部来源":selectedSources.size()==1?sourceLabel(selectedSources.iterator().next()):selectedSources.size()+" 个来源");clearFilters.setVisibility(selectedSources.isEmpty()&&collection==0?GONE:VISIBLE);
-        sourceButton.setTextColor(selectedSources.isEmpty()?INK:palette.accent); collectionButton.setTextColor(collection==0?MUTED:palette.accent);
+        styleFilter(sourceButton,!selectedSources.isEmpty());styleFilter(collectionButton,collection!=0);
+        sourceButton.setContentDescription("按来源筛选视频，"+sourceButton.getText());collectionButton.setContentDescription("按合集筛选视频，"+collectionButton.getText());
+    }
+    private void styleFilter(TextView view,boolean selected){
+        view.setSelected(selected);view.setTextColor(selected?palette.accent:INK);
+        view.setBackground(new android.graphics.drawable.InsetDrawable(shape(selected?palette.accentSoft:palette.surface,true,8),0,dp(7),0,dp(7)));
+        view.setPadding(dp(12),0,dp(10),0);
     }
     private TextView selectionAction(String label,Runnable action) {
         TextView button=control(label,false);button.setTextSize(13);button.setBackgroundColor(Color.TRANSPARENT);button.setOnClickListener(v->{if(!writing&&!selectedIds.isEmpty())action.run();});
@@ -442,7 +448,7 @@ public final class VideoLibraryView extends LinearLayout {
     private TextView text(String value, int size, int color, boolean bold) {
         TextView v = new TextView(activity); v.setText(value); v.setTextSize(size); v.setTextColor(color); v.setGravity(Gravity.CENTER_VERTICAL); if (bold) v.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return v;
     }
-    private TextView filterChip(String value,String icon){TextView v=control(value,true);v.setTextSize(12);v.setPadding(dp(12),0,dp(10),0);v.setBackground(new android.graphics.drawable.InsetDrawable(shape(palette.surface,true,18),0,dp(7),0,dp(7)));v.setPadding(dp(12),0,dp(10),0);PocketIcon left=new PocketIcon(icon,MUTED),down=new PocketIcon("down",MUTED);left.setBounds(0,0,dp(16),dp(16));down.setBounds(0,0,dp(13),dp(13));v.setCompoundDrawables(left,null,down,null);v.setCompoundDrawablePadding(dp(6));return v;}
+    private TextView filterChip(String value,String icon){TextView v=control(value,true);v.setTextSize(12);v.setPadding(dp(12),0,dp(10),0);v.setBackground(new android.graphics.drawable.InsetDrawable(shape(palette.surface,true,8),0,dp(7),0,dp(7)));v.setPadding(dp(12),0,dp(10),0);PocketIcon left=new PocketIcon(icon,MUTED),down=new PocketIcon("down",MUTED);left.setBounds(0,0,dp(16),dp(16));down.setBounds(0,0,dp(13),dp(13));v.setCompoundDrawables(left,null,down,null);v.setCompoundDrawablePadding(dp(6));return v;}
     private TextView control(String value, boolean border) {
         TextView v = text(value, 14, INK, false); v.setGravity(Gravity.CENTER); v.setPadding(dp(8), 0, dp(8), 0); v.setSingleLine(true); v.setEllipsize(TextUtils.TruncateAt.END); v.setBackground(shape(palette.control, border, 16)); UiTheme.press(v); return v;
     }
@@ -470,9 +476,9 @@ public final class VideoLibraryView extends LinearLayout {
             Holder holder;
             if (recycled == null || !(recycled.getTag() instanceof Holder) || ((Holder)recycled.getTag()).list!=listMode) {
                 LinearLayout cell=new LinearLayout(activity);cell.setOrientation(listMode?HORIZONTAL:VERTICAL);cell.setGravity(Gravity.CENTER_VERTICAL);cell.setPadding(dp(3),dp(3),dp(3),dp(3));
-                FrameLayout media=new FrameLayout(activity);media.setBackground(shape(palette.dark?0xff232b2d:0xffe6eae6,false,12));media.setClipToOutline(true);
+                FrameLayout media=new FrameLayout(activity);media.setBackground(shape(palette.dark?0xff282828:0xffededed,false,12));media.setClipToOutline(true);
                 ImageView cover=new LibraryCoverView(activity);cover.setScaleType(ImageView.ScaleType.FIT_CENTER);cover.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);media.addView(cover,new FrameLayout.LayoutParams(-1,-1));
-                ProgressBar progress=new PocketProgressBar(activity,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);progress.setPadding(0,0,0,0);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(palette.accent));progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x66383E3C));progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                ProgressBar progress=new PocketProgressBar(activity,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);progress.setPadding(0,0,0,0);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(palette.accent));progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x66404040));progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
                 media.addView(progress,new FrameLayout.LayoutParams(-1,dp(3),Gravity.BOTTOM));
                 TextView time=text("",11,Color.WHITE,true);time.setGravity(Gravity.CENTER);time.setPadding(dp(6),dp(2),dp(6),dp(2));time.setBackground(shape(0xc2171a1c,false,5));
                 FrameLayout.LayoutParams overlay=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.END);overlay.setMargins(dp(6),dp(6),dp(6),dp(6));media.addView(time,overlay);
@@ -483,14 +489,14 @@ public final class VideoLibraryView extends LinearLayout {
                 LinearLayout.LayoutParams mediaParams=new LinearLayout.LayoutParams(listMode?dp(118):-1,dp(Math.max(106,coverHeight)));
                 if(listMode){mediaParams.height=dp(82);mediaParams.rightMargin=dp(12);}cell.addView(media,mediaParams);
                 LinearLayout body=new LinearLayout(activity);body.setOrientation(VERTICAL);LinearLayout top=new LinearLayout(activity);top.setGravity(Gravity.TOP);
-                TextView title=text("",14,INK,false);if(android.os.Build.VERSION.SDK_INT>=28)title.setTypeface(Typeface.create(Typeface.DEFAULT,600,false));else title.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));title.setMaxLines(2);title.setMinLines(listMode?1:2);title.setEllipsize(TextUtils.TruncateAt.END);title.setGravity(Gravity.TOP);title.setPadding(0,listMode?0:dp(8),0,0);
+                TextView title=text("",14,INK,false);if(android.os.Build.VERSION.SDK_INT>=28)title.setTypeface(Typeface.create(Typeface.DEFAULT,500,false));else title.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));title.setMaxLines(2);title.setMinLines(listMode?1:2);title.setEllipsize(TextUtils.TruncateAt.END);title.setGravity(Gravity.TOP);title.setPadding(0,listMode?0:dp(8),0,0);
                 top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
                 ImageView menu=(ImageView)iconControl("more","视频更多操作");menu.setPadding(dp(18),dp(18),dp(18),dp(18));
                 if(listMode)top.addView(menu,new LinearLayout.LayoutParams(dp(48),dp(48)));
                 else {menu.setImageDrawable(new LibraryIcon("more",Color.WHITE));menu.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x44ffffff),new android.graphics.drawable.InsetDrawable(shape(0x68171a1c,false,12),dp(22),dp(2),dp(2),dp(22)),null));FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.END);media.addView(menu,mp);menu.setPadding(dp(28),dp(8),dp(8),dp(28));}
                 body.addView(top,new LinearLayout.LayoutParams(-1,-2));
                 TextView meta=text("",12,MUTED,false);meta.setMaxLines(1);meta.setEllipsize(TextUtils.TruncateAt.END);body.addView(meta,new LinearLayout.LayoutParams(-1,-2));
-                TextView context=text("",11,palette.accent,false);context.setSingleLine(true);context.setEllipsize(TextUtils.TruncateAt.END);context.setPadding(dp(6),dp(3),dp(6),dp(3));context.setBackground(shape(palette.accentSoft,false,6));LinearLayout.LayoutParams badge=new LinearLayout.LayoutParams(-2,-2);badge.topMargin=dp(5);body.addView(context,badge);
+                TextView context=text("",11,palette.accent,false);context.setSingleLine(true);context.setEllipsize(TextUtils.TruncateAt.END);context.setPadding(0,dp(3),0,0);LinearLayout.LayoutParams badge=new LinearLayout.LayoutParams(-2,-2);badge.topMargin=dp(5);body.addView(context,badge);
                 cell.addView(body,new LinearLayout.LayoutParams(listMode?0:-1,-2,listMode?1:0));
                 holder=new Holder(cover,progress,time,title,meta,context,menu,checked,listMode);cell.setTag(holder);cell.setFocusable(true);UiTheme.press(cell);recycled=cell;
             }else holder=(Holder)recycled.getTag();
@@ -505,7 +511,7 @@ public final class VideoLibraryView extends LinearLayout {
             holder.context.setText(missing?"文件不可用":watched?"已看完":resume?"续播 "+duration(at):"");holder.context.setVisibility(missing||watched||resume?VISIBLE:GONE);
             holder.progress.setVisibility(!missing&&at>0&&total>0?VISIBLE:GONE);
             holder.progress.setProgress(total>0?(int)Math.min(1000,at*1000d/total):0);
-            boolean selected=selectedIds.contains(id);holder.checked.setVisibility(selectionMode?VISIBLE:GONE);holder.checked.setText(selected?"✓":"");holder.checked.setTextColor(palette.dark&&selected?palette.bg:Color.WHITE);holder.checked.setBackground(shape(selected?palette.accent:0x99242a2b,false,12));
+            boolean selected=selectedIds.contains(id);holder.checked.setVisibility(selectionMode?VISIBLE:GONE);holder.checked.setText(selected?"✓":"");holder.checked.setTextColor(palette.dark&&selected?palette.bg:Color.WHITE);holder.checked.setBackground(shape(selected?palette.accent:0x992A2A2A,false,12));
             recycled.setBackground(shape(selected?palette.accentSoft:Color.TRANSPARENT,false,16));
             // A focusable overflow child suppresses GridView.onItemClick for the
             // whole row. Own the actual row touch/keyboard action, leaving the

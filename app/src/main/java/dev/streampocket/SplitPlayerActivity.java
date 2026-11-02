@@ -57,14 +57,14 @@ public final class SplitPlayerActivity extends Activity {
         UiTheme.apply(this);super.onCreate(state);store=new LibraryStore(getApplicationContext());audio=(AudioManager)getSystemService(AUDIO_SERVICE);
         horizontal=state!=null?state.getBoolean("horizontal"):getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
         manualLayout=state!=null&&state.getBoolean("manual_layout");audible=state==null?0:state.getInt("audible",0);
-        root=column();root.setBackgroundColor(0xFF0A0C0F);root.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets;});
+        root=column();root.setBackgroundColor(0xFF0C0C0C);root.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());return insets;});
         LinearLayout toolbar=new LinearLayout(this);toolbar.setGravity(Gravity.CENTER_VERTICAL);
         Button back=button("返回");back.setContentDescription("退出双视频分屏");back.setOnClickListener(v->finish());toolbar.addView(back,new LinearLayout.LayoutParams(dp(64),dp(48)));
         TextView heading=text("双视频分屏");toolbar.addView(heading,new LinearLayout.LayoutParams(0,dp(48),1));
         layoutButton=button("");layoutButton.setOnClickListener(v->{manualLayout=true;horizontal=!horizontal;arrange();});toolbar.addView(layoutButton,new LinearLayout.LayoutParams(dp(92),dp(48)));root.addView(toolbar);
         panes=new LinearLayout(this);root.addView(panes,new LinearLayout.LayoutParams(-1,0,1));
         videos[0]=new Pane(0);videos[1]=new Pane(1);for(Pane p:videos)panes.addView(p.frame);arrange();
-        TextView help=text("两路独立播放 · 点声音切换 · 双指放大后可拖动");help.setTextSize(12);help.setTextColor(0xFFA1A1AA);help.setGravity(Gravity.CENTER);help.setPadding(dp(6),dp(8),dp(6),dp(8));root.addView(help);setContentView(root);
+        TextView help=text("两路独立播放 · 点声音切换 · 双指放大后可拖动");help.setTextSize(12);help.setTextColor(0xFFAAAAAA);help.setGravity(Gravity.CENTER);help.setPadding(dp(6),dp(8),dp(6),dp(8));root.addView(help);setContentView(root);
         if(state!=null){for(Pane p:videos){p.position=state.getLong("position"+p.index);p.wantsPlay=state.getBoolean("play"+p.index,true);p.load(state.getLong("video"+p.index),false);}}
         else {videos[0].position=getIntent().getLongExtra("position_ms",0);videos[0].load(getIntent().getLongExtra("video_id",0),false);}
         if(android.os.Build.VERSION.SDK_INT>=33)getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,this::finish);
@@ -160,6 +160,6 @@ public final class SplitPlayerActivity extends Activity {
     @Override protected void onDestroy(){destroyed=true;pickerRequest++;for(Pane p:videos)p.release();main.removeCallbacksAndMessages(null);io.execute(store::close);io.shutdown();super.onDestroy();}
     private LinearLayout column(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);return v;}
     private TextView text(String value){TextView v=new TextView(this);v.setText(value);v.setTextColor(0xFFFAFAFA);v.setTextSize(14);v.setGravity(Gravity.CENTER_VERTICAL);v.setPadding(dp(10),dp(6),dp(10),dp(6));return v;}
-    private Button button(String label){Button v=new Button(this);v.setText(label);v.setTextSize(12);v.setAllCaps(false);v.setTextColor(0xFF70B8A8);v.setMinWidth(0);v.setMinimumWidth(0);v.setMinHeight(dp(48));v.setPadding(dp(4),0,dp(4),0);v.setBackgroundColor(0xFF17191D);return v;}
+    private Button button(String label){Button v=new Button(this);v.setText(label);v.setTextSize(12);v.setAllCaps(false);v.setTextColor(0xFFE8E8E8);v.setMinWidth(0);v.setMinimumWidth(0);v.setMinHeight(dp(48));v.setPadding(dp(4),0,dp(4),0);v.setBackgroundColor(0xFF1A1A1A);return v;}
     private int dp(float value){return Math.round(value*getResources().getDisplayMetrics().density);}
 }

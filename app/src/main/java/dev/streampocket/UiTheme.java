@@ -19,14 +19,14 @@ public final class UiTheme {
         public final boolean dark;
         private Palette(boolean night) {
             dark=night;
-            bg=night?0xFF0F1215:0xFFF5F6F8;
-            surface=night?0xFF1B2024:0xFFFFFFFF;
-            ink=night?0xFFEEF1F2:0xFF171A1C;
-            muted=night?0xFFA6B0B4:0xFF69707D;
-            line=night?0xFF343E43:0xFFE4E7EC;
-            accent=night?0xFF70B8A8:0xFF397D72;
-            accentSoft=night?0xFF233D38:0xFFE3EFEB;
-            control=night?0xFF293035:0xFFEEF0F4;
+            bg=night?0xFF121212:0xFFFAFAFA;
+            surface=night?0xFF202020:0xFFFFFFFF;
+            ink=night?0xFFF2F2F2:0xFF202020;
+            muted=night?0xFFAAAAAA:0xFF686868;
+            line=night?0xFF383838:0xFFE5E5E5;
+            accent=night?0xFFE8E8E8:0xFF242424;
+            accentSoft=night?0xFF333333:0xFFECECEC;
+            control=night?0xFF2C2C2C:0xFFF2F2F2;
             danger=night?0xFFF0A8A0:0xFF9D3E39;
         }
     }
@@ -44,7 +44,7 @@ public final class UiTheme {
     public static void systemBars(Activity activity) {
         Palette p=get(activity);
         activity.getWindow().setStatusBarColor(p.bg);
-        activity.getWindow().setNavigationBarColor(Build.VERSION.SDK_INT>=26?p.bg:0xFF0F1215);
+        activity.getWindow().setNavigationBarColor(Build.VERSION.SDK_INT>=26?p.bg:0xFF121212);
         int flags=View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
         if(!p.dark)flags|=View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
         if(!p.dark&&Build.VERSION.SDK_INT>=26)flags|=View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
