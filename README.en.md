@@ -29,7 +29,7 @@ Failed links stay available for retry. Unfinished work and selected qualities ar
 | Make a short collection | Trim and arrange clips, export a new video, and keep the original files and editing draft |
 | Manage accounts | Optional website sign-in or login-file import, with per-platform enable/disable and removal |
 
-The 0.4.0 preview adds recent extraction reuse, pre-save checks, image-album ZIPs, optional subtitle/cover files and collection selection. See [download usage](docs/DOWNLOAD_FLOW.md).
+Version 0.4.1 adds a selectable save folder, moving existing downloads, removable extraction items, and direct cover-to-play controls. Recent extraction reuse, album ZIPs, subtitles, covers and collection selection remain available. See [download usage](docs/DOWNLOAD_FLOW.md).
 
 ## Supported sites
 
@@ -72,7 +72,7 @@ Download `StreamPocket-arm64-v8a.apk` from the [latest release](https://github.c
 
 If StreamPocket is already installed, install the new APK over it; **do not uninstall first**. You can also use **Settings → Advanced & About → App updates → Check for updates**. Your videos, accounts, download history, and drafts are retained. The current app interface is in Chinese.
 
-Completed videos are saved to `Download / StreamPocket`. Your phone must be able to reach the original video website.
+Downloads default to `Download / StreamPocket`. Choose another folder in **Settings → Save location** and move existing downloads there while retaining library records and playback progress. Your phone must be able to reach the original video website.
 
 ## Privacy and accounts
 
@@ -101,7 +101,7 @@ On Windows, use `gradlew.bat assembleDebug`. The debug APK is written to `app/bu
 
 StreamPocket's own code is licensed under [GPL-3.0-or-later](LICENSE). Video extraction uses yt-dlp; media processing uses FFmpeg and other open-source components. See [third-party notices](THIRD_PARTY_NOTICES.md) for licenses and attribution, and [corresponding sources](docs/THIRD_PARTY_SOURCES.md) for source and build information.
 
-## 0.4.0 preview
+## Development previews
 
 The preview includes recent extraction reuse, image-album ZIPs, optional subtitles and covers, collection-item selection, batch quality rules and per-platform account controls.
 

@@ -131,8 +131,8 @@ public final class AccountUiRenderTest {
             Dialog saved=ShadowDialog.getLatestDialog();View savedContent=saved.getWindow().getDecorView();
             assertNotNull(findButton(savedContent,"打开官方登录页"));
             assertNotNull(findButton(savedContent,"清除本机登录信息"));
-            assertNotNull(findText(savedContent,"保存凭据不代表源站已验证。最近请求成功也不代表账号拥有全部内容权限；无法下载时可重新登录。"));
-            assertNotNull(findText(savedContent,"已保存 · 未验证"));
+            assertNotNull(findText(savedContent,"解析与下载会自动使用此账号。部分内容仍需要账号具备访问权限。"));
+            assertNotNull(findText(savedContent,"登录信息已启用"));
             PocketSwitch enabled=findSwitch(savedContent);assertNotNull(enabled);assertTrue(enabled.isChecked());
             capture(savedContent,"013-account-saved-metadata-fixture");saved.dismiss();
             invoke(activity,"showTab",new Class<?>[]{String.class},"new");drain(activity);

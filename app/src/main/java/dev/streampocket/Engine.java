@@ -298,9 +298,9 @@ public final class Engine {
                 try (SourceScheduler.Lease lease = SourceScheduler.SHARED.acquire(url,
                         () -> inspectCancelled || cancelled.getAsBoolean(), progress)) {
                     RUNTIME_LOCK.readLock().lockInterruptibly();
+                    boolean publicTwitter=twitter&&signedIn&&!api.isEmpty();
                     try {
                         inspectProcess = processId;
-                        boolean publicTwitter=twitter&&signedIn&&!api.isEmpty();
                         YoutubeDLRequest request = request(url, processId,!publicTwitter);
                         if (!api.isEmpty()) request.addOption("--extractor-args", "twitter:api=" + api);
                         request.addOption("--dump-single-json");
@@ -326,7 +326,7 @@ public final class Engine {
                         if (inspectCancelled || cancelled.getAsBoolean() || error instanceof InterruptedException)
                             throw new InterruptedException("解析已取消");
                         lease.outcome(error);
-                        accounts.noteRequest(url, accountScope, error);
+                        if (!publicTwitter) accounts.noteRequest(url, accountScope, error);
                         String reason = cleanLog(error.getMessage() == null ? error.toString() : error.getMessage());
                         failures.append(api.isEmpty() ? "默认解析" : "X / " + api).append(":\n")
                                 .append(reason.substring(0, Math.min(reason.length(), 3500))).append("\n\n");

@@ -4,6 +4,11 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public final class RecoveryMessagesTest {
+    @Test public void revokedSelectedFolderKeepsItsActionableLocalMessage(){
+        String message="保存文件夹授权已失效，请重新选择；文件没有改存到其他位置";
+        assertEquals(message,CoreRules.userMessage(new java.io.IOException(message)));
+        assertFalse(CoreRules.userMessage(new java.io.IOException("opaque provider failure")).contains("opaque"));
+    }
     @Test public void dnsAndConnectionFailuresExplainDifferentRecoverySteps(){
         String dns=CoreRules.inspectionMessage(new java.net.UnknownHostException("example.invalid"));assertTrue(dns.contains("DNS"));assertTrue(dns.contains("重试"));assertFalse(dns.contains("UnknownHostException"));
         assertTrue(CoreRules.inspectionMessage(new Exception("connection refused")).contains("无法连接源站"));

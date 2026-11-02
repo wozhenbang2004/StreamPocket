@@ -472,8 +472,6 @@ public final class VideoLibraryView extends LinearLayout {
                 LinearLayout cell=new LinearLayout(activity);cell.setOrientation(listMode?HORIZONTAL:VERTICAL);cell.setGravity(Gravity.CENTER_VERTICAL);cell.setPadding(dp(3),dp(3),dp(3),dp(3));
                 FrameLayout media=new FrameLayout(activity);media.setBackground(shape(palette.dark?0xff232b2d:0xffe6eae6,false,12));media.setClipToOutline(true);
                 ImageView cover=new LibraryCoverView(activity);cover.setScaleType(ImageView.ScaleType.FIT_CENTER);cover.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);media.addView(cover,new FrameLayout.LayoutParams(-1,-1));
-                ImageView play=new ImageView(activity);play.setImageDrawable(new LibraryIcon("play",Color.WHITE));play.setBackground(shape(0x80171a1c,false,12));play.setPadding(dp(6),dp(6),dp(6),dp(6));play.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-                FrameLayout.LayoutParams playParams=new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.BOTTOM|Gravity.START);playParams.leftMargin=dp(6);playParams.bottomMargin=dp(6);media.addView(play,playParams);
                 ProgressBar progress=new PocketProgressBar(activity,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);progress.setPadding(0,0,0,0);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(palette.accent));progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x66383E3C));progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
                 media.addView(progress,new FrameLayout.LayoutParams(-1,dp(3),Gravity.BOTTOM));
                 TextView time=text("",11,Color.WHITE,true);time.setGravity(Gravity.CENTER);time.setPadding(dp(6),dp(2),dp(6),dp(2));time.setBackground(shape(0xc2171a1c,false,5));
@@ -489,13 +487,12 @@ public final class VideoLibraryView extends LinearLayout {
                 top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
                 ImageView menu=(ImageView)iconControl("more","视频更多操作");menu.setPadding(dp(18),dp(18),dp(18),dp(18));
                 if(listMode)top.addView(menu,new LinearLayout.LayoutParams(dp(48),dp(48)));
-                else {menu.setImageDrawable(new LibraryIcon("more",Color.WHITE));menu.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x44ffffff),new android.graphics.drawable.InsetDrawable(shape(0x68171a1c,false,10),dp(14)),null));FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.END);media.addView(menu,mp);}
-                menu.setPadding(dp(18),dp(18),dp(18),dp(18));
+                else {menu.setImageDrawable(new LibraryIcon("more",Color.WHITE));menu.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x44ffffff),new android.graphics.drawable.InsetDrawable(shape(0x68171a1c,false,12),dp(22),dp(2),dp(2),dp(22)),null));FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.END);media.addView(menu,mp);menu.setPadding(dp(28),dp(8),dp(8),dp(28));}
                 body.addView(top,new LinearLayout.LayoutParams(-1,-2));
                 TextView meta=text("",12,MUTED,false);meta.setMaxLines(1);meta.setEllipsize(TextUtils.TruncateAt.END);body.addView(meta,new LinearLayout.LayoutParams(-1,-2));
                 TextView context=text("",11,palette.accent,false);context.setSingleLine(true);context.setEllipsize(TextUtils.TruncateAt.END);context.setPadding(dp(6),dp(3),dp(6),dp(3));context.setBackground(shape(palette.accentSoft,false,6));LinearLayout.LayoutParams badge=new LinearLayout.LayoutParams(-2,-2);badge.topMargin=dp(5);body.addView(context,badge);
                 cell.addView(body,new LinearLayout.LayoutParams(listMode?0:-1,-2,listMode?1:0));
-                holder=new Holder(cover,play,progress,time,title,meta,context,menu,checked,listMode);cell.setTag(holder);cell.setFocusable(true);UiTheme.press(cell);recycled=cell;
+                holder=new Holder(cover,progress,time,title,meta,context,menu,checked,listMode);cell.setTag(holder);cell.setFocusable(true);UiTheme.press(cell);recycled=cell;
             }else holder=(Holder)recycled.getTag();
             View media=(View)holder.cover.getParent();ViewGroup.LayoutParams size=media.getLayoutParams();int columns=grid.getNumColumns();
             size.height=dp(listMode?82:Math.max(columns==3?84:106,Math.round((getResources().getConfiguration().screenWidthDp-46-(columns-1)*(columns==3?8:12f))/Math.max(1,columns)*.75f)));media.setLayoutParams(size);holder.title.setTextSize(!listMode&&columns==3?12:14);
@@ -506,7 +503,7 @@ public final class VideoLibraryView extends LinearLayout {
             long at=Math.max(0,video.optLong("playbackMs")),total=Math.max(0,video.optLong("durationMs"));boolean missing=video.optBoolean("missing");
             boolean watched=total>0&&at>=total-500,resume=at>0&&!watched;
             holder.context.setText(missing?"文件不可用":watched?"已看完":resume?"续播 "+duration(at):"");holder.context.setVisibility(missing||watched||resume?VISIBLE:GONE);
-            holder.play.setVisibility(!selectionMode&&!missing?VISIBLE:GONE);holder.progress.setVisibility(!missing&&at>0&&total>0?VISIBLE:GONE);
+            holder.progress.setVisibility(!missing&&at>0&&total>0?VISIBLE:GONE);
             holder.progress.setProgress(total>0?(int)Math.min(1000,at*1000d/total):0);
             boolean selected=selectedIds.contains(id);holder.checked.setVisibility(selectionMode?VISIBLE:GONE);holder.checked.setText(selected?"✓":"");holder.checked.setTextColor(palette.dark&&selected?palette.bg:Color.WHITE);holder.checked.setBackground(shape(selected?palette.accent:0x99242a2b,false,12));
             recycled.setBackground(shape(selected?palette.accentSoft:Color.TRANSPARENT,false,16));
@@ -521,8 +518,8 @@ public final class VideoLibraryView extends LinearLayout {
         }
     }
     private static final class Holder {
-        final ImageView cover,play,menu;final ProgressBar progress;final TextView time,title,meta,context,checked;final boolean list;
-        Holder(ImageView cover,ImageView play,ProgressBar progress,TextView time,TextView title,TextView meta,TextView context,ImageView menu,TextView checked,boolean list){this.cover=cover;this.play=play;this.progress=progress;this.time=time;this.title=title;this.meta=meta;this.context=context;this.menu=menu;this.checked=checked;this.list=list;}
+        final ImageView cover,menu;final ProgressBar progress;final TextView time,title,meta,context,checked;final boolean list;
+        Holder(ImageView cover,ProgressBar progress,TextView time,TextView title,TextView meta,TextView context,ImageView menu,TextView checked,boolean list){this.cover=cover;this.progress=progress;this.time=time;this.title=title;this.meta=meta;this.context=context;this.menu=menu;this.checked=checked;this.list=list;}
     }
     /** Small native line icons; glyph rendering never depends on an emoji font. */
     private static final class LibraryIcon extends Drawable {

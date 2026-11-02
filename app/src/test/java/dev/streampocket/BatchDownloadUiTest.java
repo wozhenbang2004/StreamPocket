@@ -53,6 +53,41 @@ public final class BatchDownloadUiTest {
         }
     }
 
+    @Test public void noFormatsFailureCanBeDeletedWithoutAskingForLogin() throws Exception {
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()){
+            MainActivity a=c.get();set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{throw new Exception("ERROR: No video formats found");});
+            field(a,"input",EditText.class).setText("https://x.com/fixture/status/401");invoke(a,"analyze",new Class<?>[0]);drain(a);
+            assertNull(find(a.getWindow().getDecorView(),"登录并重试"));assertNull(find(a.getWindow().getDecorView(),"检查账号并重试"));assertNotNull(find(a.getWindow().getDecorView(),"重新解析"));
+            capture(a,"041-no-formats-no-login-fixture.png");find(a.getWindow().getDecorView(),"查看队列").performClick();
+            PocketDialog queue=(PocketDialog)org.robolectric.shadows.ShadowDialog.getLatestDialog();assertNotNull(find(queue.getWindow().getDecorView(),"重试"));
+            find(queue.getWindow().getDecorView(),"删除").performClick();assertTrue(inbox(a).jobs.isEmpty());
+        }
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()){
+            assertTrue(inbox(c.get()).jobs.isEmpty());assertTrue(inbox(c.get()).media.isEmpty());
+        }
+    }
+
+    @Test public void deletingAnActiveInspectionDiscardsItsLateNativeResult() throws Exception {
+        java.util.concurrent.CountDownLatch started=new java.util.concurrent.CountDownLatch(1),release=new java.util.concurrent.CountDownLatch(1);
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()){
+            MainActivity a=c.get();set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{started.countDown();assertTrue(release.await(5,TimeUnit.SECONDS));return Collections.singletonList(media(url,"不应返回的旧结果"));});
+            field(a,"input",EditText.class).setText("https://x.com/fixture/status/402");invoke(a,"analyze",new Class<?>[0]);assertTrue(started.await(5,TimeUnit.SECONDS));
+            invoke(a,"showInspectionQueue",new Class<?>[0]);PocketDialog queue=(PocketDialog)org.robolectric.shadows.ShadowDialog.getLatestDialog();find(queue.getWindow().getDecorView(),"删除").performClick();
+            release.countDown();drain(a);assertTrue(inbox(a).jobs.isEmpty());assertTrue(inbox(a).media.isEmpty());
+        }finally{release.countDown();}
+    }
+
+    @Test public void removingAReadyResultAlsoRemovesItsQualityChoice() throws Exception {
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()){
+            MainActivity a=c.get();set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->Collections.singletonList(media(url,"可以移除的解析结果")));
+            field(a,"input",EditText.class).setText("https://x.com/fixture/status/403");invoke(a,"analyze",new Class<?>[0]);drain(a);
+            Engine.Media ready=inbox(a).media.get(0);java.util.Map choices=field(a,"qualitySelections",java.util.Map.class);choices.put(InspectionBatch.key(ready),0);
+            findDescription(a.getWindow().getDecorView(),"删除解析结果："+ready.title).performClick();assertTrue(inbox(a).media.isEmpty());assertTrue(choices.isEmpty());assertTrue(TaskStore.all(a).isEmpty());
+        }
+    }
+
+    private static View findDescription(View v,String description){if(description.equals(String.valueOf(v.getContentDescription())))return v;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++){View child=findDescription(((ViewGroup)v).getChildAt(i),description);if(child!=null)return child;}return null;}
+
     @Test public void audioChoiceIsRestoredAndOnlyEnqueuedAfterExplicitDownload() throws Exception {
         try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()) {
             MainActivity a=c.get();set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{
@@ -84,6 +119,22 @@ public final class BatchDownloadUiTest {
             action.performClick();assertEquals("queue",field(a,"tab",String.class));
             assertNotNull(find(a.getWindow().getDecorView(),"最近保存的音频"));
         }
+    }
+
+    @Test public void savedAccountRetryReusesTheSelectedTaskWithoutOpeningLoginOrDownloading() throws Exception {
+        AccountStore store=new AccountStore(app,new javax.crypto.spec.SecretKeySpec(new byte[32],"AES"));
+        store.save(LoginPlatform.X,"# Netscape HTTP Cookie File\n\n.x.com\tTRUE\t/\tTRUE\t2147483647\tauth_token\tsynthetic-existing-session\n","网页登录");
+        java.util.List<String> calls=new java.util.ArrayList<>();String first="https://x.com/fixture/status/501",second="https://x.com/fixture/status/502";
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()){
+            MainActivity a=c.get();set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{calls.add(url);throw new Exception("ERROR: Login required");});
+            field(a,"input",EditText.class).setText(first+" "+second);invoke(a,"analyze",new Class<?>[0]);drain(a);String original=inbox(a).jobs.get(0).id;
+            assertNull(find(a.getWindow().getDecorView(),"登录并重试"));find(a.getWindow().getDecorView(),"检查账号并重试").performClick();drain(a);assertEquals(original,field(a,"loginRecoveryId",String.class));
+            PocketDialog account=(PocketDialog)org.robolectric.shadows.ShadowDialog.getLatestDialog();
+            set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{calls.add(url);return Collections.singletonList(media(url,"使用现有账号重试的离线样例"));});
+            find(account.getWindow().getDecorView(),"使用此账号重试").performClick();drain(a);
+            assertEquals(java.util.Arrays.asList(first,second,first),calls);assertEquals(1,inbox(a).jobs.size());assertEquals(second,inbox(a).jobs.get(0).url);assertEquals(1,inbox(a).media.size());
+            assertTrue(TaskStore.all(a).isEmpty());assertNull(Shadows.shadowOf(a).getNextStartedActivityForResult());
+        }finally{store.clear(LoginPlatform.X);}
     }
 
     @Test public void loginRecoveryRetriesOnlyTheSelectedFailedLinkAndNeverDownloadsAutomatically() throws Exception {

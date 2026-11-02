@@ -19,6 +19,7 @@ public final class TaskStore {
         for (int i = 0; i < tasks.length(); i++) {
             JSONObject task = tasks.optJSONObject(i); if (task == null) continue;
             String status = task.optString("status");
+            if (status.equals("completed")) try { task.put("publicationBusy", false); } catch (Exception ignored) {}
             if (status.equals("pausing") && task.optBoolean("pauseRequested")) {
                 try { stopped(task, "paused", "已暂停，点击继续可复用已下载数据"); } catch (Exception ignored) {}
             } else if (status.equals("queued") || status.equals("downloading") || status.equals("merging")
@@ -88,6 +89,13 @@ public final class TaskStore {
                 JSONObject selected = byId.get(id);
                 if (!canEnqueue(selected)) continue;
                 boolean resume = selected.optString("status").equals("paused");
+                String previousStatus = selected.optString("status");
+                if (java.util.Arrays.asList("failed","interrupted","cancelled").contains(previousStatus)
+                        && selected.optString("uri").isEmpty()
+                        && (selected.optJSONArray("attachments")==null || selected.optJSONArray("attachments").length()==0)) {
+                    // An explicit retry starts a new unpublished attempt. Paused work keeps its original target.
+                    selected.remove("destinationTree");selected.remove("savedLocation");
+                }
                 selected.put("queuedAt", accepted).put("status", "queued").put("phase", "queued").put("stageLabel", "等待下载")
                         .put("stageProgress", -1).put("detail", resume ? "等待继续下载，保留已下载数据" : "等待下载")
                         .put("userError", "").put("log", "").put("pauseRequested", false)
@@ -163,6 +171,60 @@ public final class TaskStore {
             try { while (keys.hasNext()) { String key = keys.next(); task.put(key, patch.get(key)); } } catch (Exception invalid) { throw new IllegalArgumentException(invalid); }
             write(context, tasks); return;
         }
+    }
+
+    static synchronized void pinDestination(Context context, String id, DownloadLocation.Target target) throws Exception {
+        JSONArray tasks = strictRead(context);
+        for (int i = 0; i < tasks.length(); i++) {
+            JSONObject task = tasks.optJSONObject(i); if (task == null || !id.equals(task.optString("id"))) continue;
+            task.put("destinationTree", target.tree == null ? "" : target.tree.toString()).put("savedLocation", target.label);
+            commit(context, tasks); return;
+        }
+        throw new java.io.IOException("下载任务已不存在，未保存到其他位置");
+    }
+
+    /** URI-only rewrite. Task identities, playback metadata and attachment order stay intact. */
+    static synchronized void relocateUri(Context context, String from, String to) throws Exception {
+        relocateUri(context,from,to,null,null);
+    }
+
+    static synchronized void relocateUri(Context context, String from, String to, String location, String target) throws Exception {
+        JSONArray tasks = strictRead(context);
+        for (int i = 0; i < tasks.length(); i++) {
+            JSONObject task = tasks.optJSONObject(i); if (task == null) continue;
+            if (from.equals(task.optString("uri"))) {
+                task.put("uri", to);
+                if(location!=null)task.put("savedLocation",location).put("destinationTree","default".equals(target)?"":target);
+            }
+            JSONArray attachments = task.optJSONArray("attachments");
+            if (attachments != null) for (int n = 0; n < attachments.length(); n++) {
+                JSONObject file = attachments.optJSONObject(n);
+                if (file != null && from.equals(file.optString("uri"))) file.put("uri", to);
+            }
+        }
+        commit(context, tasks);
+    }
+
+    static synchronized boolean referencesUri(Context context, String uri) throws Exception {
+        JSONArray tasks = strictRead(context);
+        for (int i = 0; i < tasks.length(); i++) {
+            JSONObject task = tasks.optJSONObject(i); if (task == null) continue;
+            if (uri.equals(task.optString("uri"))) return true;
+            JSONArray files = task.optJSONArray("attachments");
+            if (files != null) for (int n = 0; n < files.length(); n++) {
+                JSONObject file = files.optJSONObject(n); if (file != null && uri.equals(file.optString("uri"))) return true;
+            }
+        }
+        return false;
+    }
+
+    private static JSONArray strictRead(Context context) throws Exception {
+        return new JSONArray(context.getSharedPreferences("tasks", Context.MODE_PRIVATE).getString("items", "[]"));
+    }
+
+    private static void commit(Context context, JSONArray tasks) throws java.io.IOException {
+        if (!context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", tasks.toString()).commit())
+            throw new java.io.IOException("下载记录未能持久保存，原文件已保留");
     }
 
     public static synchronized void remove(Context context, String id) {

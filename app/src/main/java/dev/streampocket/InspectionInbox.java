@@ -32,11 +32,13 @@ final class InspectionInbox {
     Job next() { for (Job job : jobs) if (job.state.equals("queued")) return job; return null; }
     int count(String state) { int n = 0; for (Job job : jobs) if (job.state.equals(state)) n++; return n; }
     void complete(Job job, List<Engine.Media> found) {
+        if (job != null && (!jobs.contains(job) || job.cancelled)) return;
         Set<String> known = new LinkedHashSet<>();for (Engine.Media item : media) known.add(InspectionBatch.key(item));
         for (Engine.Media item : found) if (known.add(InspectionBatch.key(item))) media.add(item);
         jobs.remove(job);
     }
     void fail(Job job, Throwable failure) {
+        if (!jobs.contains(job)) return;
         job.state = "failed"; job.cancelled = false;
         job.message = failure instanceof InterruptedException ? "已取消解析，可以重试" : CoreRules.inspectionMessage(failure, job.url);
         String details = CoreRules.cleanLog(failure.toString()); job.details = details.substring(0, Math.min(details.length(), 6000));
@@ -46,7 +48,7 @@ final class InspectionInbox {
         jobs.remove(job); job.state = "queued"; job.message = ""; job.details = ""; job.cancelled = false; jobs.add(job); return true;
     }
     int retryFailed() { int n = 0; for (Job job : new ArrayList<>(jobs)) if (retry(job)) n++; return n; }
-    void remove(Job job) { if (!job.state.equals("parsing") && !job.state.equals("cancelling")) jobs.remove(job); }
+    void remove(Job job) { job.cancelled = true; jobs.remove(job); }
     String json() {
         try {
             JSONArray pending = new JSONArray(), ready = new JSONArray();

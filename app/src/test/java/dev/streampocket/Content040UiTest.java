@@ -66,7 +66,7 @@ public final class Content040UiTest {
             public int update(Uri uri,ContentValues values,String where,String[] args){return 1;}
             public int delete(Uri uri,String where,String[] args){return 1;}
             public Cursor query(Uri uri,String[] projection,String where,String[] args,String order){return null;}
-            public ParcelFileDescriptor openFile(Uri uri,String mode)throws FileNotFoundException{return ParcelFileDescriptor.open(new File(storage,uri.getLastPathSegment()),ParcelFileDescriptor.MODE_CREATE|ParcelFileDescriptor.MODE_READ_WRITE|ParcelFileDescriptor.MODE_TRUNCATE);}
+            public ParcelFileDescriptor openFile(Uri uri,String mode)throws FileNotFoundException{return ParcelFileDescriptor.open(new File(storage,uri.getLastPathSegment()),mode.contains("w")?ParcelFileDescriptor.MODE_CREATE|ParcelFileDescriptor.MODE_READ_WRITE|ParcelFileDescriptor.MODE_TRUNCATE:ParcelFileDescriptor.MODE_READ_ONLY);}
         };
         android.content.pm.ProviderInfo providerInfo=new android.content.pm.ProviderInfo();providerInfo.authority="media";
         provider.attachInfo(app,providerInfo);ShadowContentResolver.registerProviderInternal("media",provider);

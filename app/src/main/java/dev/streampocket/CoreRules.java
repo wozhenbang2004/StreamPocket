@@ -90,13 +90,13 @@ public final class CoreRules {
 
     public static String inspectionMessage(Throwable error) {
         if(SourceFailure.kind(error)==SourceFailure.Kind.NO_FORMATS)
-            return "暂时没有可下载的画质。请先确认原平台能播放，再更新下载支持或重新登录。失败链接已保留。";
+            return "暂时没有可下载的画质。请先确认原链接能播放，再重新解析或更新下载支持。失败链接已保留。";
         if (SourceFailure.kind(error) != SourceFailure.Kind.OTHER) return userMessage(error);
         String text = cleanLog(error == null ? "" : error.toString()).toLowerCase(Locale.ROOT);
         if(text.contains("小红书未返回所选笔记"))return "未取得这条小红书笔记。请重新复制完整分享链接，并确认原平台能打开；链接记录已保留。";
         if (text.contains("certificate") || text.contains("ssl")) return "无法安全连接网站，请检查手机时间和网络后重试。";
         if (text.contains("no video could be found in this tweet") || text.contains("tweet is unavailable") || text.contains("tombstone"))
-            return "暂时无法取得这个 X 视频。请先确认原帖能播放，再到账号管理中登录后重试。";
+            return "暂时无法取得这个 X 视频。请先确认原帖能播放，再重新解析。失败链接已保留。";
         if(text.contains("没有返回可用视频")||text.contains("no video"))return "没有找到可下载的视频。请确认原链接能播放，再重新复制视频链接。记录已保留。";
         String message = userMessage(error);
         if (message.startsWith("操作未完成")) return "暂时无法解析这个视频，链接已保留，可稍后重试。";
@@ -114,6 +114,8 @@ public final class CoreRules {
     }
 
     public static String userMessage(Throwable error) {
+        String local=error==null||error.getMessage()==null?"":error.getMessage();
+        if(local.startsWith("保存文件夹")||local.startsWith("文件夹授权")||local.startsWith("文件夹需要")||local.startsWith("请选择可写入的文件夹")||local.startsWith("未能保存文件夹设置")||local.startsWith("未能恢复默认保存位置"))return cleanLog(local);
         String text = cleanLog(error == null ? "" : error.toString());
         String lower = text.toLowerCase(Locale.ROOT);
         SourceFailure.Kind kind = SourceFailure.kind(error);
@@ -125,7 +127,7 @@ public final class CoreRules {
         if (kind == SourceFailure.Kind.RATE_LIMIT) return "平台请求过于频繁，已进入冷却。稍后重试，登录状态会保留。";
         if (kind == SourceFailure.Kind.TIMEOUT) return "连接源站超时，暂时没有收到响应。请检查网络或代理后重试，链接记录已保留。";
         if (kind == SourceFailure.Kind.NETWORK) return lower.contains("resolve host")||lower.contains("name resolution")||lower.contains("unknownhost")||lower.contains("name or service not known")||lower.contains("nodename nor servname provided")?"无法解析网站地址。请检查网络、DNS 或代理配置后重试，链接记录已保留。":"无法连接源站，或连接已中断。请检查网络、代理和源站是否可访问，再重试。";
-        if (kind == SourceFailure.Kind.AUTH) return "这个视频需要登录或相应权限，请在账号管理中检查登录状态。";
+        if (kind == SourceFailure.Kind.AUTH) return "源站要求账号权限，请检查当前账号能否在原平台播放这条内容。";
         if(lower.contains("没有下载到媒体文件"))return "源站返回了网页，没有下载到媒体。请确认原链接能播放后重试，记录已保留。";
         if(lower.contains("文件已截断")||lower.contains("图片已截断")||lower.contains("媒体容器不完整")||lower.contains("明显短于原内容")||lower.contains("图集图片数量不完整"))
             return "下载内容不完整，未保存损坏文件。请重试，已有任务记录会保留。";
@@ -135,7 +137,7 @@ public final class CoreRules {
         if(lower.contains("字幕文件为空或过大")||lower.contains("源站没有返回有效字幕"))return "源站没有返回有效字幕，已保存的媒体和其他附件会保留。";
         if(lower.contains("unable to obtain file audio codec")||lower.contains("does not contain any audio"))
             return "没有找到可提取的音轨，或音频信息无法读取。可改为下载视频，或重新解析后重试。";
-        if(kind==SourceFailure.Kind.NO_FORMATS)return "暂时没有可下载的画质。请确认原平台能播放，再更新下载支持或重新登录。";
+        if(kind==SourceFailure.Kind.NO_FORMATS)return "暂时没有可下载的画质。请确认原链接能播放，再重新解析或更新下载支持。";
         if(kind==SourceFailure.Kind.UNSUPPORTED)return lower.contains("requested format")?"所选画质暂时不可用。请重新解析链接，再选择其他可用画质。":"暂时无法下载这个链接，请复制视频页面链接或更新下载支持后重试。";
         if (lower.contains("ffmpeg") || lower.contains("dlopen") || lower.contains("libc++") || lower.contains("native")) return "下载功能暂时不可用，请在设置中更新下载支持后重试。";
         if (lower.contains("captcha") || lower.contains("verification") || lower.contains("verify") || lower.contains("验证")) return "平台要求验证。请在账号管理中完成登录和验证，再重试。";

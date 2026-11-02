@@ -118,8 +118,11 @@ public final class Library022UiTest {
         for(int n=0;n<6;n++)seed("three-"+n,"界面样例 · 第 "+(n+1)+" 个视频，完整保留真实长度的中文标题","https://x.com/fixture/status/"+(100+n),1048576,1920,1080);
         open();described(library,"选择视频库视图").performClick();PocketDialog view=(PocketDialog)ShadowDialog.getLatestDialog();view.getListView().performItemClick(null,1,1);layout();
         GridView grid=field(library,"grid",GridView.class);assertEquals(3,grid.getNumColumns());assertEquals(3,app.getSharedPreferences("config",0).getInt("library_columns",0));
-        Object holder=grid.getChildAt(0).getTag();ImageView menu=field(holder,"menu",ImageView.class),play=field(holder,"play",ImageView.class);float d=activity.getResources().getDisplayMetrics().density;
-        assertEquals(Math.round(48*d),menu.getLayoutParams().width);assertEquals(Math.round(22*d),play.getLayoutParams().width);assertTrue(menu.getPaddingLeft()>=Math.round(18*d));assertTrue(play.getPaddingLeft()>=Math.round(6*d));
+        Object holder=grid.getChildAt(0).getTag();ImageView menu=field(holder,"menu",ImageView.class),cover=field(holder,"cover",ImageView.class);float d=activity.getResources().getDisplayMetrics().density;
+        assertEquals(Math.round(48*d),menu.getLayoutParams().width);assertEquals(Math.round(48*d),menu.getLayoutParams().height);
+        assertTrue("Visible menu is closer to the upper/right corner",menu.getPaddingTop()<menu.getPaddingBottom()&&menu.getPaddingRight()<menu.getPaddingLeft());
+        ViewGroup media=(ViewGroup)cover.getParent();int images=0;for(int i=0;i<media.getChildCount();i++)if(media.getChildAt(i) instanceof ImageView)images++;
+        assertEquals("Cover and menu only; no redundant play overlay",2,images);
         capture("three-column-small-controls-fixture");Bundle saved=library.saveUiState();library.release();library=new VideoLibraryView(activity);library.restoreUiState(saved);activity.setContentView(library);library.refresh();await();assertEquals(3,field(library,"grid",GridView.class).getNumColumns());
         described(library,"选择视频库视图").performClick();((PocketDialog)ShadowDialog.getLatestDialog()).getListView().performItemClick(null,0,0);layout();assertEquals(2,field(library,"grid",GridView.class).getNumColumns());
     }

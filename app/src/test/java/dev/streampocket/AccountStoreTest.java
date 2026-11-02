@@ -45,6 +45,16 @@ public final class AccountStoreTest {
         store.clear(LoginPlatform.INSTAGRAM);assertNotEquals(initial,store.cacheScope(url));
     }
 
+    @Test public void savedTwitterCredentialsReachRequestSnapshotWithoutRelogin() throws Exception {
+        store.save(LoginPlatform.X,HEADER+row(".x.com","auth_token","synthetic-existing-token")+row(".x.com","ct0","synthetic-csrf"),"网页登录");
+        assertTrue(store.hasTwitterLogin());File snapshot=new File(app.getCacheDir(),"twitter-existing-request.txt");
+        try{String scope=store.writeScopedSnapshot(snapshot,"https://x.com/fixture/status/1");assertEquals(store.cacheScope("https://x.com/fixture/status/1"),scope);
+            String body=new String(Files.readAllBytes(snapshot.toPath()),StandardCharsets.UTF_8);assertTrue(body.contains("synthetic-existing-token"));assertTrue(body.contains("synthetic-csrf"));
+            store.noteRequest("https://x.com/fixture/status/1",scope,new java.io.IOException("ERROR: No video formats found"));assertEquals("未验证",store.requestStatus(LoginPlatform.X));
+            assertTrue(store.hasTwitterLogin());
+        }finally{snapshot.delete();}
+    }
+
     @Test public void channelCredentialsRemainIsolatedAndCanBePausedOrCleared() throws Exception {
         LoginPlatform[] platforms={LoginPlatform.XIAOHONGSHU,LoginPlatform.KUAISHOU,LoginPlatform.TIKTOK,LoginPlatform.INSTAGRAM,LoginPlatform.FACEBOOK,LoginPlatform.PINTEREST};
         String[] hosts={".xiaohongshu.com",".kuaishou.com",".tiktok.com",".instagram.com",".facebook.com",".pinterest.com"};

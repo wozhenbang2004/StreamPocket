@@ -42,9 +42,12 @@ public final class MainActivity extends Activity {
     private String queueFilter="all";
     private PocketTabs queueTabs;
     private final Runnable commitRemovals=()->commitPendingRemovals(true);
-    private static final int COOKIE_REQUEST=51, NOTIFY_REQUEST=52, STORAGE_REQUEST=53, LOGIN_REQUEST=54;
+    private static final int COOKIE_REQUEST=51, NOTIFY_REQUEST=52, STORAGE_REQUEST=53, LOGIN_REQUEST=54, DIRECTORY_REQUEST=55, MOVE_STORAGE_REQUEST=56;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
+    private final ExecutorService fileIo=Executors.newSingleThreadExecutor();
+    private final java.util.concurrent.atomic.AtomicBoolean fileMoveCancelled=new java.util.concurrent.atomic.AtomicBoolean();
+    private boolean movingFiles;
     private Engine engine;
     private VideoLibraryView libraryView;
     private LinearLayout root, body, navigation;
@@ -210,7 +213,7 @@ public final class MainActivity extends Activity {
                     :waiting>0?waiting+" 个链接等待解析":failed+" 个链接解析失败",13,INK,true);
             queue.addView(summary,new LinearLayout.LayoutParams(0,-2,1));
             Button inspect=quietButton("查看队列");inspect.setTextSize(12);inspect.setTextColor(ACCENT);inspect.setOnClickListener(v->showInspectionQueue());queue.addView(inspect,new LinearLayout.LayoutParams(dp(88),dp(48)));add(inspectionResults,queue,0,4);
-            if(activeInspection!=null){
+            if(activeInspection!=null&&inspectionInbox.jobs.contains(activeInspection)){
                 LinearLayout current=row();TextView source=text(linkLabel(activeInspection.url),12,MUTED,false);source.setMaxLines(2);source.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);current.addView(source,new LinearLayout.LayoutParams(0,-2,1));
                 Button stop=quietButton(activeInspection.cancelled?"正在取消":"取消");stop.setTextSize(12);stop.setEnabled(!activeInspection.cancelled);stop.setOnClickListener(v->cancelAnalysis());current.addView(stop,new LinearLayout.LayoutParams(dp(64),dp(48)));add(inspectionResults,current,0,8);
             }
@@ -218,23 +221,24 @@ public final class MainActivity extends Activity {
                 Button all=quietButton("重试失败");all.setTextSize(12);all.setTextColor(ACCENT);all.setOnClickListener(v->{inspectionInbox.retryFailed();persistInspectionInbox();startNextInspection();renderInspection();});retry.addView(all,new LinearLayout.LayoutParams(dp(88),dp(48)));add(inspectionResults,retry,0,8);}
             int shown=0;for(InspectionInbox.Job job:new ArrayList<>(inspectionInbox.jobs))if(job.state.equals("failed")&&shown++<3){
                 LinearLayout failedItem=column();failedItem.setPadding(dp(12),dp(8),dp(12),dp(8));failedItem.setBackground(shape(SURFACE,12,0));
-                TextView link=text(linkLabel(job.url).replace("\n"," · "),13,INK,true);link.setMaxLines(1);link.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);failedItem.addView(link);
+                TextView link=text(linkLabel(job.url).replace("\n"," · "),13,INK,true);link.setMaxLines(1);link.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);LinearLayout failedTitle=row();failedTitle.addView(link,new LinearLayout.LayoutParams(0,-2,1));Button removeFailed=quietButton("×");removeFailed.setTextSize(20);removeFailed.setMinWidth(0);removeFailed.setPadding(0,0,0,0);removeFailed.setContentDescription("删除解析任务："+job.url);removeFailed.setOnClickListener(v->removeInspectionJob(job));failedTitle.addView(removeFailed,new LinearLayout.LayoutParams(dp(48),dp(48)));failedItem.addView(failedTitle);
                 add(failedItem,text(inspectionFailureMessage(job),12,MUTED,false),6,0);LinearLayout actions=row();
                 Button details=quietButton("错误详情");details.setTextSize(12);details.setEnabled(!job.details.isEmpty());details.setOnClickListener(v->showMessage("解析错误详情",job.details));actions.addView(details,new LinearLayout.LayoutParams(0,dp(48),1));
                 Button retry=quietButton("重新解析");retry.setTextColor(ACCENT);retry.setTextSize(13);retry.setOnClickListener(v->{inspectionInbox.retry(job);persistInspectionInbox();startNextInspection();renderInspection();});actions.addView(retry,new LinearLayout.LayoutParams(dp(96),dp(48)));failedItem.addView(actions);add(inspectionResults,failedItem,0,8);
-                if(canOfferLogin(job.url,job.details)){Button login=quietButton("登录并重试");login.setTextColor(ACCENT);login.setTextSize(13);login.setOnClickListener(v->showLoginRecovery("inspection",job.id,job.url));add(failedItem,login,0,0);}
+                if(canOfferLogin(job.url,job.details)){Button login=quietButton(accountRecoveryLabel(job.url));login.setTextColor(ACCENT);login.setTextSize(13);login.setOnClickListener(v->showLoginRecovery("inspection",job.id,job.url));add(failedItem,login,0,0);}
             }
             if(failed>3)add(inspectionResults,text("另有 "+(failed-3)+" 条失败记录，可在查看队列中重试",12,MUTED,false),0,8);
         }
         if(inspectedMedia.isEmpty())return;
         LinearLayout heading=row();heading.addView(text("待下载 · "+inspectedMedia.size()+" 项",16,INK,true),new LinearLayout.LayoutParams(0,-2,1));
         if(inspectedMedia.size()>1){Button all=quietButton("全部下载");all.setTextSize(12);all.setTextColor(ACCENT);all.setOnClickListener(v->enqueueBatch(new ArrayList<>(inspectedMedia)));heading.addView(all,new LinearLayout.LayoutParams(dp(96),dp(48)));}add(inspectionResults,heading,6,4);
-        LinearLayout readyTools=row();readyTools.addView(text("保存到 Download / StreamPocket",12,MUTED,false),new LinearLayout.LayoutParams(0,-2,1));
+        LinearLayout readyTools=row();readyTools.addView(text("保存到 "+DownloadLocation.label(this),12,MUTED,false),new LinearLayout.LayoutParams(0,-2,1));
         if(inspectedMedia.size()>1){Button batch=quietButton("批量设置");batch.setTextSize(12);batch.setTextColor(ACCENT);batch.setOnClickListener(v->showBatchSettings());readyTools.addView(batch,new LinearLayout.LayoutParams(dp(88),dp(48)));}add(inspectionResults,readyTools,0,8);
         for(Engine.Media m:inspectedMedia){
             LinearLayout item=row();item.setGravity(Gravity.TOP);item.setPadding(dp(12),dp(12),dp(12),dp(12));item.setBackground(shape(SURFACE,14,0));
             item.addView(cover(m.thumbnail,"inspect:"+m.url+":"+m.id,72,96),new LinearLayout.LayoutParams(dp(72),dp(96)));
-            LinearLayout words=column();TextView name=text(m.title==null||m.title.isEmpty()?"未命名视频":m.title,14,INK,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);words.addView(name);
+            LinearLayout words=column();TextView name=text(m.title==null||m.title.isEmpty()?"未命名视频":m.title,14,INK,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout readyTitle=row();readyTitle.setGravity(Gravity.TOP);readyTitle.addView(name,new LinearLayout.LayoutParams(0,-2,1));Button remove=quietButton("×");remove.setTextSize(20);remove.setMinWidth(0);remove.setPadding(0,0,0,0);remove.setContentDescription("删除解析结果："+m.title);remove.setOnClickListener(v->{inspectedMedia.remove(m);qualitySelections.remove(InspectionBatch.key(m));persistInspectionInbox();renderInspection();});readyTitle.addView(remove,new LinearLayout.LayoutParams(dp(40),dp(40)));words.addView(readyTitle);
             TextView metadata=text(m.platform+(m.duration>0?" · "+duration(m.duration):"")+(m.uploader!=null&&!m.uploader.isEmpty()?" · "+m.uploader:""),12,MUTED,false);metadata.setMaxLines(2);metadata.setEllipsize(android.text.TextUtils.TruncateAt.END);add(words,metadata,4,0);LinearLayout.LayoutParams info=new LinearLayout.LayoutParams(0,-2,1);info.leftMargin=dp(12);item.addView(words,info);
             String key=InspectionBatch.key(m);List<Engine.Quality> choices=m.downloadChoices();int chosen=Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),choices.size()-1));
             TextView details=text(mediaSummary(m,chosen),12,MUTED,false);add(words,details,4,0);
@@ -256,12 +260,12 @@ public final class MainActivity extends Activity {
             LinearLayout line=row();LinearLayout labels=column();TextView link=text(job.url,13,INK,false);link.setMaxLines(2);link.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);labels.addView(link);
             String state=job.state.equals("failed")?inspectionFailureMessage(job):job.state.equals("parsing")?"正在解析":job.state.equals("cancelling")?"正在取消":"等待解析";
             add(labels,text(state,12,job.state.equals("failed")?palette.danger:MUTED,false),4,0);line.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
-            Button action=quietButton(job.state.equals("failed")?"重试":job==activeInspection?"取消":"移除");action.setTextSize(12);action.setTextColor(ACCENT);action.setEnabled(!job.cancelled);action.setOnClickListener(v->{
-                if(job==activeInspection)cancelAnalysis();else if(job.state.equals("failed"))inspectionInbox.retry(job);else inspectionInbox.remove(job);
-                persistInspectionInbox();panel.dismiss();startNextInspection();renderInspection();
+            if(job.state.equals("failed")){Button retry=quietButton("重试");retry.setTextSize(12);retry.setTextColor(ACCENT);retry.setOnClickListener(v->{inspectionInbox.retry(job);persistInspectionInbox();panel.dismiss();startNextInspection();renderInspection();});line.addView(retry,new LinearLayout.LayoutParams(dp(56),dp(48)));}
+            Button action=quietButton("删除");action.setTextSize(12);action.setTextColor(MUTED);action.setContentDescription("删除解析任务："+job.url);action.setOnClickListener(v->{
+                panel.dismiss();removeInspectionJob(job);
             });line.addView(action,new LinearLayout.LayoutParams(dp(64),dp(48)));add(content,line,8,12);
             if(job.state.equals("failed")&&!job.details.isEmpty()){Button details=quietButton("查看错误详情");details.setTextSize(12);details.setOnClickListener(v->showMessage("解析错误详情",job.details));add(content,details,0,8);}
-            if(job.state.equals("failed")&&canOfferLogin(job.url,job.details)){Button login=quietButton("登录并重试");login.setTextColor(ACCENT);login.setOnClickListener(v->{panel.dismiss();showLoginRecovery("inspection",job.id,job.url);});add(content,login,0,8);}
+            if(job.state.equals("failed")&&canOfferLogin(job.url,job.details)){Button login=quietButton(accountRecoveryLabel(job.url));login.setTextColor(ACCENT);login.setOnClickListener(v->{panel.dismiss();showLoginRecovery("inspection",job.id,job.url);});add(content,login,0,8);}
         }
         if(inspectionInbox.jobs.isEmpty())content.addView(text("解析队列为空，已解析的视频仍在待下载列表。",13,MUTED,false));
         panel.show();bottom(panel);
@@ -420,6 +424,8 @@ public final class MainActivity extends Activity {
         if(activeInspection==null)return;activeInspection.cancelled=true;activeInspection.state="cancelling";engine.cancelInspect();persistInspectionInbox();if("new".equals(tab))renderInspection();
     }
 
+    private void removeInspectionJob(InspectionInbox.Job job){boolean active=job==activeInspection;inspectionInbox.remove(job);if(active)engine.cancelInspect();if(job.id.equals(loginRecoveryId))clearLoginRecovery();persistInspectionInbox();startNextInspection();renderInspection();}
+
     private void showInspectionDetails() {
         String details="拾流 "+BuildConfig.VERSION_NAME+"\n\n"+Engine.cleanLog(lastInspectionDetails);
         TextView view=text(details,13,INK,false);view.setTextIsSelectable(true);view.setPadding(dp(22),dp(15),dp(22),dp(12));
@@ -440,9 +446,19 @@ public final class MainActivity extends Activity {
         enqueueBatch(Collections.singletonList(media));
     }
 
+    private boolean needsStoragePermission(){return Build.VERSION.SDK_INT<29&&DownloadLocation.tree(this)==null&&checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)!=PackageManager.PERMISSION_GRANTED;}
+
+    private boolean needsStoragePermission(JSONObject task){return Build.VERSION.SDK_INT<29&&taskUsesDefaultLocation(task,DownloadLocation.tree(this)==null)&&checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)!=PackageManager.PERMISSION_GRANTED;}
+    static boolean taskUsesDefaultLocation(JSONObject task,boolean defaultForNew){
+        if(task==null)return defaultForNew;
+        String status=task.optString("status");boolean restart=("failed".equals(status)||"interrupted".equals(status)||"cancelled".equals(status))
+                &&task.optString("uri").isEmpty()&&(task.optJSONArray("attachments")==null||task.optJSONArray("attachments").length()==0);
+        return task.has("destinationTree")&&!restart?task.optString("destinationTree").isEmpty():defaultForNew;
+    }
+
     private void enqueueBatch(List<Engine.Media> media) {
         if(media.isEmpty())return;
-        if(Build.VERSION.SDK_INT<29&&checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)!=PackageManager.PERMISSION_GRANTED){
+        if(needsStoragePermission()){
             pendingBatch.clear();pendingBatch.addAll(media);requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},STORAGE_REQUEST);return;
         }
         try {
@@ -461,7 +477,7 @@ public final class MainActivity extends Activity {
     }
 
     private void startTask(String id) {
-        if(Build.VERSION.SDK_INT<29&&checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)!=PackageManager.PERMISSION_GRANTED){
+        if(needsStoragePermission(TaskStore.get(this,id))){
             pendingRetryId=id;requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},STORAGE_REQUEST);return;
         }
         try {
@@ -510,9 +526,9 @@ public final class MainActivity extends Activity {
             if(active&&!"queued".equals(status)){
                 ProgressBar bar=new PocketProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);bar.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));bar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(LINE));bar.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(ACCENT));bar.setIndeterminate(!known);bar.setProgress((int)Math.min(99,Math.max(0,progress)));bar.setContentDescription(known?prefix+(int)progress+"%":state+"，整体完成时间暂无法估计");add(content,bar,6,0);bar.getLayoutParams().height=dp(4);
             }
-            String error=task.optString("userError"),summary=error.isEmpty()?("completed".equals(status)?task.optString("attachmentNote"):taskCompactDetail(task,known)):error;
+            String error=taskDisplayError(task),summary=error.isEmpty()?("completed".equals(status)?task.optString("attachmentNote"):taskCompactDetail(task,known)):error;
             if(!summary.isEmpty()){TextView detail=text(summary,12,error.isEmpty()?MUTED:palette.danger,false);detail.setMaxLines(2);detail.setEllipsize(android.text.TextUtils.TruncateAt.END);add(content,detail,5,0);}
-            if("failed".equals(status)&&canOfferLogin(task.optString("url"),task.optString("log",task.optString("userError")))){Button recover=quietButton("登录并重试");recover.setTextSize(12);recover.setTextColor(ACCENT);recover.setOnClickListener(v->showLoginRecovery("download",id,task.optString("url")));content.addView(recover,new LinearLayout.LayoutParams(-2,dp(40)));}
+            if("failed".equals(status)&&canOfferLogin(task.optString("url"),task.optString("log",task.optString("userError")))){Button recover=quietButton(accountRecoveryLabel(task.optString("url")));recover.setTextSize(12);recover.setTextColor(ACCENT);recover.setOnClickListener(v->showLoginRecovery("download",id,task.optString("url")));content.addView(recover,new LinearLayout.LayoutParams(-2,dp(40)));}
             Button more=quietButton("");PocketIcon menuIcon=new PocketIcon("more",INK);menuIcon.setBounds(0,0,dp(24),dp(24));more.setCompoundDrawables(menuIcon,null,null,null);more.setContentDescription("任务更多操作："+task.optString("title"));more.setPadding(0,0,0,0);more.setMinWidth(0);more.setOnClickListener(v->showTaskActions(v,task));item.addView(more,new LinearLayout.LayoutParams(dp(48),dp(48)));
             item.setContentDescription(task.optString("title")+("completed".equals(status)?"，点按播放，更多查看任务详情":"，点按查看进度及详情"));
             item.setOnClickListener(v->{JSONObject current=TaskStore.get(this,id);if(current!=null){if("completed".equals(current.optString("status")))openFile(current,false);else showTask(current);}});item.setOnLongClickListener(v->{showTaskActions(v,task);return true;});
@@ -565,7 +581,7 @@ public final class MainActivity extends Activity {
         String status=task.optString("status"),id=task.optString("id");
         if(task.optJSONArray("attachments")!=null&&task.optJSONArray("attachments").length()>0)menu.getMenu().add("字幕与封面").setOnMenuItemClickListener(i->{showSavedAttachments(current);return true;});
         if("failed".equals(status)&&canOfferLogin(task.optString("url"),task.optString("log",task.optString("userError"))))
-            menu.getMenu().add("登录并重试").setOnMenuItemClickListener(i->{showLoginRecovery("download",id,current.optString("url"));return true;});
+            menu.getMenu().add(accountRecoveryLabel(task.optString("url"))).setOnMenuItemClickListener(i->{showLoginRecovery("download",id,current.optString("url"));return true;});
         if("completed".equals(status))menu.getMenu().add(current.optString("mime").startsWith("audio/")?"分享音频":current.optString("mime").startsWith("video/")?"分享视频":"分享文件").setOnMenuItemClickListener(i->{openFile(current,true);return true;});
         if(isActive(status)&&!"cancelling".equals(status)&&!"pausing".equals(status))menu.getMenu().add("取消任务").setOnMenuItemClickListener(i->{startService(new Intent(this,DownloadService.class).setAction("dev.streampocket.CANCEL").putExtra("id",id));return true;});
         if(!isActive(status))menu.getMenu().add("移除记录").setOnMenuItemClickListener(i->{removeTaskWithUndo(current);return true;});menu.setOnDismissListener(d->taskMenuOpen=false);taskMenuOpen=true;menu.show();
@@ -663,9 +679,11 @@ public final class MainActivity extends Activity {
         catch(Exception e){showMessage("无法打开", "文件可能已被移动或删除。\n"+friendly(e));}
     }
 
+    private static String taskDisplayError(JSONObject task){String original=task.optString("userError"),log=task.optString("log");return "failed".equals(task.optString("status"))&&!log.isEmpty()&&SourceFailure.kind(log)==SourceFailure.Kind.NO_FORMATS?CoreRules.userMessage(new IOException(log)):original;}
+
     private void showTask(JSONObject task) {
         String message=task.optString("title")+"\n\n"+statusName(task.optString("status"))+"\n"+
-                task.optString("detail")+"\n"+MediaSize.taskSummary(task)+"\n"+taskTransferDetail(task)+"\n\n"+task.optString("userError")+"\n\n"+task.optString("url")+
+                task.optString("detail")+"\n"+MediaSize.taskSummary(task)+"\n"+taskTransferDetail(task)+"\n\n"+taskDisplayError(task)+"\n\n"+task.optString("url")+
                 (task.optString("uri").isEmpty()?"":"\n\n"+task.optString("uri"));
         if(!task.optString("attachmentNote").isEmpty())message+="\n\n"+task.optString("attachmentNote");
         if(!task.optString("attachmentError").isEmpty())message+="\n\n附件诊断\n"+Engine.cleanLog(task.optString("attachmentError"));
@@ -677,7 +695,7 @@ public final class MainActivity extends Activity {
         LinearLayout c=scrollContent();c.addView(text("设置",22,INK,true));
         section(c,"账户与来源");LinearLayout accounts=settingsGroup(c);TextView accountSummary=settingRow(accounts,"账号管理","读取中…",this::showLoginSettings);settingRow(accounts,"支持的平台","视频与音频",this::showSupportedPlatforms);
         io.execute(()->{String summary;try{AccountStore store=new AccountStore(this);store.prepare();int count=0;for(LoginPlatform p:LoginPlatform.values())if(store.hasSaved(p))count++;summary=count==0?"未登录":count+" 个平台已保存";}catch(Exception e){summary="点此管理";}String value=summary;main.post(()->{if(!isDestroyed()&&"settings".equals(tab)&&accountSummary.isAttachedToWindow())accountSummary.setText(value);});});
-        section(c,"下载管理");LinearLayout downloads=settingsGroup(c);settingRow(downloads,"下载与速度",downloadConnections()+" 路 · 最高可用",this::showDownloadSettings);settingRow(downloads,"保存位置","Download / StreamPocket",()->showMessage("保存位置","视频和音频保存在手机的 Download / StreamPocket 文件夹。"));
+        section(c,"下载管理");LinearLayout downloads=settingsGroup(c);settingRow(downloads,"下载与速度",downloadConnections()+" 路 · 最高可用",this::showDownloadSettings);settingRow(downloads,"保存位置",DownloadLocation.label(this),this::showStorageSettings);
         switchRow(downloads,"剪贴板链接提醒","clipboard_suggestions",true);
         section(c,"播放与外观");LinearLayout appearance=settingsGroup(c);settingRow(appearance,"外观主题",themeLabel(),this::showAppearanceSettings);settingRow(appearance,"快进 / 快退",getSharedPreferences("config",0).getInt("seek_seconds",10)+" 秒",this::showSeekSettings);
         switchRow(appearance,"播放手势","player_gestures",false);switchRow(appearance,"界面动效","motion_enabled",true);
@@ -729,6 +747,38 @@ public final class MainActivity extends Activity {
             int value=chosen!=null&&chosen.getTag() instanceof Integer?(Integer)chosen.getTag():4;
             getSharedPreferences("config",0).edit().putInt("download_connections",value).apply();
             panel.dismiss();showTab("settings");toast("已保存，下次开始下载时生效");
+        });
+    }
+
+    private void showStorageSettings(){
+        LinearLayout c=column();c.addView(text("当前保存位置",12,MUTED,false));add(c,text(DownloadLocation.label(this),15,INK,true),6,16);
+        add(c,text("新下载的视频、音频、图集和附件会保存在这里。",13,MUTED,false),0,16);
+        Button choose=button("更改保存位置",true);c.addView(choose,new LinearLayout.LayoutParams(-1,dp(48)));
+        Button move=button(movingFiles?"正在移动文件…":"一键剪切已有下载",false);move.setEnabled(!movingFiles);add(c,move,12,0);
+        add(c,text("移动已完成的下载，保留视频库、观看进度和精彩标记。",12,MUTED,false),8,16);
+        Button reset=quietButton("恢复默认位置");if(DownloadLocation.tree(this)!=null)c.addView(reset,new LinearLayout.LayoutParams(-1,dp(48)));
+        PocketDialog panel=settingsPanel("保存位置",c);
+        choose.setOnClickListener(v->{
+            try{Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION|Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+                if(Build.VERSION.SDK_INT>=26&&DownloadLocation.tree(this)!=null)picker.putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,DownloadLocation.tree(this));
+                startActivityForResult(picker,DIRECTORY_REQUEST);panel.dismiss();
+            }catch(ActivityNotFoundException|SecurityException unavailable){showMessage("无法选择文件夹","手机未提供可用的文件夹选择器，请检查系统文件应用。");}
+        });
+        reset.setOnClickListener(v->{reset.setEnabled(false);fileIo.execute(()->{String error=null;try{DownloadLocation.reset(this);}catch(Exception e){error=friendly(e);}String failure=error;main.post(()->{if(isDestroyed())return;if(failure!=null){reset.setEnabled(true);showMessage("无法更改保存位置",failure);return;}panel.dismiss();showTab("settings");showStorageSettings();});});});
+        move.setOnClickListener(v->{panel.dismiss();moveDownloadedFiles();});
+    }
+
+    private void moveDownloadedFiles(){
+        if(needsStoragePermission()){requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},MOVE_STORAGE_REQUEST);return;}
+        if(movingFiles)return;movingFiles=true;fileMoveCancelled.set(false);
+        TextView progress=text("准备移动到 "+DownloadLocation.label(this),14,INK,false);progress.setPadding(dp(24),dp(16),dp(24),dp(16));
+        PocketDialog panel=new PocketDialog.Builder(this).setTitle("正在移动文件").setView(progress)
+                .setNegativeButton("停止移动",(d,w)->fileMoveCancelled.set(true)).setOnCancelListener(d->fileMoveCancelled.set(true)).show();bottom(panel);
+        fileIo.execute(()->{
+            String summary;
+            try{summary=DownloadMover.moveCompleted(this,fileMoveCancelled::get,value->main.post(()->{if(!isDestroyed()&&panel.isShowing())progress.setText(value);})).summary();}
+            catch(Exception failure){summary=friendly(failure);}
+            String result=summary;main.post(()->{movingFiles=false;if(isDestroyed())return;panel.dismiss();if(libraryView!=null)libraryView.refresh();if("settings".equals(tab))showTab("settings");showMessage("文件移动",result);});
         });
     }
 
@@ -784,7 +834,9 @@ public final class MainActivity extends Activity {
     }
 
     private String accountStatus(AccountState state) {
-        return state.saved?(state.enabled?"已保存 · "+new AccountStore(this).requestStatus(state.platform):"已保存 · 已暂停"):"未保存登录信息";
+        if(!state.saved)return "尚未添加账号";
+        if(!state.enabled)return "登录信息已暂停";
+        return "需要重新登录".equals(new AccountStore(this).requestStatus(state.platform))?"需要检查账号状态":"登录信息已启用";
     }
 
     private void showAccountDetails(AccountState state) {
@@ -794,12 +846,24 @@ public final class MainActivity extends Activity {
             String time=state.savedAt>0?android.text.format.DateFormat.format("yyyy-MM-dd HH:mm",state.savedAt).toString():"时间未知";
             add(c,text(state.source+" · "+time,12,MUTED,false),6,0);
         }
-        add(c,text(state.saved?"保存凭据不代表源站已验证。最近请求成功也不代表账号拥有全部内容权限；无法下载时可重新登录。":"登录后可尝试下载账号有权访问的内容。",13,MUTED,false),8,18);
-        if(loginRecoveryId!=null)add(c,text("保存登录信息后重试原任务。登录不能解除源站的地区、内容权限或访问限制。",12,MUTED,false),0,12);
-        Button login=button(state.saved?"打开官方登录页":"登录"+platform.title,true);c.addView(login,new LinearLayout.LayoutParams(-1,dp(48)));
+        add(c,text(state.saved?(state.enabled?"解析与下载会自动使用此账号。部分内容仍需要账号具备访问权限。":"此账号已暂停，启用后用于解析与下载。 "):"登录后可尝试下载账号有权访问的内容。",13,MUTED,false),8,18);
+        Button savedRetry=null;
+        if(loginRecoveryId!=null&&state.saved){savedRetry=button(state.enabled?"使用此账号重试":"启用账号并重试",true);c.addView(savedRetry,new LinearLayout.LayoutParams(-1,dp(48)));}
+        if("inspection".equals(loginRecoveryType))add(c,text("重试只处理这条链接，不会自动开始下载。",12,MUTED,false),8,12);
+        Button login=button(state.saved?"打开官方登录页":"登录"+platform.title,!state.saved);c.addView(login,new LinearLayout.LayoutParams(-1,dp(48)));
         TextView result=text("",13,MUTED,false);result.setVisibility(View.GONE);
         PocketDialog panel=new PocketDialog.Builder(this).setTitle(platform.title).setView(accountPanelContent(c))
                 .setPositiveButton("返回",(d,w)->returnFromAccount()).setOnCancelListener(d->returnFromAccount()).create();
+        if(savedRetry!=null){
+            Button retry=savedRetry;String recoveryId=loginRecoveryId,recoveryType=loginRecoveryType;
+            retry.setOnClickListener(v->{retry.setEnabled(false);io.execute(()->{
+                String error=null;try{if(!state.enabled)new AccountStore(this).setEnabled(platform,true);}catch(Exception e){error=friendly(e);}String failure=error;
+                main.post(()->{if(isDestroyed()||!panel.isShowing()||!recoveryId.equals(loginRecoveryId))return;
+                    if(failure!=null){retry.setEnabled(true);showMessage("暂时无法启用账号",failure);return;}
+                    panel.dismiss();clearLoginRecovery();resumeAfterLogin(recoveryType,recoveryId);
+                });
+            });});
+        }
         login.setOnClickListener(v->{
             login.setEnabled(false);
             if(!launchLogin(platform,panel))login.setEnabled(true);
@@ -854,9 +918,10 @@ public final class MainActivity extends Activity {
         VideoPlatform channel=VideoPlatform.detect(url);
         if(channel==null||LoginPlatform.fromId(channel.id)==null||details.contains("InterruptedException"))return false;
         SourceFailure.Kind kind=SourceFailure.kind(details);
-        return kind==SourceFailure.Kind.AUTH||kind==SourceFailure.Kind.CHALLENGE||kind==SourceFailure.Kind.ACCESS
-                ||kind==SourceFailure.Kind.NO_FORMATS||kind==SourceFailure.Kind.OTHER;
+        return kind==SourceFailure.Kind.AUTH;
     }
+
+    private String accountRecoveryLabel(String url){VideoPlatform channel=VideoPlatform.detect(url);LoginPlatform platform=channel==null?null:LoginPlatform.fromId(channel.id);return platform!=null&&new AccountStore(this).hasSaved(platform)?"检查账号并重试":"登录并重试";}
 
     private void showLoginRecovery(String type,String id,String url){
         VideoPlatform channel=VideoPlatform.detect(url);if(channel==null||loginOpening)return;
@@ -1072,6 +1137,13 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
+        if(request==DIRECTORY_REQUEST){
+            if(result!=RESULT_OK||data==null||data.getData()==null){showStorageSettings();return;}
+            Uri selected=data.getData();int flags=data.getFlags();
+            fileIo.execute(()->{String error=null;try{DownloadLocation.remember(this,selected,flags);}catch(Exception e){error=friendly(e);}String failure=error;
+                main.post(()->{if(isDestroyed())return;if(failure!=null){showMessage("无法保存位置",failure);return;}showTab("settings");showStorageSettings();});
+            });return;
+        }
         if(request==LOGIN_REQUEST){
             loginOpening=false;
             if(loginRecoveryId!=null){String id=loginRecoveryId,type=loginRecoveryType;clearLoginRecovery();
@@ -1106,6 +1178,7 @@ public final class MainActivity extends Activity {
 
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results) {
         super.onRequestPermissionsResult(request,permissions,results);
+        if(request==MOVE_STORAGE_REQUEST){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)moveDownloadedFiles();else showMessage("没有移动文件","请允许保存文件所需的存储权限，原文件保持不变。");return;}
         if(request==STORAGE_REQUEST) {
             if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){if(pendingRetryId!=null)startTask(pendingRetryId);else if(!pendingBatch.isEmpty()){List<Engine.Media> batch=new ArrayList<>(pendingBatch);pendingBatch.clear();enqueueBatch(batch);}}
             else showMessage("没有开始下载","Android 7–9 需要存储权限才能把视频保存到公共下载目录。链接已保留。");
@@ -1139,7 +1212,7 @@ public final class MainActivity extends Activity {
         if(libraryView!=null)libraryState=libraryView.saveUiState();if(libraryState!=null)state.putBundle("library_state",libraryState);
         try{org.json.JSONArray media=new org.json.JSONArray();for(Engine.Media m:inspectedMedia)media.put(m.toJson());state.putString("inspection_media",media.toString());}catch(Exception ignored){}
     }
-    @Override protected void onDestroy(){super.onDestroy();foreground=false;if(clipboardReview!=null)clipboardReview.dismiss();main.removeCallbacks(checkClipboard);main.removeCallbacks(previewLinks);main.removeCallbacks(poll);main.removeCallbacks(commitRemovals);if(!isChangingConfigurations())commitPendingRemovals(false);pendingRemoval.clear();if(libraryView!=null)libraryView.release();if(artwork!=null)artwork.release();++parseGeneration;engine.cancelInspect();if(collectionEngine!=null)collectionEngine.cancelInspect();io.shutdownNow();}
+    @Override protected void onDestroy(){super.onDestroy();foreground=false;fileMoveCancelled.set(true);fileIo.shutdownNow();if(clipboardReview!=null)clipboardReview.dismiss();main.removeCallbacks(checkClipboard);main.removeCallbacks(previewLinks);main.removeCallbacks(poll);main.removeCallbacks(commitRemovals);if(!isChangingConfigurations())commitPendingRemovals(false);pendingRemoval.clear();if(libraryView!=null)libraryView.release();if(artwork!=null)artwork.release();++parseGeneration;engine.cancelInspect();if(collectionEngine!=null)collectionEngine.cancelInspect();io.shutdownNow();}
 
     private static boolean isActive(String s){return Arrays.asList("queued","downloading","merging","saving","cancelling","pausing").contains(s);}
     private static String statusName(String s){switch(s){case"queued":return"等待下载";case"downloading":return"正在下载";case"merging":return"正在合并音视频";case"saving":return"正在保存到手机";case"completed":return"已保存";case"cancelling":return"正在取消";case"cancelled":return"已取消";case"pausing":return"正在暂停";case"paused":return"已暂停，断点保留";case"interrupted":return"上次下载中断，可重试";default:return"下载失败";}}

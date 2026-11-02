@@ -177,8 +177,11 @@ public final class DownloadService extends Service {
         PowerManager.WakeLock wakeLock = null;
         MediaExporter.Result committed = null;
         long committedBytes = 0;
+        String committedLocation = DownloadLocation.DEFAULT_LABEL;
         SourceScheduler.Lease[] admission = {null};
         try {
+            DownloadLocation.Target destination = DownloadLocation.forTask(this,task);
+            committedLocation = destination.label;
             PowerManager power = getSystemService(PowerManager.class);
             if (power != null) {
                 wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StreamPocket:download");
@@ -308,13 +311,13 @@ public final class DownloadService extends Service {
             if (!media.album) MediaValidation.check(complete, media, quality);
             if (!publishProgress(id, tracker.saving())) throw new IOException("stopped");
             updateNotification("正在保存 · " + media.title, id, -1);
-            MediaExporter.Result saved = MediaExporter.save(this, complete, () -> isCancelled(id));
+            MediaExporter.Result saved = MediaExporter.save(this, complete, () -> isCancelled(id), destination);
             committed = saved; committedBytes = complete.length();
             // Once the public file is committed, report that durable result even if Cancel arrived late.
             JSONObject success = new JSONObject().put("status", "completed").put("progress", 100)
                     .put("phase", "completed").put("stageLabel", "已保存").put("stageProgress", -1)
                     .put("transferComplete", true).put("etaSeconds", -1).put("speedBytesPerSecond", -1)
-                    .put("detail", "已保存到 Download/StreamPocket").put("userError", "").put("pauseRequested", false)
+                    .put("detail", "已保存到 " + destination.label).put("savedLocation",destination.label).put("publicationBusy",true).put("userError", "").put("pauseRequested", false)
                     .put("uri", saved.uri.toString()).put("mime", saved.mime).put("log", "")
                     .put("size", complete.length()).put("completedAt", System.currentTimeMillis());
             TaskStore.update(this, id, success);
@@ -323,7 +326,7 @@ public final class DownloadService extends Service {
                     ContentFiles.Sidecars attachments = ContentFiles.publishSidecars(this, workingDirectory, media, () -> isCancelled(id), savedFiles -> {
                         try {TaskStore.update(this,id,new JSONObject().put("attachments",savedFiles).put("attachmentNote","媒体已保存，正在保存附件"));}
                         catch(Exception error) {throw new IllegalStateException(error);}
-                    });
+                    }, destination);
                     TaskStore.update(this,id,new JSONObject().put("attachments",attachments.saved)
                             .put("attachmentError",attachments.error)
                             .put("attachmentNote", !attachments.warning.isEmpty() ? "媒体已保存；部分附件未完成：" + attachments.warning
@@ -341,7 +344,7 @@ public final class DownloadService extends Service {
                 try {
                     TaskStore.update(this, id, new JSONObject().put("status", "completed").put("progress", 100)
                             .put("phase", "completed").put("stageLabel", "已保存").put("stageProgress", -1)
-                            .put("detail", "视频已保存，视频库可稍后重新同步").put("userError", "")
+                            .put("detail", "已保存到 " + committedLocation + "，视频库可稍后重新同步").put("savedLocation",committedLocation).put("userError", "")
                             .put("uri", committed.uri.toString()).put("mime", committed.mime).put("size", committedBytes)
                             .put("completedAt", System.currentTimeMillis()).put("transferComplete", true)
                             .put("speedBytesPerSecond", -1).put("etaSeconds", -1).put("pauseRequested", false).put("libraryIndexPending", true));
@@ -359,6 +362,7 @@ public final class DownloadService extends Service {
                 }
             }
         } finally {
+            try {TaskStore.update(this,id,new JSONObject().put("publicationBusy",false));} catch(Exception ignored) {}
             if (admission[0] != null) admission[0].close();
             engine.cleanupRequest("download-" + id);
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
@@ -449,7 +453,7 @@ public final class DownloadService extends Service {
             TaskStore.update(this, id, new JSONObject().put("libraryIndexPending", entry <= 0));
         } catch (Exception unavailable) {
             try { TaskStore.update(this, id, new JSONObject().put("libraryIndexPending", true)
-                    .put("detail", "已保存到 Download/StreamPocket，视频库可稍后重新同步")); }
+                    .put("detail", "已保存到 " + (task==null?DownloadLocation.DEFAULT_LABEL:task.optString("savedLocation",DownloadLocation.DEFAULT_LABEL)) + "，视频库可稍后重新同步")); }
             catch (Exception ignored) { /* Indexing cannot change the successful download. */ }
         } finally {
             if (library != null) try { library.close(); } catch (Exception ignored) { /* Already committed. */ }

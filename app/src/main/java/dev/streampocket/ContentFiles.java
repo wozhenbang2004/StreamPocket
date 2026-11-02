@@ -68,6 +68,11 @@ final class ContentFiles {
         final JSONArray saved = new JSONArray(); String warning = "", error = "";
     }
     static Sidecars publishSidecars(Context app, File directory, Engine.Media media, BooleanSupplier cancelled, java.util.function.Consumer<JSONArray> onSaved) {
+        try { return publishSidecars(app,directory,media,cancelled,onSaved,DownloadLocation.snapshot(app)); }
+        catch(Exception failure) { Sidecars result=new Sidecars();result.warning=Engine.userMessage(failure);result.error=Engine.cleanLog(failure.toString());return result; }
+    }
+
+    static Sidecars publishSidecars(Context app, File directory, Engine.Media media, BooleanSupplier cancelled, java.util.function.Consumer<JSONArray> onSaved, DownloadLocation.Target target) {
         Sidecars result = new Sidecars();
         JSONArray saved = result.saved;
         try {
@@ -88,7 +93,7 @@ final class ContentFiles {
                     if (text.contains("<html") || text.contains("<!doctype html")) throw new IOException("源站没有返回有效字幕");
                 }
             }
-            MediaExporter.Result published = MediaExporter.save(app, file, cancelled);
+            MediaExporter.Result published = MediaExporter.save(app, file, cancelled, target);
             saved.put(new JSONObject().put("name", file.getName()).put("uri", published.uri.toString()).put("mime", published.mime));
             onSaved.accept(saved);
         }

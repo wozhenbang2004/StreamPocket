@@ -58,6 +58,11 @@ public final class LibraryStore implements Closeable {
     }
 
     public void syncCompletedDownloads() {
+        synchronized(DownloadMover.FILE_LOCK) { syncCompletedDownloadsLocked(); }
+    }
+
+    private void syncCompletedDownloadsLocked() {
+        recoverDocumentRenames();
         Set<String> imported = new HashSet<>();
         try (Cursor c = helper.getReadableDatabase().query("imported_task", new String[]{"task_id"}, null, null, null, null, null)) {
             while (c.moveToNext()) imported.add(c.getString(0));
@@ -68,8 +73,53 @@ public final class LibraryStore implements Closeable {
         }
     }
 
+    /** Download ledger only; this does not scan or import unrelated device files. */
+    List<JSONObject> downloadedFiles() {
+        List<JSONObject> files = new ArrayList<>();
+        try (Cursor c = helper.getReadableDatabase().rawQuery("SELECT imported_task.uri,video.title,video.mime,video.file_name FROM imported_task LEFT JOIN video ON video.id=imported_task.video_id", null)) {
+            while (c.moveToNext()) files.add(json("uri", c.getString(0), "title", c.isNull(1) ? "已下载文件" : c.getString(1),
+                    "mime", c.isNull(2) ? "application/octet-stream" : c.getString(2), "name", c.isNull(3) ? "" : c.getString(3)));
+        }
+        return files;
+    }
+
+    /** One SQLite transaction preserves every row ID and all foreign-key relationships. */
+    void relocateUri(String from, String to) {
+        if (!localUri(to)) throw new IllegalArgumentException("目标文件地址无效");
+        SQLiteDatabase db = helper.getWritableDatabase(); db.beginTransaction();
+        try {
+            ContentValues uri = new ContentValues(); uri.put("uri", to);
+            ContentValues video = new ContentValues(uri); video.put("file_name", displayName(Uri.parse(to), false));
+            db.update("video", video, "uri=?", new String[]{from});
+            db.update("imported_task", uri, "uri=?", new String[]{from});
+            db.update("edit_clip", uri, "uri=?", new String[]{from});
+            ContentValues output = new ContentValues(); output.put("output_uri", to);
+            db.update("edit_project", output, "output_uri=?", new String[]{from});
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
+    boolean referencesUri(String uri) {
+        SQLiteDatabase db = helper.getReadableDatabase();
+        for (String table : new String[]{"video", "imported_task", "edit_clip", "edit_project"}) {
+            String field = table.equals("edit_project") ? "output_uri" : "uri";
+            try (Cursor c = db.query(table, new String[]{field}, field+"=?", new String[]{uri}, null, null, null, "1")) {
+                if (c.moveToFirst()) return true;
+            }
+        }
+        return false;
+    }
+
     /** Explicit import can restore a removed entry; automatic queue sync cannot. */
-    public synchronized long upsertCompletedDownload(JSONObject task) {
+    public long upsertCompletedDownload(JSONObject task) {
+        synchronized(DownloadMover.FILE_LOCK) { return upsertCompletedDownloadLocked(task); }
+    }
+
+    private synchronized long upsertCompletedDownloadLocked(JSONObject task) {
+        if(task!=null&&!task.optString("id").isEmpty()) {
+            JSONObject current=TaskStore.get(app,task.optString("id"));
+            if(current!=null)task=current;
+        }
         if (task == null || !"completed".equals(task.optString("status"))) return 0;
         if (!task.optString("mime", "video/mp4").startsWith("video/")) return 0;
         String uri = task.optString("uri", "").trim();
@@ -270,7 +320,12 @@ public final class LibraryStore implements Closeable {
     public void removeVideoRecord(long videoId) { helper.getWritableDatabase().delete("video", "id=?", strings(videoId)); }
 
     /** Rename the owned public file first. A catalogue-only rename is never reported as success. */
-    public synchronized void renameVideo(long videoId, String newBaseName) {
+    public void renameVideo(long videoId, String newBaseName) {
+        synchronized(DownloadMover.FILE_LOCK) { renameVideoLocked(videoId,newBaseName); }
+    }
+
+    private synchronized void renameVideoLocked(long videoId, String newBaseName) {
+        recoverDocumentRenames();
         String base = validFileBaseName(newBaseName);
         JSONObject video = video(videoId);
         if (video == null || video.optBoolean("missing")) throw new IllegalArgumentException("原视频无法读取，请先恢复文件");
@@ -280,6 +335,22 @@ public final class LibraryStore implements Closeable {
         String original = displayName(uri, true);
         String requested = base + extension(original);
         if (requested.equals(original)) { saveRenamedMetadata(videoId, original); return; }
+        if(android.provider.DocumentsContract.isDocumentUri(app,uri)) {
+            Uri renamed;
+            try {
+                renamed=android.provider.DocumentsContract.renameDocument(resolver,uri,requested);
+                if(renamed==null)throw new IllegalStateException("文件提供方未完成重命名");
+                String actual=displayName(renamed,true);
+                if(!renamed.equals(uri)) {
+                    String key="rename-"+java.util.UUID.randomUUID();
+                    JSONObject recovery=new JSONObject().put("from",uri.toString()).put("to",renamed.toString()).put("videoId",videoId).put("name",actual);
+                    if(!app.getSharedPreferences("download-uri-renames",0).edit().putString(key,recovery.toString()).commit())
+                        throw new IllegalStateException("文件已重命名，但引用记录未能保存，请保留所选文件夹授权后重试");
+                    finishDocumentRename(key,recovery);
+                } else saveRenamedMetadata(videoId,actual);
+                return;
+            } catch(Exception failure) { throw renameFailure(failure instanceof RuntimeException?(RuntimeException)failure:new IllegalStateException(failure)); }
+        }
         if (Build.VERSION.SDK_INT >= 29) {
             ContentValues values = new ContentValues(); values.put(MediaStore.MediaColumns.DISPLAY_NAME, requested);
             boolean changed = false;
@@ -296,6 +367,25 @@ public final class LibraryStore implements Closeable {
                 throw renameFailure(failure);
             }
         } else renameLegacy(videoId, uri, original, requested);
+    }
+
+    void recoverDocumentRenames() {
+        synchronized(DownloadMover.FILE_LOCK) {
+            for(java.util.Map.Entry<String,?> saved:app.getSharedPreferences("download-uri-renames",0).getAll().entrySet()) {
+                if(!saved.getKey().startsWith("rename-")||!(saved.getValue() instanceof String))continue;
+                try {finishDocumentRename(saved.getKey(),new JSONObject((String)saved.getValue()));}
+                catch(Exception pending) {/* Keep the mapping; the file itself has not been deleted. */}
+            }
+        }
+    }
+
+    private void finishDocumentRename(String key,JSONObject saved) throws Exception {
+        synchronized(TaskStore.class) {
+            String from=saved.getString("from"),to=saved.getString("to");
+            relocateUri(from,to);TaskStore.relocateUri(app,from,to);saveRenamedMetadata(saved.getLong("videoId"),saved.getString("name"));
+            if(referencesUri(from)||TaskStore.referencesUri(app,from))throw new IllegalStateException("文件引用仍需同步");
+            if(!app.getSharedPreferences("download-uri-renames",0).edit().remove(key).commit())throw new IllegalStateException("重命名恢复记录待更新");
+        }
     }
 
     @SuppressWarnings("deprecation")
