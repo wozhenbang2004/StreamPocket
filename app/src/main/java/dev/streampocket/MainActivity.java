@@ -24,6 +24,7 @@ public final class MainActivity extends Activity {
     private int BG, INK, MUTED, ACCENT, SURFACE, LINE;
     private UiTheme.Palette palette;
     private MediaArtwork artwork;
+    private Engine collectionEngine;
     private LinearLayout brand, inspectionResults, notice, linkEditor, homeExtras, addLinkRow, linkPreview;
     private boolean linkEditorExpanded;
     private PocketDialog clipboardReview;
@@ -62,6 +63,7 @@ public final class MainActivity extends Activity {
     private final ArrayList<Engine.Media> pendingBatch=new ArrayList<>();
     private boolean parsing=false, loginOpening=false, taskMenuOpen=false;
     private String cookieImportPlatform;
+    private String loginRecoveryId, loginRecoveryType;
     private volatile int parseGeneration=0;
     private String pendingRetryId;
     private final Runnable poll=new Runnable() {
@@ -81,6 +83,7 @@ public final class MainActivity extends Activity {
         try{JSONObject selections=new JSONObject(getPreferences(0).getString("inspection_quality","{}"));Iterator<String> keys=selections.keys();while(keys.hasNext()){String key=keys.next();qualitySelections.put(key,selections.optInt(key));}}catch(Exception ignored){}
         if(state!=null){
             cookieImportPlatform=state.getString("cookie_import_platform");
+            loginRecoveryId=state.getString("login_recovery_id");loginRecoveryType=state.getString("login_recovery_type");
             linkEditorExpanded=state.getBoolean("link_editor_expanded",false);
             lastInspectionMessage=state.getString("inspection_message","");lastInspectionDetails=state.getString("inspection_details","");
             libraryState=state.getBundle("library_state");queueFilter=state.getString("queue_filter","all");
@@ -157,7 +160,7 @@ public final class MainActivity extends Activity {
 
     private void showNew() {
         LinearLayout c=scrollContent();c.addView(text("新建下载",22,INK,true));
-        add(c,text("粘贴分享文案，选好画质再保存",13,MUTED,false),6,16);
+        add(c,text("粘贴分享文案，选择视频或音频再保存",13,MUTED,false),6,16);
         LinearLayout form=column();form.setPadding(dp(16),dp(12),dp(16),dp(16));form.setBackground(shape(SURFACE,16,0));
         addLinkRow=row();Button more=quietButton("＋ 继续添加链接");more.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);more.setTextColor(ACCENT);more.setOnClickListener(v->{linkEditorExpanded=true;updateLinkEditor();input.requestFocus();((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(input,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);});addLinkRow.addView(more,new LinearLayout.LayoutParams(0,dp(48),1));
         Button quickPaste=quietButton("粘贴链接");quickPaste.setTextSize(13);quickPaste.setTextColor(ACCENT);quickPaste.setOnClickListener(v->pasteLink());addLinkRow.addView(quickPaste,new LinearLayout.LayoutParams(dp(88),dp(48)));form.addView(addLinkRow);
@@ -172,6 +175,8 @@ public final class MainActivity extends Activity {
         linkHint=text("",12,MUTED,false);linkHint.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);add(linkEditor,linkHint,0,0);
         linkPreview=column();add(linkEditor,linkPreview,6,0);
         parse=button("解析链接",true);parse.setOnClickListener(v->analyze());add(linkEditor,parse,12,0);renderLinkHint();
+        Button collection=quietButton("展开合集并选择");collection.setTextSize(13);collection.setTextColor(ACCENT);
+        collection.setOnClickListener(v->showCollection());add(linkEditor,collection,0,0);
         cancel=quietButton("取消解析");cancel.setVisibility(View.GONE);cancel.setOnClickListener(v->cancelAnalysis());linkEditor.addView(cancel,new LinearLayout.LayoutParams(-1,dp(48)));
         feedback=text(lastInspectionMessage,12,MUTED,false);feedback.setTextIsSelectable(true);
         feedback.setVisibility(!lastInspectionMessage.isEmpty()?View.VISIBLE:View.GONE);add(form,feedback,10,0);
@@ -183,7 +188,7 @@ public final class MainActivity extends Activity {
             c=homeExtras;
             List<JSONObject> completed=new ArrayList<>();for(JSONObject task:TaskStore.all(this))if("completed".equals(task.optString("status")))completed.add(task);
             if(!completed.isEmpty()){
-                LinearLayout head=row();head.addView(text("最近保存",14,INK,true),new LinearLayout.LayoutParams(0,-2,1));Button all=quietButton("查看视频库");all.setTextSize(12);all.setTextColor(ACCENT);all.setOnClickListener(v->showTab("library"));head.addView(all,new LinearLayout.LayoutParams(dp(96),dp(48)));add(c,head,14,4);
+                LinearLayout head=row();head.addView(text("最近保存",14,INK,true),new LinearLayout.LayoutParams(0,-2,1));boolean includesAudio=completed.stream().limit(2).anyMatch(t->!t.optString("mime","video/mp4").startsWith("video/"));Button all=quietButton(includesAudio?"查看下载":"查看视频库");all.setTextSize(12);all.setTextColor(ACCENT);all.setOnClickListener(v->showTab(includesAudio?"queue":"library"));head.addView(all,new LinearLayout.LayoutParams(dp(96),dp(48)));add(c,head,14,4);
                 for(int i=0;i<Math.min(2,completed.size());i++){
                     JSONObject task=completed.get(i);LinearLayout recent=row();recent.setPadding(dp(12),dp(10),dp(12),dp(10));recent.setBackground(shape(SURFACE,12,0));
                     ImageView cover=cover(task.optString("uri"),task.optString("id"),64,48);recent.addView(cover,new LinearLayout.LayoutParams(dp(64),dp(48)));
@@ -217,25 +222,29 @@ public final class MainActivity extends Activity {
                 add(failedItem,text(inspectionFailureMessage(job),12,MUTED,false),6,0);LinearLayout actions=row();
                 Button details=quietButton("错误详情");details.setTextSize(12);details.setEnabled(!job.details.isEmpty());details.setOnClickListener(v->showMessage("解析错误详情",job.details));actions.addView(details,new LinearLayout.LayoutParams(0,dp(48),1));
                 Button retry=quietButton("重新解析");retry.setTextColor(ACCENT);retry.setTextSize(13);retry.setOnClickListener(v->{inspectionInbox.retry(job);persistInspectionInbox();startNextInspection();renderInspection();});actions.addView(retry,new LinearLayout.LayoutParams(dp(96),dp(48)));failedItem.addView(actions);add(inspectionResults,failedItem,0,8);
+                if(canOfferLogin(job.url,job.details)){Button login=quietButton("登录并重试");login.setTextColor(ACCENT);login.setTextSize(13);login.setOnClickListener(v->showLoginRecovery("inspection",job.id,job.url));add(failedItem,login,0,0);}
             }
             if(failed>3)add(inspectionResults,text("另有 "+(failed-3)+" 条失败记录，可在查看队列中重试",12,MUTED,false),0,8);
         }
         if(inspectedMedia.isEmpty())return;
-        LinearLayout heading=row();heading.addView(text("待下载 · "+inspectedMedia.size()+" 个视频",16,INK,true),new LinearLayout.LayoutParams(0,-2,1));
+        LinearLayout heading=row();heading.addView(text("待下载 · "+inspectedMedia.size()+" 项",16,INK,true),new LinearLayout.LayoutParams(0,-2,1));
         if(inspectedMedia.size()>1){Button all=quietButton("全部下载");all.setTextSize(12);all.setTextColor(ACCENT);all.setOnClickListener(v->enqueueBatch(new ArrayList<>(inspectedMedia)));heading.addView(all,new LinearLayout.LayoutParams(dp(96),dp(48)));}add(inspectionResults,heading,6,4);
-        add(inspectionResults,text("保存到 Download / StreamPocket",12,MUTED,false),0,12);
+        LinearLayout readyTools=row();readyTools.addView(text("保存到 Download / StreamPocket",12,MUTED,false),new LinearLayout.LayoutParams(0,-2,1));
+        if(inspectedMedia.size()>1){Button batch=quietButton("批量设置");batch.setTextSize(12);batch.setTextColor(ACCENT);batch.setOnClickListener(v->showBatchSettings());readyTools.addView(batch,new LinearLayout.LayoutParams(dp(88),dp(48)));}add(inspectionResults,readyTools,0,8);
         for(Engine.Media m:inspectedMedia){
             LinearLayout item=row();item.setGravity(Gravity.TOP);item.setPadding(dp(12),dp(12),dp(12),dp(12));item.setBackground(shape(SURFACE,14,0));
             item.addView(cover(m.thumbnail,"inspect:"+m.url+":"+m.id,72,96),new LinearLayout.LayoutParams(dp(72),dp(96)));
             LinearLayout words=column();TextView name=text(m.title==null||m.title.isEmpty()?"未命名视频":m.title,14,INK,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);words.addView(name);
             TextView metadata=text(m.platform+(m.duration>0?" · "+duration(m.duration):"")+(m.uploader!=null&&!m.uploader.isEmpty()?" · "+m.uploader:""),12,MUTED,false);metadata.setMaxLines(2);metadata.setEllipsize(android.text.TextUtils.TruncateAt.END);add(words,metadata,4,0);LinearLayout.LayoutParams info=new LinearLayout.LayoutParams(0,-2,1);info.leftMargin=dp(12);item.addView(words,info);
-            String key=InspectionBatch.key(m);int chosen=Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),m.qualities.size()-1));
+            String key=InspectionBatch.key(m);List<Engine.Quality> choices=m.downloadChoices();int chosen=Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),choices.size()-1));
             TextView details=text(mediaSummary(m,chosen),12,MUTED,false);add(words,details,4,0);
-            LinearLayout actions=row();Button quality=quietButton("画质："+m.qualities.get(chosen).label+"  ▾");quality.setTextSize(12);quality.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);quality.setMinWidth(0);
-            quality.setOnClickListener(v->{String[] options=new String[m.qualities.size()];for(int n=0;n<options.length;n++)options[n]=m.qualities.get(n).label;
-                PocketDialog panel=new PocketDialog.Builder(this).setTitle("选择画质").setSingleChoiceItems(options,chosen,(d,which)->{qualitySelections.put(key,which);persistInspectionInbox();d.dismiss();renderInspection();}).setNegativeButton("返回",null).show();bottom(panel);});
+            LinearLayout actions=row();Button quality=quietButton((m.album?"图片："+m.imageCount+" 张":choices.get(chosen).audioOnly()?"音频："+choices.get(chosen).audioFormat.toUpperCase(Locale.ROOT):"画质："+choices.get(chosen).label)+"  ▾");quality.setTextSize(12);quality.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);quality.setMinWidth(0);
+            quality.setOnClickListener(v->{String[] options=new String[choices.size()];for(int n=0;n<options.length;n++)options[n]=choices.get(n).label;
+                PocketDialog panel=new PocketDialog.Builder(this).setTitle(m.hasAudio?"保存视频或音频":"选择画质").setSingleChoiceItems(options,chosen,(d,which)->{qualitySelections.put(key,which);persistInspectionInbox();d.dismiss();renderInspection();}).setNegativeButton("返回",null).show();bottom(panel);});
             quality.setPadding(0,0,dp(4),0);quality.setSingleLine(true);quality.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            actions.addView(quality,new LinearLayout.LayoutParams(0,dp(48),1));Button save=button("下载视频",true);save.setTextSize(12);save.setPadding(dp(10),0,dp(10),0);save.setOnClickListener(v->enqueue(m,m.qualities.get(Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),m.qualities.size()-1)))));actions.addView(save,new LinearLayout.LayoutParams(dp(88),dp(48)));add(words,actions,8,0);add(inspectionResults,item,0,10);
+            actions.addView(quality,new LinearLayout.LayoutParams(0,dp(48),1));Button save=button(m.album?"保存图集":choices.get(chosen).audioOnly()?"下载音频":"下载视频",true);save.setTextSize(12);save.setPadding(dp(10),0,dp(10),0);save.setOnClickListener(v->enqueue(m,choices.get(Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),choices.size()-1)))));actions.addView(save,new LinearLayout.LayoutParams(dp(88),dp(48)));add(words,actions,4,0);
+            if(!m.album){Button extras=quietButton(attachmentLabel(m));extras.setTextSize(12);extras.setTextColor(MUTED);extras.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);extras.setPadding(0,0,0,0);extras.setOnClickListener(v->showAttachments(m));words.addView(extras,new LinearLayout.LayoutParams(-1,dp(40)));}
+            add(inspectionResults,item,0,8);
         }
     }
 
@@ -252,6 +261,7 @@ public final class MainActivity extends Activity {
                 persistInspectionInbox();panel.dismiss();startNextInspection();renderInspection();
             });line.addView(action,new LinearLayout.LayoutParams(dp(64),dp(48)));add(content,line,8,12);
             if(job.state.equals("failed")&&!job.details.isEmpty()){Button details=quietButton("查看错误详情");details.setTextSize(12);details.setOnClickListener(v->showMessage("解析错误详情",job.details));add(content,details,0,8);}
+            if(job.state.equals("failed")&&canOfferLogin(job.url,job.details)){Button login=quietButton("登录并重试");login.setTextColor(ACCENT);login.setOnClickListener(v->{panel.dismiss();showLoginRecovery("inspection",job.id,job.url);});add(content,login,0,8);}
         }
         if(inspectionInbox.jobs.isEmpty())content.addView(text("解析队列为空，已解析的视频仍在待下载列表。",13,MUTED,false));
         panel.show();bottom(panel);
@@ -351,7 +361,7 @@ public final class MainActivity extends Activity {
     private void showLinkMessage(String message,boolean error){main.removeCallbacks(previewLinks);linkEditorExpanded=true;updateLinkEditor();if(linkHint!=null){linkHint.setText(message);linkHint.setTextColor(error?palette.danger:MUTED);linkHint.announceForAccessibility(message);}}
     private void hideLinkKeyboard(){if(input!=null){input.clearFocus();android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);if(keyboard!=null)keyboard.hideSoftInputFromWindow(input.getWindowToken(),0);}}
     private void updateLinkEditor(){if(linkEditor==null||addLinkRow==null)return;boolean work=parsing||!inspectionInbox.jobs.isEmpty()||!inspectedMedia.isEmpty();boolean expanded=!work||!draft.trim().isEmpty()||linkEditorExpanded;linkEditor.setVisibility(expanded?View.VISIBLE:View.GONE);addLinkRow.setVisibility(expanded?View.GONE:View.VISIBLE);}
-    private static String linkLabel(String url){String platform;switch(SourceScheduler.platform(url)){case "x":platform="X / Twitter";break;case "bilibili":platform="哔哩哔哩";break;case "douyin":platform="抖音";break;case "youtube":platform="YouTube";break;default:try{platform=new URI(url).getHost();}catch(Exception invalid){platform="视频链接";}}
+    private static String linkLabel(String url){VideoPlatform channel=VideoPlatform.detect(url);String platform=channel==null?"视频链接":channel.title;if(channel==null)try{platform=new URI(url).getHost();}catch(Exception ignored){}
         String visible=url.replaceFirst("(?i)^https?://","");if(visible.length()>200)visible=visible.substring(0,140)+"…"+visible.substring(visible.length()-50);return platform+"\n"+visible;}
 
     private void analyze() {
@@ -396,7 +406,7 @@ public final class MainActivity extends Activity {
         if(input==null||linkHint==null||!"new".equals(tab))return;
         linkHint.setTextColor(MUTED);if(linkPreview!=null)linkPreview.removeAllViews();
         updateInspectionButton();
-        if(draft.trim().isEmpty()){linkHint.setText("支持 YouTube、X、哔哩哔哩、抖音，可批量粘贴");return;}
+        if(draft.trim().isEmpty()){linkHint.setText("支持 YouTube、X、B站、抖音、小红书等，可批量粘贴");return;}
         try{LinkBatch.Result links=LinkBatch.parse(draft);linkHint.setText("识别到 "+links.urls.size()+" 个链接"+(links.duplicates>0?" · "+links.duplicates+" 个重复已合并":"")+(!links.invalid.isEmpty()?" · "+links.invalid.size()+" 个无效链接已跳过":""));
             if(links.urls.size()==1)linkHint.append(" · "+linkLabel(links.urls.get(0)).split("\n",2)[0]);
             if(linkPreview!=null&&links.urls.size()>1){for(int n=0;n<Math.min(3,links.urls.size());n++){String label=linkLabel(links.urls.get(n));TextView preview=text(label.replace("\n"," · "),12,MUTED,false);preview.setContentDescription(label);preview.setMaxLines(1);preview.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);preview.setPadding(0,dp(4),0,dp(4));linkPreview.addView(preview);}
@@ -426,7 +436,7 @@ public final class MainActivity extends Activity {
     }
 
     private void enqueue(Engine.Media media,Engine.Quality quality) {
-        String key=InspectionBatch.key(media);qualitySelections.put(key,media.qualities.indexOf(quality));
+        String key=InspectionBatch.key(media);for(int n=0;n<media.downloadChoices().size();n++)if(media.downloadChoices().get(n).id.equals(quality.id)){qualitySelections.put(key,n);break;}
         enqueueBatch(Collections.singletonList(media));
     }
 
@@ -437,7 +447,7 @@ public final class MainActivity extends Activity {
         }
         try {
             List<Engine.Quality> qualities=new ArrayList<>();
-            for(Engine.Media m:media){int chosen=qualitySelections.getOrDefault(InspectionBatch.key(m),0);qualities.add(m.qualities.get(Math.max(0,Math.min(chosen,m.qualities.size()-1))));}
+            for(Engine.Media m:media){int chosen=qualitySelections.getOrDefault(InspectionBatch.key(m),0);qualities.add(m.downloadChoices().get(Math.max(0,Math.min(chosen,m.downloadChoices().size()-1))));}
             ArrayList<String> ids=TaskStore.createBatch(this,media,qualities);
             Intent request=new Intent(this,DownloadService.class).setAction(DownloadService.ENQUEUE).putStringArrayListExtra("ids",ids);
             try {if(Build.VERSION.SDK_INT>=26)startForegroundService(request);else startService(request);}
@@ -485,23 +495,24 @@ public final class MainActivity extends Activity {
             JSONObject media=task.optJSONObject("media");String poster=media==null?"":media.optString("thumbnail");if(poster.isEmpty()&&"completed".equals(status))poster=task.optString("uri");
             FrameLayout thumbnail=new FrameLayout(this);thumbnail.setBackground(shape(palette.control,10,0));thumbnail.setClipToOutline(true);
             ImageView cover=cover(poster,id,64,64);thumbnail.addView(cover,new FrameLayout.LayoutParams(-1,-1));
-            String primary="completed".equals(status)?"播放":"paused".equals(status)?"继续":"pausing".equals(status)?"暂停中":"cancelling".equals(status)?"取消中":active?(pauseable?"暂停":"处理中"):"重试";
+            String primary="completed".equals(status)?(task.optString("mime").equals("application/zip")?"打开":"播放"):"paused".equals(status)?"继续":"pausing".equals(status)?"暂停中":"cancelling".equals(status)?"取消中":active?(pauseable?"暂停":"处理中"):"重试";
             Button action=quietButton(primary);action.setTextColor(Color.WHITE);action.setTextSize(12);action.setPadding(0,0,0,0);action.setMinWidth(0);action.setBackground(new android.graphics.drawable.InsetDrawable(shape(0xB3171A1C,18,0),dp(6)));
             action.setEnabled((!active||pauseable)&&!"pausing".equals(status)&&!"cancelling".equals(status));action.setContentDescription(primary+"："+task.optString("title"));action.setVisibility(action.isEnabled()?View.VISIBLE:View.GONE);
             action.setOnClickListener(v->performTaskPrimary(id));thumbnail.addView(action,new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.CENTER));item.addView(thumbnail,new LinearLayout.LayoutParams(dp(64),dp(64)));
             LinearLayout content=column();LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(0,-2,1);cp.leftMargin=dp(12);item.addView(content,cp);
             TextView name=text(task.optString("title","视频"),14,INK,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);content.addView(name);
-            double progress=task.optDouble("progress",-1);boolean known="downloading".equals(status)&&!task.optString("phase").isEmpty()&&!task.optBoolean("transferComplete")&&progress>=0&&progress<100;
+            double progress=task.optDouble("progress",-1);boolean known=(media==null||!media.optBoolean("album"))&&"downloading".equals(status)&&!task.optString("phase").isEmpty()&&!task.optBoolean("transferComplete")&&progress>=0&&progress<100;
             String state="queued".equals(status)?"等待下载 · 第 "+queuePosition+" 位":taskPhaseTitle(task);
             LinearLayout stage=row();TextView stateLabel=text(state,12,"completed".equals(status)?ACCENT:MUTED,false);stage.addView(stateLabel,new LinearLayout.LayoutParams(0,-2,1));
             String prefix=task.optBoolean("progressEstimated")?"整体约 ":"整体 ";String percent="completed".equals(status)?"100%":known?prefix+(int)progress+"%":"";
             if(!percent.isEmpty())stage.addView(text(percent,12,MUTED,false));add(content,stage,6,0);
-            String size=MediaSize.taskSummary(task);if(!size.isEmpty())add(content,text(size,12,MUTED,false),4,0);
+            String size=MediaSize.taskSummary(task);JSONObject outputChoice=task.optJSONObject("quality");if(outputChoice!=null&&Engine.Quality.fromJson(outputChoice).audioOnly())size=outputChoice.optString("audioFormat").toUpperCase(Locale.ROOT)+" 音频"+(size.isEmpty()?"":" · "+size);if(!size.isEmpty())add(content,text(size,12,MUTED,false),4,0);
             if(active&&!"queued".equals(status)){
                 ProgressBar bar=new PocketProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);bar.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));bar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(LINE));bar.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(ACCENT));bar.setIndeterminate(!known);bar.setProgress((int)Math.min(99,Math.max(0,progress)));bar.setContentDescription(known?prefix+(int)progress+"%":state+"，整体完成时间暂无法估计");add(content,bar,6,0);bar.getLayoutParams().height=dp(4);
             }
-            String error=task.optString("userError"),summary=error.isEmpty()?taskCompactDetail(task,known):error;
+            String error=task.optString("userError"),summary=error.isEmpty()?("completed".equals(status)?task.optString("attachmentNote"):taskCompactDetail(task,known)):error;
             if(!summary.isEmpty()){TextView detail=text(summary,12,error.isEmpty()?MUTED:palette.danger,false);detail.setMaxLines(2);detail.setEllipsize(android.text.TextUtils.TruncateAt.END);add(content,detail,5,0);}
+            if("failed".equals(status)&&canOfferLogin(task.optString("url"),task.optString("log",task.optString("userError")))){Button recover=quietButton("登录并重试");recover.setTextSize(12);recover.setTextColor(ACCENT);recover.setOnClickListener(v->showLoginRecovery("download",id,task.optString("url")));content.addView(recover,new LinearLayout.LayoutParams(-2,dp(40)));}
             Button more=quietButton("");PocketIcon menuIcon=new PocketIcon("more",INK);menuIcon.setBounds(0,0,dp(24),dp(24));more.setCompoundDrawables(menuIcon,null,null,null);more.setContentDescription("任务更多操作："+task.optString("title"));more.setPadding(0,0,0,0);more.setMinWidth(0);more.setOnClickListener(v->showTaskActions(v,task));item.addView(more,new LinearLayout.LayoutParams(dp(48),dp(48)));
             item.setContentDescription(task.optString("title")+("completed".equals(status)?"，点按播放，更多查看任务详情":"，点按查看进度及详情"));
             item.setOnClickListener(v->{JSONObject current=TaskStore.get(this,id);if(current!=null){if("completed".equals(current.optString("status")))openFile(current,false);else showTask(current);}});item.setOnLongClickListener(v->{showTaskActions(v,task);return true;});
@@ -552,7 +563,10 @@ public final class MainActivity extends Activity {
         JSONObject latest=TaskStore.get(this,task.optString("id"));if(latest==null)return;task=latest;final JSONObject current=task;
         PocketMenu menu=new PocketMenu(this,anchor);menu.getMenu().add("详情").setOnMenuItemClickListener(i->{JSONObject fresh=TaskStore.get(this,current.optString("id"));if(fresh!=null)showTask(fresh);return true;});
         String status=task.optString("status"),id=task.optString("id");
-        if("completed".equals(status))menu.getMenu().add("分享视频").setOnMenuItemClickListener(i->{openFile(current,true);return true;});
+        if(task.optJSONArray("attachments")!=null&&task.optJSONArray("attachments").length()>0)menu.getMenu().add("字幕与封面").setOnMenuItemClickListener(i->{showSavedAttachments(current);return true;});
+        if("failed".equals(status)&&canOfferLogin(task.optString("url"),task.optString("log",task.optString("userError"))))
+            menu.getMenu().add("登录并重试").setOnMenuItemClickListener(i->{showLoginRecovery("download",id,current.optString("url"));return true;});
+        if("completed".equals(status))menu.getMenu().add(current.optString("mime").startsWith("audio/")?"分享音频":current.optString("mime").startsWith("video/")?"分享视频":"分享文件").setOnMenuItemClickListener(i->{openFile(current,true);return true;});
         if(isActive(status)&&!"cancelling".equals(status)&&!"pausing".equals(status))menu.getMenu().add("取消任务").setOnMenuItemClickListener(i->{startService(new Intent(this,DownloadService.class).setAction("dev.streampocket.CANCEL").putExtra("id",id));return true;});
         if(!isActive(status))menu.getMenu().add("移除记录").setOnMenuItemClickListener(i->{removeTaskWithUndo(current);return true;});menu.setOnDismissListener(d->taskMenuOpen=false);taskMenuOpen=true;menu.show();
     }
@@ -562,7 +576,7 @@ public final class MainActivity extends Activity {
         if(current==null||isActive(current.optString("status"))){if(current!=null)toast("任务已重新开始，记录已保留");if("queue".equals(tab))refreshQueue(true);return;}
         pendingRemoval.put(task.optString("id"),task);main.removeCallbacks(commitRemovals);main.postDelayed(commitRemovals,5000);
         refreshQueue(true);notice.removeAllViews();notice.setPadding(dp(16),dp(4),dp(16),dp(4));notice.setBackgroundColor(palette.control);
-        LinearLayout row=row();row.addView(text("5秒后移除记录，视频文件保留",12,INK,false),new LinearLayout.LayoutParams(0,-2,1));Button undo=quietButton("撤销");undo.setTextColor(ACCENT);undo.setOnClickListener(v->{main.removeCallbacks(commitRemovals);pendingRemoval.clear();hideNotice();refreshQueue(true);});row.addView(undo,new LinearLayout.LayoutParams(dp(64),dp(48)));notice.addView(row);notice.setVisibility(View.VISIBLE);
+        LinearLayout row=row();row.addView(text("5秒后移除记录，文件保留",12,INK,false),new LinearLayout.LayoutParams(0,-2,1));Button undo=quietButton("撤销");undo.setTextColor(ACCENT);undo.setOnClickListener(v->{main.removeCallbacks(commitRemovals);pendingRemoval.clear();hideNotice();refreshQueue(true);});row.addView(undo,new LinearLayout.LayoutParams(dp(64),dp(48)));notice.addView(row);notice.setVisibility(View.VISIBLE);
     }
     private void commitPendingRemovals(boolean refresh){
         boolean retained=false;
@@ -628,7 +642,7 @@ public final class MainActivity extends Activity {
 
     private void openFile(JSONObject task,boolean share) {
         String raw=task.optString("uri"); if(raw.isEmpty()){toast("没有找到保存位置");return;}
-        if(!share){
+        if(!share&&task.optString("mime","video/mp4").startsWith("video/")){
             io.execute(()->{
                 try(LibraryStore store=new LibraryStore(this)){
                     long videoId=store.upsertCompletedDownload(task);
@@ -643,9 +657,9 @@ public final class MainActivity extends Activity {
             Uri uri=Uri.parse(raw); String mime=task.optString("mime","video/*");
             Intent i=new Intent(share?Intent.ACTION_SEND:Intent.ACTION_VIEW);
             if(share){i.setType(mime);i.putExtra(Intent.EXTRA_STREAM,uri);}else i.setDataAndType(uri,mime);
-            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);i.setClipData(ClipData.newRawUri("视频",uri));
-            startActivity(Intent.createChooser(i,share?"分享视频":"打开视频"));
-        }catch(ActivityNotFoundException e){toast("没有可打开此视频的应用");}
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);i.setClipData(ClipData.newRawUri(task.optString("mime").startsWith("audio/")?"音频":task.optString("mime").startsWith("video/")?"视频":"文件",uri));
+            startActivity(Intent.createChooser(i,share?"分享文件":"选择播放器"));
+        }catch(ActivityNotFoundException e){toast("没有可打开此文件的应用");}
         catch(Exception e){showMessage("无法打开", "文件可能已被移动或删除。\n"+friendly(e));}
     }
 
@@ -653,20 +667,25 @@ public final class MainActivity extends Activity {
         String message=task.optString("title")+"\n\n"+statusName(task.optString("status"))+"\n"+
                 task.optString("detail")+"\n"+MediaSize.taskSummary(task)+"\n"+taskTransferDetail(task)+"\n\n"+task.optString("userError")+"\n\n"+task.optString("url")+
                 (task.optString("uri").isEmpty()?"":"\n\n"+task.optString("uri"));
+        if(!task.optString("attachmentNote").isEmpty())message+="\n\n"+task.optString("attachmentNote");
+        if(!task.optString("attachmentError").isEmpty())message+="\n\n附件诊断\n"+Engine.cleanLog(task.optString("attachmentError"));
         if(!task.optString("log").isEmpty())message+="\n\n诊断记录（敏感参数已隐藏）\n"+Engine.cleanLog(task.optString("log"));
         showMessage("任务详情",message);
     }
 
     private void showSettings() {
         LinearLayout c=scrollContent();c.addView(text("设置",22,INK,true));
-        section(c,"账户与来源");LinearLayout accounts=settingsGroup(c);TextView accountSummary=settingRow(accounts,"账号管理","读取中…",this::showLoginSettings);
+        section(c,"账户与来源");LinearLayout accounts=settingsGroup(c);TextView accountSummary=settingRow(accounts,"账号管理","读取中…",this::showLoginSettings);settingRow(accounts,"支持的平台","视频与音频",this::showSupportedPlatforms);
         io.execute(()->{String summary;try{AccountStore store=new AccountStore(this);store.prepare();int count=0;for(LoginPlatform p:LoginPlatform.values())if(store.hasSaved(p))count++;summary=count==0?"未登录":count+" 个平台已保存";}catch(Exception e){summary="点此管理";}String value=summary;main.post(()->{if(!isDestroyed()&&"settings".equals(tab)&&accountSummary.isAttachedToWindow())accountSummary.setText(value);});});
-        section(c,"下载管理");LinearLayout downloads=settingsGroup(c);settingRow(downloads,"下载与速度",downloadConnections()+" 路 · 最高可用",this::showDownloadSettings);settingRow(downloads,"保存位置","Download / StreamPocket",()->showMessage("保存位置","视频保存在手机的 Download / StreamPocket 文件夹。"));
+        section(c,"下载管理");LinearLayout downloads=settingsGroup(c);settingRow(downloads,"下载与速度",downloadConnections()+" 路 · 最高可用",this::showDownloadSettings);settingRow(downloads,"保存位置","Download / StreamPocket",()->showMessage("保存位置","视频和音频保存在手机的 Download / StreamPocket 文件夹。"));
         switchRow(downloads,"剪贴板链接提醒","clipboard_suggestions",true);
         section(c,"播放与外观");LinearLayout appearance=settingsGroup(c);settingRow(appearance,"外观主题",themeLabel(),this::showAppearanceSettings);settingRow(appearance,"快进 / 快退",getSharedPreferences("config",0).getInt("seek_seconds",10)+" 秒",this::showSeekSettings);
         switchRow(appearance,"播放手势","player_gestures",false);switchRow(appearance,"界面动效","motion_enabled",true);
-        section(c,"高级与关于");LinearLayout advanced=settingsGroup(c);String proxy=getSharedPreferences("config",0).getString("proxy","");settingRow(advanced,"网络与代理",proxy==null||proxy.isEmpty()?"跟随手机网络":"独立代理",this::showNetworkSettings);settingRow(advanced,"下载支持","更新或检查下载功能",this::showParserSettings);settingRow(advanced,"应用更新",BuildConfig.VERSION_NAME+" · GitHub Releases",()->startActivity(new Intent(this,UpdateActivity.class)));settingRow(advanced,"关于拾流",BuildConfig.VERSION_NAME,this::showAboutSettings);
+        section(c,"高级与关于");LinearLayout advanced=settingsGroup(c);String proxy=getSharedPreferences("config",0).getString("proxy","");settingRow(advanced,"网络与代理",proxy==null||proxy.isEmpty()?"跟随手机网络":"独立代理",this::showNetworkSettings);settingRow(advanced,"下载支持","更新或检查下载功能",this::showParserSettings);settingRow(advanced,"应用更新",BuildConfig.VERSION_NAME,()->startActivity(new Intent(this,UpdateActivity.class)));settingRow(advanced,"关于拾流",BuildConfig.VERSION_NAME,this::showAboutSettings);
         add(c,text("视频、账号与设置仅保存在本机",12,MUTED,false),18,0);
+    }
+    private void showSupportedPlatforms(){
+        showMessage("支持的平台","YouTube、X / Twitter、哔哩哔哩、抖音\n\n试用渠道\n小红书、快手、TikTok、Instagram、Facebook、Pinterest、Pornhub、小黑盒\n\n复制单个视频的分享链接即可尝试。部分内容需要登录或源站验证，可能受地区和网络限制；图文、整批频道和进行中的直播暂不支持。\n\n有声音的视频可在画质选项中选择 MP3 或 M4A。音频保存在下载记录中，可打开或分享。");
     }
     private void section(LinearLayout c,String title){add(c,text(title,12,MUTED,true),22,8);}
     private LinearLayout settingsGroup(LinearLayout c){LinearLayout group=column();group.setPadding(dp(14),0,dp(14),0);group.setBackground(shape(SURFACE,16,0));c.addView(group,new LinearLayout.LayoutParams(-1,-2));return group;}
@@ -746,10 +765,13 @@ public final class MainActivity extends Activity {
                     platforms.addView(text("登录状态读取失败："+failure,13,MUTED,false));
                     Button retry=quietButton("重新读取");retry.setOnClickListener(v->{panel.dismiss();showLoginSettings();});add(platforms,retry,8,0);return;
                 }
-                for(AccountState state:result)settingRow(platforms,state.platform.title,accountStatus(state),state.saved||state.platform==LoginPlatform.YOUTUBE?"管理":"登录",()->{
-                    if(state.saved||state.platform==LoginPlatform.YOUTUBE){panel.dismiss();showAccountDetails(state);}
-                    else launchLogin(state.platform,panel);
-                });
+                for(AccountState state:result){
+                    boolean choose=state.saved||(state.platform!=LoginPlatform.X&&state.platform!=LoginPlatform.BILIBILI&&state.platform!=LoginPlatform.DOUYIN);
+                    settingRow(platforms,state.platform.title,accountStatus(state),choose?"管理":"登录",()->{
+                        if(choose){panel.dismiss();showAccountDetails(state);}
+                        else launchLogin(state.platform,panel);
+                    });
+                }
             });
         });
     }
@@ -761,8 +783,8 @@ public final class MainActivity extends Activity {
         return states;
     }
 
-    private static String accountStatus(AccountState state) {
-        return state.saved?(state.enabled?"已保存 · 用于下载":"已保存 · 已暂停"):"未保存登录信息";
+    private String accountStatus(AccountState state) {
+        return state.saved?(state.enabled?"已保存 · "+new AccountStore(this).requestStatus(state.platform):"已保存 · 已暂停"):"未保存登录信息";
     }
 
     private void showAccountDetails(AccountState state) {
@@ -772,21 +794,22 @@ public final class MainActivity extends Activity {
             String time=state.savedAt>0?android.text.format.DateFormat.format("yyyy-MM-dd HH:mm",state.savedAt).toString():"时间未知";
             add(c,text(state.source+" · "+time,12,MUTED,false),6,0);
         }
-        add(c,text(state.saved?"登录可能已过期，无法下载时请重新登录。":"登录后可下载账号有权访问的视频。",13,MUTED,false),8,18);
+        add(c,text(state.saved?"保存凭据不代表源站已验证。最近请求成功也不代表账号拥有全部内容权限；无法下载时可重新登录。":"登录后可尝试下载账号有权访问的内容。",13,MUTED,false),8,18);
+        if(loginRecoveryId!=null)add(c,text("保存登录信息后重试原任务。登录不能解除源站的地区、内容权限或访问限制。",12,MUTED,false),0,12);
         Button login=button(state.saved?"打开官方登录页":"登录"+platform.title,true);c.addView(login,new LinearLayout.LayoutParams(-1,dp(48)));
         TextView result=text("",13,MUTED,false);result.setVisibility(View.GONE);
         PocketDialog panel=new PocketDialog.Builder(this).setTitle(platform.title).setView(accountPanelContent(c))
-                .setPositiveButton("返回",(d,w)->showLoginSettings()).setOnCancelListener(d->showLoginSettings()).create();
+                .setPositiveButton("返回",(d,w)->returnFromAccount()).setOnCancelListener(d->returnFromAccount()).create();
         login.setOnClickListener(v->{
             login.setEnabled(false);
             if(!launchLogin(platform,panel))login.setEnabled(true);
         });
-        if(platform==LoginPlatform.YOUTUBE){
+        {
             Button importLogin=quietButton("导入登录信息");add(c,importLogin,8,0);
-            importLogin.setOnClickListener(v->new PocketDialog.Builder(this).setTitle("导入 YouTube 登录信息")
-                    .setMessage("选择从浏览器导出的 YouTube 登录文件（cookies.txt），仅保存在本机。")
+            importLogin.setOnClickListener(v->new PocketDialog.Builder(this).setTitle("导入 "+platform.title+" 登录信息")
+                    .setMessage("选择从浏览器导出的 "+platform.title+" 登录文件（cookies.txt），仅保存在本机。")
                     .setNegativeButton("返回",null).setPositiveButton("选择文件",(d,w)->openCookieImport(panel,platform)).show());
-            add(c,text("公开视频通常无需登录。登录后仍受平台权限限制。",12,MUTED,false),8,0);
+            if(platform==LoginPlatform.YOUTUBE)add(c,text("公开视频通常无需登录。登录后仍受平台权限限制。",12,MUTED,false),8,0);
         }
         if(state.saved){
             PocketSwitch enabled=new PocketSwitch(this);enabled.setText("用于后续解析和下载");enabled.setTextSize(14);enabled.setTextColor(INK);
@@ -815,7 +838,7 @@ public final class MainActivity extends Activity {
                             String failure=error;main.post(()->{
                                 if(isDestroyed()||!panel.isShowing())return;
                                 if(failure!=null){clear.setEnabled(true);login.setEnabled(true);enabled.setEnabled(true);result.setText(failure);result.setVisibility(View.VISIBLE);return;}
-                                panel.dismiss();refreshSettingsSummary();toast("已清除"+platform.title+"的本机登录信息");showLoginSettings();
+                                panel.dismiss();refreshSettingsSummary();toast("已清除"+platform.title+"的本机登录信息");returnFromAccount();
                             });
                         });
                     }).show());
@@ -827,8 +850,61 @@ public final class MainActivity extends Activity {
         content.setPadding(dp(24),dp(12),dp(24),dp(8));ScrollView scroll=new ScrollView(this);scroll.addView(content);return scroll;
     }
 
+    private static boolean canOfferLogin(String url,String details){
+        VideoPlatform channel=VideoPlatform.detect(url);
+        if(channel==null||LoginPlatform.fromId(channel.id)==null||details.contains("InterruptedException"))return false;
+        SourceFailure.Kind kind=SourceFailure.kind(details);
+        return kind==SourceFailure.Kind.AUTH||kind==SourceFailure.Kind.CHALLENGE||kind==SourceFailure.Kind.ACCESS
+                ||kind==SourceFailure.Kind.NO_FORMATS||kind==SourceFailure.Kind.OTHER;
+    }
+
+    private void showLoginRecovery(String type,String id,String url){
+        VideoPlatform channel=VideoPlatform.detect(url);if(channel==null||loginOpening)return;
+        LoginPlatform platform=LoginPlatform.fromId(channel.id);if(platform==null)return;
+        loginRecoveryId=id;loginRecoveryType=type;
+        io.execute(()->{
+            AccountState state=null;String error=null;
+            try{AccountStore store=new AccountStore(this);store.prepare();state=new AccountState(platform,store.hasSaved(platform),store.isEnabled(platform),store.savedAt(platform),store.source(platform));}
+            catch(Exception e){error=friendly(e);}
+            AccountState result=state;String failure=error;
+            main.post(()->{if(isDestroyed()||!id.equals(loginRecoveryId)||!type.equals(loginRecoveryType))return;
+                if(failure!=null){clearLoginRecovery();showMessage("暂时无法读取账号",failure);}
+                else showAccountDetails(result);
+            });
+        });
+    }
+
+    private void clearLoginRecovery(){loginRecoveryId=null;loginRecoveryType=null;}
+    private boolean recoveryUses(LoginPlatform platform){
+        String url="";
+        if("inspection".equals(loginRecoveryType)){
+            for(InspectionInbox.Job job:inspectionInbox.jobs)if(job.id.equals(loginRecoveryId)){url=job.url;break;}
+        }else if("download".equals(loginRecoveryType)){
+            JSONObject task=TaskStore.get(this,loginRecoveryId);if(task!=null)url=task.optString("url");
+        }
+        VideoPlatform channel=VideoPlatform.detect(url);return platform!=null&&channel!=null&&platform.id.equals(channel.id);
+    }
+    private void returnFromAccount(){
+        if(loginRecoveryId==null){showLoginSettings();return;}
+        String type=loginRecoveryType;clearLoginRecovery();showTab("download".equals(type)?"queue":"new");
+    }
+
+    private void resumeAfterLogin(String type,String id){
+        if("inspection".equals(type)){
+            showTab("new");
+            for(InspectionInbox.Job job:new ArrayList<>(inspectionInbox.jobs))if(job.id.equals(id)){
+                if(inspectionInbox.retry(job)){persistInspectionInbox();startNextInspection();renderInspection();}
+                return;
+            }
+        }else if("download".equals(type)){
+            JSONObject task=TaskStore.get(this,id);showTab("queue");
+            if(task!=null&&"failed".equals(task.optString("status")))startTask(id);
+        }
+    }
+
     private boolean launchLogin(LoginPlatform platform,PocketDialog panel) {
         if(loginOpening)return false;
+        if(loginRecoveryId!=null&&!recoveryUses(platform))clearLoginRecovery();
         loginOpening=true;
         try{startActivityForResult(new Intent(this,LoginActivity.class).putExtra("platform",platform.id),LOGIN_REQUEST);panel.dismiss();return true;}
         catch(ActivityNotFoundException|SecurityException e){
@@ -840,6 +916,7 @@ public final class MainActivity extends Activity {
         openCookieImport(panel,null);
     }
     private void openCookieImport(PocketDialog panel,LoginPlatform platform) {
+        if(loginRecoveryId!=null&&!recoveryUses(platform))clearLoginRecovery();
         Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("text/*");
         try{cookieImportPlatform=platform==null?null:platform.id;startActivityForResult(intent,COOKIE_REQUEST);panel.dismiss();}
         catch(ActivityNotFoundException e){cookieImportPlatform=null;toast("请先安装文件管理器");}
@@ -854,6 +931,80 @@ public final class MainActivity extends Activity {
         AccountState(LoginPlatform platform,boolean saved,boolean enabled,long savedAt,String source){
             this.platform=platform;this.saved=saved;this.enabled=enabled;this.savedAt=savedAt;this.source=source;
         }
+    }
+
+    private static String attachmentLabel(Engine.Media media) {
+        List<String> selected=new ArrayList<>();if(media.saveCover)selected.add("封面");if(media.saveSubtitles)selected.add("字幕");
+        return selected.isEmpty()?"字幕与封面  ›":"同时保存："+String.join("、",selected)+"  ›";
+    }
+
+    private void showAttachments(Engine.Media media) {
+        List<String> labels=new ArrayList<>();List<Boolean> values=new ArrayList<>();
+        if(media.subtitleAvailable&&!media.subtitleLanguage.isEmpty()){labels.add("字幕（"+media.subtitleLanguage+"）");values.add(media.saveSubtitles);}
+        if(!media.thumbnail.isEmpty()){labels.add("封面图片");values.add(media.saveCover);}
+        if(labels.isEmpty()){showMessage("暂无附件","源站没有返回可保存的字幕或封面。");return;}
+        boolean[] checked=new boolean[values.size()];for(int i=0;i<checked.length;i++)checked[i]=values.get(i);
+        PocketDialog panel=new PocketDialog.Builder(this).setTitle("同时保存")
+                .setMultiChoiceItems(labels.toArray(new String[0]),checked,(d,n,value)->checked[n]=value)
+                .setNegativeButton("返回",null).setPositiveButton("应用",(d,w)->{
+                    int index=0;if(media.subtitleAvailable&&!media.subtitleLanguage.isEmpty())media.saveSubtitles=checked[index++];
+                    if(!media.thumbnail.isEmpty())media.saveCover=checked[index];persistInspectionInbox();renderInspection();
+                }).show();bottom(panel);
+    }
+
+    private void showBatchSettings() {
+        List<Engine.Media> items=new ArrayList<>(inspectedMedia);boolean[] chosen=new boolean[items.size()];Arrays.fill(chosen,true);
+        String[] labels=new String[items.size()];for(int i=0;i<labels.length;i++)labels[i]=items.get(i).title;
+        new PocketDialog.Builder(this).setTitle("选择要统一设置的内容").setMultiChoiceItems(labels,chosen,(d,n,value)->chosen[n]=value)
+                .setMultiChoiceBulkActions(true).setNegativeButton("返回",null).setPositiveButton("选择画质",(d,w)->{
+                    List<Engine.Media> selected=new ArrayList<>();for(int i=0;i<chosen.length;i++)if(chosen[i])selected.add(items.get(i));
+                    if(selected.isEmpty()){toast("尚未选择内容");return;}
+                    String[] rules={"最高可用画质","1080p 以内","720p 以内","仅音频 · M4A","仅音频 · MP3"};
+                    new PocketDialog.Builder(this).setTitle("应用到 "+selected.size()+" 项").setItems(rules,(dialog,rule)->{
+                        int applied=0;for(Engine.Media media:selected){
+                            if(media.album||!inspectedMedia.contains(media)||(rule>=3&&!media.hasAudio))continue;
+                            String target=rule==0?"best":rule==1?"cap-1080":rule==2?"cap-720":rule==3?"audio-m4a":"audio-mp3";
+                            if(rule==1||rule==2){int height=rule==1?1080:720;if(media.qualities.stream().noneMatch(q->q.id.equals(target)))media.qualities.add(new Engine.Quality(target,height+"p 以内","bv*[height<="+height+"]+ba/b[height<="+height+"]"));}
+                            List<Engine.Quality> choices=media.downloadChoices();for(int n=0;n<choices.size();n++)if(choices.get(n).id.equals(target)){qualitySelections.put(InspectionBatch.key(media),n);applied++;break;}
+                        }persistInspectionInbox();renderInspection();toast("已设置 "+applied+" 项；图集与不适用的内容保留原设置");
+                    }).setNegativeButton("返回",null).show();
+                }).show();
+    }
+
+    private void showCollection() {
+        String source=input==null?draft:input.getText().toString();
+        try{source=CollectionLinks.normalize(source);}catch(Exception error){showMessage("展开合集",error.getMessage());return;}
+        if(collectionEngine!=null){toast("正在展开合集，请稍候");return;}
+        Engine collector=new Engine(this);collectionEngine=collector;java.util.concurrent.atomic.AtomicBoolean cancelled=new java.util.concurrent.atomic.AtomicBoolean();TextView status=text("正在读取条目，最多 100 项…",14,MUTED,false);status.setPadding(dp(20),dp(16),dp(20),dp(16));
+        PocketDialog waiting=new PocketDialog.Builder(this).setTitle("展开合集").setView(status).setNegativeButton("取消",(d,w)->{cancelled.set(true);collector.cancelInspect();collectionEngine=null;})
+                .setOnCancelListener(d->{cancelled.set(true);collector.cancelInspect();collectionEngine=null;}).show();String url=source;
+        io.execute(()->{try{
+            List<Engine.CollectionItem> items=collector.collection(url,message->main.post(()->{if(waiting.isShowing())status.setText(message);}),cancelled::get);
+            main.post(()->{if(isDestroyed()||cancelled.get()||!waiting.isShowing())return;collectionEngine=null;waiting.dismiss();showCollectionItems(items);});
+        }catch(Exception error){main.post(()->{if(isDestroyed()||cancelled.get()||!waiting.isShowing())return;collectionEngine=null;waiting.dismiss();showMessage("未能展开合集",friendly(error));});}});
+    }
+
+    private void showCollectionItems(List<Engine.CollectionItem> items) {
+        if(items.isEmpty()){showMessage("没有可选条目","源站没有返回可用条目；请确认合集可访问。");return;}
+        boolean[] selected=new boolean[items.size()];String[] labels=new String[items.size()];
+        for(int i=0;i<labels.length;i++){Engine.CollectionItem item=items.get(i);labels[i]=item.title+(item.duration>0?" · "+duration(item.duration):"")+(item.bytes>0?" · "+MediaSize.format(item.bytes):" · 大小待解析");}
+        PocketDialog[] holder=new PocketDialog[1];
+        PocketDialog panel=new PocketDialog.Builder(this).setTitle("选择合集条目 · "+items.size()+" 项")
+                .setMessage("仅展开前 100 项。确认后解析所选内容，选择画质后再下载。")
+                .setMultiChoiceItems(labels,selected,(d,n,value)->{selected[n]=value;int count=0;for(boolean chosen:selected)if(chosen)count++;if(holder[0]!=null){holder[0].getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(count>0);holder[0].getButton(PocketDialog.BUTTON_POSITIVE).setText("解析 "+count+" 项");}}).setMultiChoiceBulkActions(true)
+                .setNegativeButton("返回",null).setPositiveButton("解析所选",(d,w)->{
+                    List<String> urls=new ArrayList<>();for(int i=0;i<selected.length;i++)if(selected[i])urls.add(items.get(i).url);
+                    if(urls.isEmpty()){toast("尚未选择条目");return;}
+                    int count=inspectionInbox.add(urls);persistInspectionInbox();startNextInspection();renderInspection();toast("已加入 "+count+" 个条目进行解析");
+                }).show();holder[0]=panel;panel.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(false);bottom(panel);
+    }
+
+    private void showSavedAttachments(JSONObject task) {
+        org.json.JSONArray files=task.optJSONArray("attachments");if(files==null||files.length()==0)return;
+        String[] labels=new String[files.length()];for(int i=0;i<labels.length;i++)labels[i]=files.optJSONObject(i).optString("name","附件");
+        new PocketDialog.Builder(this).setTitle("已保存的附件").setItems(labels,(d,n)->{
+            JSONObject file=files.optJSONObject(n);if(file!=null)openFile(file,false);
+        }).setNegativeButton("返回",null).show();
     }
 
     private void showNetworkSettings() {
@@ -922,14 +1073,18 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
         if(request==LOGIN_REQUEST){
-            loginOpening=false;refreshSettingsSummary();showLoginSettings();return;
+            loginOpening=false;
+            if(loginRecoveryId!=null){String id=loginRecoveryId,type=loginRecoveryType;clearLoginRecovery();
+                if(result==RESULT_OK)resumeAfterLogin(type,id);else showTab("download".equals(type)?"queue":"new");
+            }else{refreshSettingsSummary();showLoginSettings();}return;
         }
         if(request!=COOKIE_REQUEST)return;
         LoginPlatform importPlatform=LoginPlatform.fromId(cookieImportPlatform);cookieImportPlatform=null;
-        if(result!=RESULT_OK||data==null||data.getData()==null)return;
+        String recoveryId=loginRecoveryId,recoveryType=loginRecoveryType;
+        if(result!=RESULT_OK||data==null||data.getData()==null){if(recoveryId!=null)returnFromAccount();return;}
         Uri selected=data.getData();
         io.execute(()->{
-            String message;
+            String message;boolean saved=false;
             try(InputStream source=getContentResolver().openInputStream(selected)) {
                 if(source==null)throw new IOException("无法读取所选文件");
                 ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[8192];int count;
@@ -937,9 +1092,15 @@ public final class MainActivity extends Activity {
                 String contents=bytes.toString(StandardCharsets.UTF_8.name());
                 AccountStore accounts=new AccountStore(this);
                 if(importPlatform==null)accounts.importLegacy(contents);else accounts.importForPlatform(importPlatform,contents);
+                saved=true;
                 message="登录信息已保存，请重新解析视频链接。";
-            }catch(Exception e){message=friendly(e);}String finalMessage=message;
-            main.post(()->{if(!isDestroyed()){if("settings".equals(tab))showTab("settings");showMessage("导入登录信息",finalMessage);}});
+            }catch(Exception e){message=friendly(e);}String finalMessage=message;boolean success=saved;
+            main.post(()->{if(!isDestroyed()){
+                if(recoveryId!=null&&recoveryId.equals(loginRecoveryId)&&recoveryType.equals(loginRecoveryType)){
+                    clearLoginRecovery();if(success){resumeAfterLogin(recoveryType,recoveryId);return;}
+                }
+                if("settings".equals(tab))showTab("settings");showMessage("导入登录信息",finalMessage);
+            }});
         });
     }
 
@@ -973,11 +1134,12 @@ public final class MainActivity extends Activity {
     @Override protected void onPause(){foreground=false;main.removeCallbacks(checkClipboard);hideClipboardOffer();AppUpdates.get(this).unlisten(appUpdateListener);main.removeCallbacks(appUpdateCheck);if(openSwipeRow!=null)openSwipeRow.close(false);queueTouchActive=false;super.onPause();main.removeCallbacks(poll);if(input!=null)draft=input.getText().toString();getPreferences(0).edit().putString("draft",draft).apply();persistInspectionInbox();}
     @Override protected void onSaveInstanceState(Bundle state){
         state.putString("cookie_import_platform",cookieImportPlatform);
+        state.putString("login_recovery_id",loginRecoveryId);state.putString("login_recovery_type",loginRecoveryType);
         super.onSaveInstanceState(state);state.putBoolean("link_editor_expanded",linkEditorExpanded);state.putString("inspection_message",lastInspectionMessage);state.putString("inspection_details",lastInspectionDetails);state.putString("draft",input!=null?input.getText().toString():draft);state.putString("tab",tab);state.putString("queue_filter",queueFilter);state.putString("quality_selection",new JSONObject(qualitySelections).toString());
         if(libraryView!=null)libraryState=libraryView.saveUiState();if(libraryState!=null)state.putBundle("library_state",libraryState);
         try{org.json.JSONArray media=new org.json.JSONArray();for(Engine.Media m:inspectedMedia)media.put(m.toJson());state.putString("inspection_media",media.toString());}catch(Exception ignored){}
     }
-    @Override protected void onDestroy(){super.onDestroy();foreground=false;if(clipboardReview!=null)clipboardReview.dismiss();main.removeCallbacks(checkClipboard);main.removeCallbacks(previewLinks);main.removeCallbacks(poll);main.removeCallbacks(commitRemovals);if(!isChangingConfigurations())commitPendingRemovals(false);pendingRemoval.clear();if(libraryView!=null)libraryView.release();if(artwork!=null)artwork.release();++parseGeneration;engine.cancelInspect();io.shutdownNow();}
+    @Override protected void onDestroy(){super.onDestroy();foreground=false;if(clipboardReview!=null)clipboardReview.dismiss();main.removeCallbacks(checkClipboard);main.removeCallbacks(previewLinks);main.removeCallbacks(poll);main.removeCallbacks(commitRemovals);if(!isChangingConfigurations())commitPendingRemovals(false);pendingRemoval.clear();if(libraryView!=null)libraryView.release();if(artwork!=null)artwork.release();++parseGeneration;engine.cancelInspect();if(collectionEngine!=null)collectionEngine.cancelInspect();io.shutdownNow();}
 
     private static boolean isActive(String s){return Arrays.asList("queued","downloading","merging","saving","cancelling","pausing").contains(s);}
     private static String statusName(String s){switch(s){case"queued":return"等待下载";case"downloading":return"正在下载";case"merging":return"正在合并音视频";case"saving":return"正在保存到手机";case"completed":return"已保存";case"cancelling":return"正在取消";case"cancelled":return"已取消";case"pausing":return"正在暂停";case"paused":return"已暂停，断点保留";case"interrupted":return"上次下载中断，可重试";default:return"下载失败";}}
@@ -996,7 +1158,10 @@ public final class MainActivity extends Activity {
     private GradientDrawable shape(int color,int radius,int border){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));if(border!=0)d.setStroke(dp(1),border);return d;}
     private void add(LinearLayout parent,View child,int top,int bottom){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(top);p.bottomMargin=dp(bottom);parent.addView(child,p);}
     private static String mediaSummary(Engine.Media media,int selection){
-        if(selection>0)return media.qualities.get(selection).label+" · 大小待下载时确定";
+        Engine.Quality choice=media.downloadChoices().get(Math.max(0,Math.min(selection,media.downloadChoices().size()-1)));
+        if(media.album)return media.imageCount+" 张图片 · 打包为 ZIP，解压后查看";
+        if(choice.audioOnly())return choice.details;
+        if(selection>0)return (choice.details.isEmpty()?choice.label:choice.details)+" · 大小待下载时确定";
         String value=media.width>0&&media.height>0?media.width+" × "+media.height:"";
         if(media.filesize>0)value+=(value.isEmpty()?"":" · ")+(media.filesizeEstimated?"预计 ":"")+MediaSize.format(media.filesize);
         return value.isEmpty()?"实际大小在开始下载后确定":value;

@@ -23,6 +23,7 @@ public final class SourceFailure {
         if(httpCode(text,"403"))return Kind.ACCESS;
         if (text.contains("connection reset") || text.contains("connection refused") || text.contains("network is unreachable")
                 || text.contains("temporary failure in name resolution") || text.contains("unable to resolve host")||text.contains("unknownhostexception")||text.contains("connection aborted")||text.contains("failed to connect")
+                || text.contains("name or service not known") || text.contains("nodename nor servname provided")
                 || text.contains("remote end closed connection") || text.contains("http error 502")
                 || text.contains("http error 503") || text.contains("http error 504")) return Kind.NETWORK;
         if (text.contains("captcha") || text.contains("verification required") || text.contains("verify you are")

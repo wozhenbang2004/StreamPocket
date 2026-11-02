@@ -33,6 +33,51 @@ public final class AccountStoreTest {
         store = new AccountStore(app, new SecretKeySpec(new byte[32], "AES"));
     }
 
+    @Test public void accountChangesInvalidateResolutionScopeAndResetRequestEvidence() throws Exception {
+        String url="https://www.instagram.com/p/fixture/";
+        String initial=store.cacheScope(url);
+        store.save(LoginPlatform.INSTAGRAM,HEADER+row(".instagram.com","sessionid","synthetic"),"文件导入");
+        String saved=store.cacheScope(url);assertNotEquals(initial,saved);assertEquals("未验证",store.requestStatus(LoginPlatform.INSTAGRAM));
+        store.noteRequest(url,saved,null);assertEquals("最近请求成功",store.requestStatus(LoginPlatform.INSTAGRAM));
+        store.noteRequest(url,saved,new java.io.IOException("Login required"));assertEquals("需要重新登录",store.requestStatus(LoginPlatform.INSTAGRAM));
+        store.setEnabled(LoginPlatform.INSTAGRAM,false);assertNotEquals(saved,store.cacheScope(url));assertEquals("未验证",store.requestStatus(LoginPlatform.INSTAGRAM));
+        store.noteRequest(url,saved,null);assertEquals("未验证",store.requestStatus(LoginPlatform.INSTAGRAM));
+        store.clear(LoginPlatform.INSTAGRAM);assertNotEquals(initial,store.cacheScope(url));
+    }
+
+    @Test public void channelCredentialsRemainIsolatedAndCanBePausedOrCleared() throws Exception {
+        LoginPlatform[] platforms={LoginPlatform.XIAOHONGSHU,LoginPlatform.KUAISHOU,LoginPlatform.TIKTOK,LoginPlatform.INSTAGRAM,LoginPlatform.FACEBOOK,LoginPlatform.PINTEREST};
+        String[] hosts={".xiaohongshu.com",".kuaishou.com",".tiktok.com",".instagram.com",".facebook.com",".pinterest.com"};
+        String[] names={"web_session","kuaishou.server.web_st","sessionid","sessionid","c_user","_pinterest_sess"};
+        StringBuilder cookies=new StringBuilder(HEADER);
+        for(int i=0;i<platforms.length;i++) {
+            String value=row(hosts[i],names[i],"fixture-"+i);cookies.append(value);
+            assertTrue(platforms[i].hasLogin(HEADER+value));
+            assertFalse(platforms[i].hasLogin(HEADER+row(hosts[i]+".attacker.example",names[i],"fixture")));
+        }
+        store.importLegacy(cookies.toString());
+        File snapshot=new File(app.getCacheDir(),"new-channel-snapshot.txt");
+        try {
+            store.setEnabled(LoginPlatform.INSTAGRAM,false);store.clear(LoginPlatform.XIAOHONGSHU);store.writeSnapshot(snapshot);
+            String output=new String(java.nio.file.Files.readAllBytes(snapshot.toPath()),java.nio.charset.StandardCharsets.UTF_8);
+            assertFalse(output.contains("fixture-0"));assertFalse(output.contains("fixture-3"));
+            assertTrue(output.contains("fixture-1"));assertTrue(output.contains("fixture-2"));assertTrue(output.contains("fixture-4"));assertTrue(output.contains("fixture-5"));
+        } finally {snapshot.delete();}
+    }
+
+    @Test public void oldGenericCookiesMigrateBeforeAnyNewPlatformCanBeDisabled() throws Exception {
+        app.getSharedPreferences("account-sessions-metadata",0).edit().putBoolean("legacy.migrated",true).commit();
+        java.lang.reflect.Method write=AccountStore.class.getDeclaredMethod("writeEncrypted",String.class,String.class);write.setAccessible(true);
+        write.invoke(store,"other",HEADER+row(".xiaohongshu.com","web_session","old-xhs")+row(".instagram.com","sessionid","old-ig")
+                +row(".youtube.com","SAPISID","old-yt")+row(".example.org","session","retained"));
+        store.prepare();assertTrue(store.hasSaved(LoginPlatform.XIAOHONGSHU));assertTrue(store.hasSaved(LoginPlatform.INSTAGRAM));assertTrue(store.hasSaved(LoginPlatform.YOUTUBE));
+        store.setEnabled(LoginPlatform.INSTAGRAM,false);store.clear(LoginPlatform.XIAOHONGSHU);
+        File snapshot=new File(app.getCacheDir(),"migrated-channel-snapshot.txt");
+        try {store.writeSnapshot(snapshot);String output=new String(java.nio.file.Files.readAllBytes(snapshot.toPath()),java.nio.charset.StandardCharsets.UTF_8);
+            assertFalse(output.contains("old-xhs"));assertFalse(output.contains("old-ig"));assertTrue(output.contains("old-yt"));assertTrue(output.contains("retained"));
+        } finally {snapshot.delete();}
+    }
+
     @Test public void platformDomainsAndNavigationRejectLookalikesAndUnsafeSchemes() {
         assertTrue(LoginPlatform.BILIBILI.ownsDomain("#HttpOnly_.bilibili.com"));
         assertTrue(LoginPlatform.X.allowsNavigation("https://x.com/i/flow/login"));

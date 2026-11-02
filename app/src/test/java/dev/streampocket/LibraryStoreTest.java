@@ -34,6 +34,19 @@ public final class LibraryStoreTest {
         Field recovery = LibraryStore.class.getDeclaredField("exportsRecovered"); recovery.setAccessible(true); recovery.setBoolean(null, false);
     }
     @After public void teardown() { store.close(); fixture.delete(); app.deleteDatabase("media-library.db"); }
+    @Test public void newChannelsRemainFilterableAndAudioDoesNotBecomeAVideo() throws Exception {
+        for(String[] channel:new String[][]{{"xiaohongshu","https://xhslink.com/o/fixture"},{"kuaishou","https://v.kuaishou.com/fixture"},
+                {"tiktok","https://vm.tiktok.com/fixture"},{"instagram","https://instagram.com/reel/fixture"},
+                {"facebook","https://fb.watch/fixture"},{"pinterest","https://pin.it/fixture"},
+                {"pornhub","https://www.pornhub.com/view_video.php?viewkey=phfixture123"},
+                {"heybox","https://www.xiaoheihe.cn/app/bbs/link/123"}}) {
+            JSONObject task=completed(channel[0],Uri.fromFile(new File(app.getCacheDir(),channel[0]+".mp4")).toString(),channel[0]).put("url",channel[1]);
+            long id=store.upsertCompletedDownload(task);assertTrue(id>0);assertEquals(channel[0],store.video(id).optString("source"));
+            assertEquals(1,store.listVideos("",channel[0],0,20,0).size());
+        }
+        JSONObject audio=completed("audio").put("mime","audio/mp4");assertEquals(0,store.upsertCompletedDownload(audio));
+        assertEquals(8,store.listVideos("","",0,20,0).size());
+    }
     private JSONObject completed(String taskId, String uri, String title) throws Exception {
         return new JSONObject().put("id", taskId).put("uri", uri).put("title", title).put("mime", "video/mp4").put("status", "completed")
                 .put("size", 1024).put("url", "https://x.com/fixture/status/123").put("completedAt", 123456)

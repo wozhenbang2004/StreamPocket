@@ -39,6 +39,57 @@ import static org.junit.Assert.*;
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @LooperMode(LooperMode.Mode.PAUSED)
 public final class AccountUiRenderTest {
+    @Test public void heyboxAccountOffersLoginAndImportWithoutStartingADownload() throws Exception {
+        try(ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()) {
+            MainActivity activity=controller.get();invoke(activity,"showLoginSettings",new Class<?>[0]);drain(activity);
+            View target=findText(ShadowDialog.getLatestDialog().getWindow().getDecorView(),"小黑盒");
+            while(target!=null&&!target.isClickable())target=target.getParent() instanceof View?(View)target.getParent():null;
+            assertNotNull(target);target.performClick();drain(activity);
+            View content=ShadowDialog.getLatestDialog().getWindow().getDecorView();
+            assertNotNull(findButton(content,"登录小黑盒"));assertNotNull(findButton(content,"导入登录信息"));
+            assertNull(Shadows.shadowOf(activity).getNextStartedActivityForResult());
+            capture(content,"038-heybox-account");findButton(content,"登录小黑盒").performClick();
+            ShadowActivity.IntentForResult started=Shadows.shadowOf(activity).getNextStartedActivityForResult();assertNotNull(started);
+            assertEquals(LoginActivity.class.getName(),started.intent.getComponent().getClassName());assertEquals("heybox",started.intent.getStringExtra("platform"));
+            assertTrue(TaskStore.all(activity).isEmpty());
+        }
+    }
+
+    @Test public void pornhubEntryUsesTheSameAccountPanelAndOpensOnlyItsOfficialLogin() throws Exception {
+        try(ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()) {
+            MainActivity activity=controller.get();invoke(activity,"showLoginSettings",new Class<?>[0]);drain(activity);
+            Dialog manager=ShadowDialog.getLatestDialog();View target=findText(manager.getWindow().getDecorView(),"Pornhub");
+            while(target!=null&&!target.isClickable())target=target.getParent() instanceof View?(View)target.getParent():null;
+            assertNotNull(target);target.performClick();drain(activity);
+            View content=ShadowDialog.getLatestDialog().getWindow().getDecorView();
+            assertNotNull(findButton(content,"登录Pornhub"));assertNotNull(findButton(content,"导入登录信息"));
+            assertNull(Shadows.shadowOf(activity).getNextStartedActivityForResult());
+            capture(content,"037-pornhub-account");findButton(content,"登录Pornhub").performClick();
+            ShadowActivity.IntentForResult started=Shadows.shadowOf(activity).getNextStartedActivityForResult();assertNotNull(started);
+            assertEquals(LoginActivity.class.getName(),started.intent.getComponent().getClassName());
+            assertEquals("pornhub",started.intent.getStringExtra("platform"));
+            assertTrue(TaskStore.all(activity).isEmpty());
+        }
+    }
+
+    @Test public void newChannelOffersScopedImportBeforeOpeningAWebLogin() throws Exception {
+        try(ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()) {
+            MainActivity activity=controller.get();invoke(activity,"showLoginSettings",new Class<?>[0]);drain(activity);
+            Dialog manager=ShadowDialog.getLatestDialog();View target=findText(manager.getWindow().getDecorView(),"小红书");
+            while(target!=null&&!target.isClickable())target=target.getParent() instanceof View?(View)target.getParent():null;
+            assertNotNull(target);target.performClick();drain(activity);
+            Dialog details=ShadowDialog.getLatestDialog();View content=details.getWindow().getDecorView();
+            assertNotNull(findButton(content,"登录小红书"));assertNotNull(findButton(content,"导入登录信息"));
+            assertNull("Choosing an account must not open a WebView before the user selects login",Shadows.shadowOf(activity).getNextStartedActivityForResult());
+            capture(content,"036-xiaohongshu-account");findButton(content,"导入登录信息").performClick();
+            Dialog confirm=ShadowDialog.getLatestDialog();assertNotNull(findText(confirm.getWindow().getDecorView(),"导入 小红书 登录信息"));
+            findButton(confirm.getWindow().getDecorView(),"选择文件").performClick();
+            assertEquals("xiaohongshu",field(activity,"cookieImportPlatform",String.class));
+            ShadowActivity.IntentForResult request=Shadows.shadowOf(activity).getNextStartedActivityForResult();assertNotNull(request);
+            assertEquals(Intent.ACTION_OPEN_DOCUMENT,request.intent.getAction());
+        }
+    }
+
     @Test public void accountsDiscloseOfficialLoginAndPreserveLink() throws Exception {
         Bundle state=new Bundle();String draft="https://www.bilibili.com/video/BV1nx411u79K";
         state.putString("draft",draft);state.putString("tab","new");
@@ -80,7 +131,8 @@ public final class AccountUiRenderTest {
             Dialog saved=ShadowDialog.getLatestDialog();View savedContent=saved.getWindow().getDecorView();
             assertNotNull(findButton(savedContent,"打开官方登录页"));
             assertNotNull(findButton(savedContent,"清除本机登录信息"));
-            assertNotNull(findText(savedContent,"登录可能已过期，无法下载时请重新登录。"));
+            assertNotNull(findText(savedContent,"保存凭据不代表源站已验证。最近请求成功也不代表账号拥有全部内容权限；无法下载时可重新登录。"));
+            assertNotNull(findText(savedContent,"已保存 · 未验证"));
             PocketSwitch enabled=findSwitch(savedContent);assertNotNull(enabled);assertTrue(enabled.isChecked());
             capture(savedContent,"013-account-saved-metadata-fixture");saved.dismiss();
             invoke(activity,"showTab",new Class<?>[]{String.class},"new");drain(activity);

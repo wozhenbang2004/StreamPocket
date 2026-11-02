@@ -71,6 +71,7 @@ public final class LibraryStore implements Closeable {
     /** Explicit import can restore a removed entry; automatic queue sync cannot. */
     public synchronized long upsertCompletedDownload(JSONObject task) {
         if (task == null || !"completed".equals(task.optString("status"))) return 0;
+        if (!task.optString("mime", "video/mp4").startsWith("video/")) return 0;
         String uri = task.optString("uri", "").trim();
         if (!localUri(uri)) return 0;
         String taskId = task.optString("id", "").trim();
@@ -468,6 +469,10 @@ public final class LibraryStore implements Closeable {
         String scheme = Uri.parse(value).getScheme(); return "content".equals(scheme) || "file".equals(scheme);
     }
     private static String source(String url, String platform) {
+        VideoPlatform channel = VideoPlatform.detect(url);
+        if (channel != null) return channel.id;
+        for (VideoPlatform candidate : VideoPlatform.values())
+            if (candidate.title.equals(platform)) return candidate.id;
         if (YouTubeLinks.matches(url) || "YouTube".equalsIgnoreCase(platform)) return "youtube";
         String value = (url + " " + platform).toLowerCase(Locale.ROOT);
         if (value.contains("bilibili") || value.contains("b23.tv") || value.contains("哔哩")) return "bilibili";

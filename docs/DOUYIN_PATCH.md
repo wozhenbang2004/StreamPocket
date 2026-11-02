@@ -9,7 +9,7 @@
 - 源文件：[yt_dlp/extractor/tiktok.py](https://github.com/yt-dlp/yt-dlp/blob/728fe46fbaa97d6f03efcaf9e766d4db63338b8d/yt_dlp/extractor/tiktok.py)，Git blob `dba66e736334dccf875719ac0ad9d7ee5715b51d`。
 - 许可证：[Unlicense](https://github.com/yt-dlp/yt-dlp/blob/728fe46fbaa97d6f03efcaf9e766d4db63338b8d/LICENSE)。PR 作者已明确勾选原创且愿意按 Unlicense 发布。其研究致谢链接为 [Evil0ctal 的发现](https://github.com/Evil0ctal/Douyin_TikTok_Download_API/commit/d9f718800df20c0255979d93ebadb33dd3a3b757)。本项目复用的是上述 PR 的实现。
 
-本地对应：`app/src/main/assets/plugins/streampocket/yt_dlp_plugins/extractor/douyin_compat.py`。新增包装只包括 imports、来源注释及 `_StreamPocketDouyinIE(DouyinIE, plugin_name='streampocket-experimental')`；主要方法沿用固定提交中的实现。没有自行发明签名算法，也没有修改其他平台提取器。
+本地对应：`app/src/main/assets/plugins/streampocket/yt_dlp_plugins/extractor/douyin_compat.py`。原始兼容包装包括 imports、来源注释及 `_StreamPocketDouyinIE(DouyinIE, plugin_name='streampocket-experimental')`；签名和兼容请求方法沿用固定提交中的实现。0.4.0 另增加 `/note/` 匹配、images 图集输出和请求作品 ID 核对，这些增量是本项目适配，不冒充原 PR 原码。没有自行发明签名算法，也没有修改其他平台提取器。
 
 ## 与下载引擎的契约
 

@@ -21,23 +21,37 @@ Failed links stay available for retry. Unfinished work and selected qualities ar
 | Task | What StreamPocket offers |
 | --- | --- |
 | Download videos | Share-link recognition, quality selection, batch queues, pause/resume, retries, and automatic audio/video merging |
+| Save images and extras | Experimental Xiaohongshu/Douyin image albums as ZIP; optional available subtitles and cover images |
+| Choose collection items | Explicit preview of the first 100 YouTube playlist or Bilibili multipart items; selection before parsing and batch quality rules |
 | Organize your collection | Two-column, three-column, and list layouts; source filters, search, collections, and saved playback positions |
 | Watch locally | Swipe between videos, pinch to zoom, playback speed controls, and two-video split playback with selectable audio |
 | Keep useful moments | Named timestamps and clip markers that you can revisit or send to the editor |
 | Make a short collection | Trim and arrange clips, export a new video, and keep the original files and editing draft |
 | Manage accounts | Optional website sign-in or login-file import, with per-platform enable/disable and removal |
 
+The 0.4.0 preview adds recent extraction reuse, pre-save checks, image-album ZIPs, optional subtitle/cover files and collection selection. See [download usage](docs/DOWNLOAD_FLOW.md).
+
 ## Supported sites
+
+New channels are experimental. Available content and quality depend on the source response and account permissions.
 
 | Site | Scope |
 | --- | --- |
 | **YouTube** | Standard video URLs, `youtu.be` links, and Shorts. A video URL with playlist context downloads the selected video only |
 | **X / Twitter** | Video posts, including multiple videos in one post. Some content requires account access |
 | **Bilibili** | Video pages and `b23.tv` share links. Available qualities depend on the video and account permissions |
-| **Douyin** | Video pages and share links. Support is experimental; some links may fail |
+| **Douyin** | Experimental video pages, share links and image albums; some links may fail |
+| **Xiaohongshu / RED (experimental)** | Experimental video-note and image-album entries, plus xhslink shares. Complete share parameters are preserved; use content the corresponding account can access |
+| **Kuaishou (experimental)** | Individual videos and v.kuaishou.com shares; local extraction from official work pages |
+| **TikTok (experimental)** | Video pages and vm/vt short links; availability depends on network and region |
+| **Instagram (experimental)** | Individual posts and Reels; private content needs corresponding account access |
+| **Facebook (experimental)** | Video pages, Reels and share links; some pages may fail |
+| **Pinterest (experimental)** | Video Pins and pin.it shares; image-only Pins are not handled |
+| **Pornhub (experimental)** | Individual videos and embeds on regular .com/.net/.org sites; official login and scoped cookie import |
+| **Heybox / 小黑盒 (experimental)** | Individual video-post shares and web posts; local official API extraction, MP4/HLS; one public sample fully downloaded and decoded on the host |
 | **Other sites** | Additional extraction is provided by yt-dlp; individual sites and URLs are not guaranteed to work |
 
-**YouTube support does not mean every video can be downloaded.** Public videos can often be attempted without signing in. Age-restricted, private, or members-only videos require the corresponding account access, and signing in still does not guarantee a successful download. Website verification, region restrictions, and network conditions may also apply. Whole channels, entire playlists, and ongoing livestreams are not supported.
+**YouTube support does not mean every video can be downloaded.** Public videos can often be attempted without signing in. Age-restricted, private, or members-only videos require the corresponding account access, and signing in still does not guarantee a successful download. Website verification, region restrictions, and network conditions may also apply. Whole channels and ongoing livestreams are not expanded. Playlist preview is an explicit selection action limited to the first 100 items.
 
 ## Screenshots
 
@@ -86,3 +100,11 @@ On Windows, use `gradlew.bat assembleDebug`. The debug APK is written to `app/bu
 ## License
 
 StreamPocket's own code is licensed under [GPL-3.0-or-later](LICENSE). Video extraction uses yt-dlp; media processing uses FFmpeg and other open-source components. See [third-party notices](THIRD_PARTY_NOTICES.md) for licenses and attribution, and [corresponding sources](docs/THIRD_PARTY_SOURCES.md) for source and build information.
+
+## 0.4.0 preview
+
+The preview includes recent extraction reuse, image-album ZIPs, optional subtitles and covers, collection-item selection, batch quality rules and per-platform account controls.
+
+`./gradlew assembleDebug -PpreviewInstall=true` produces a separately installed preview (`dev.streampocket.localtest.preview`). It does not overwrite the release app or share its data. Production updates require the original signing certificate.
+
+When a known platform requires an account, failed links and download actions offer “Log in and retry.” Use the official site or import a local cookie file; saving resumes only the selected task. Canceling preserves the failure, and a successfully parsed link still requires explicit download confirmation. Network and DNS failures do not lead to account login.

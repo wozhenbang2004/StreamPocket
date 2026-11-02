@@ -26,9 +26,8 @@ public final class SourceScheduler {
         int failures;
     }
     public static String platform(String url) {
-        if (YouTubeLinks.matches(url)) return "youtube";
-        if (CoreRules.isTwitterUrl(url)) return "x";
-        if (CoreRules.isBilibiliUrl(url)) return "bilibili";
+        VideoPlatform platform = VideoPlatform.detect(url);
+        if (platform != null) return platform.id;
         try {
             String host = new URI(url).getHost().toLowerCase(java.util.Locale.ROOT);
             if (host.equals("douyin.com") || host.endsWith(".douyin.com") || host.equals("iesdouyin.com") || host.endsWith(".iesdouyin.com")) return "douyin";

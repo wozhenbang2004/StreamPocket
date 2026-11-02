@@ -78,6 +78,10 @@ public final class UpgradeRetentionTest {
         accounts.save(LoginPlatform.BILIBILI,HEADER+row(".bilibili.com",true,"/",true,0,"SESSDATA","synthetic-bili"),"网页登录");
         accounts.save(LoginPlatform.DOUYIN,HEADER+row(".douyin.com",true,"/",true,0,"sessionid","synthetic-douyin"),"文件导入");
         accounts.save(LoginPlatform.YOUTUBE,HEADER+row(".youtube.com",true,"/",true,0,"SAPISID","synthetic-youtube"),"文件导入");
+        String[][] extra={{"xiaohongshu",".xiaohongshu.com","web_session"},{"kuaishou",".kuaishou.com","kuaishou.server.web_st"},
+                {"tiktok",".tiktok.com","sessionid"},{"instagram",".instagram.com","sessionid"},{"facebook",".facebook.com","c_user"},{"pinterest",".pinterest.com","_pinterest_sess"},
+                {"pornhub",".pornhub.com","synthetic_session"},{"heybox",".xiaoheihe.cn","pkey"}};
+        for(String[] channel:extra) accounts.save(LoginPlatform.fromId(channel[0]),HEADER+row(channel[1],true,"/",true,0,channel[2],"synthetic-"+channel[0]),"文件导入");
         accounts.setEnabled(LoginPlatform.BILIBILI,false);
         Map<String,byte[]> encrypted=new LinkedHashMap<>();
         for(LoginPlatform p:LoginPlatform.values()) encrypted.put(p.id,Files.readAllBytes(session(p).toPath()));

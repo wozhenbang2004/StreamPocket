@@ -12,7 +12,23 @@ public enum LoginPlatform {
     X("x", "X / Twitter", "https://x.com/i/flow/login", new String[]{"x.com", "twitter.com"},
             new String[]{"https://x.com/", "https://www.x.com/", "https://api.x.com/", "https://twitter.com/", "https://www.twitter.com/", "https://api.twitter.com/"}),
     YOUTUBE("youtube", "YouTube", "https://www.youtube.com/", new String[]{"youtube.com"},
-            new String[]{"https://youtube.com/", "https://www.youtube.com/", "https://m.youtube.com/", "https://music.youtube.com/"});
+            new String[]{"https://youtube.com/", "https://www.youtube.com/", "https://m.youtube.com/", "https://music.youtube.com/"}),
+    XIAOHONGSHU("xiaohongshu", "小红书", "https://www.xiaohongshu.com/", new String[]{"xiaohongshu.com"},
+            new String[]{"https://xiaohongshu.com/", "https://www.xiaohongshu.com/", "https://edith.xiaohongshu.com/"}),
+    KUAISHOU("kuaishou", "快手", "https://www.kuaishou.com/", new String[]{"kuaishou.com", "kuaishou.cn", "gifshow.com"},
+            new String[]{"https://kuaishou.com/", "https://www.kuaishou.com/", "https://v.kuaishou.com/", "https://www.gifshow.com/"}),
+    TIKTOK("tiktok", "TikTok", "https://www.tiktok.com/login", new String[]{"tiktok.com"},
+            new String[]{"https://tiktok.com/", "https://www.tiktok.com/", "https://m.tiktok.com/"}),
+    INSTAGRAM("instagram", "Instagram", "https://www.instagram.com/accounts/login/", new String[]{"instagram.com"},
+            new String[]{"https://instagram.com/", "https://www.instagram.com/", "https://i.instagram.com/"}),
+    FACEBOOK("facebook", "Facebook", "https://www.facebook.com/login/", new String[]{"facebook.com"},
+            new String[]{"https://facebook.com/", "https://www.facebook.com/", "https://m.facebook.com/"}),
+    PINTEREST("pinterest", "Pinterest", "https://www.pinterest.com/login/", new String[]{"pinterest.com"},
+            new String[]{"https://pinterest.com/", "https://www.pinterest.com/"}),
+    PORNHUB("pornhub", "Pornhub", "https://www.pornhub.com/login", new String[]{"pornhub.com", "pornhub.net", "pornhub.org"},
+            new String[]{"https://pornhub.com/", "https://www.pornhub.com/", "https://pornhub.net/", "https://www.pornhub.net/", "https://pornhub.org/", "https://www.pornhub.org/"}),
+    HEYBOX("heybox", "小黑盒", "https://login.xiaoheihe.cn/?origin=&redirect_url=https%3A%2F%2Fwww.xiaoheihe.cn%2Fapp%2Fbbs%2Fhome",
+            new String[]{"xiaoheihe.cn"}, new String[]{"https://xiaoheihe.cn/", "https://www.xiaoheihe.cn/", "https://api.xiaoheihe.cn/", "https://login.xiaoheihe.cn/"});
 
     public final String id;
     public final String title;
@@ -56,6 +72,11 @@ public enum LoginPlatform {
 
     /** Presence means a login credential was captured, not that the server accepted it. */
     public boolean hasLogin(String netscape) {
+        return hasLogin(netscape, false);
+    }
+
+    /** Pornhub uses the official page's account marker; guest cookies alone prove nothing. */
+    public boolean hasLogin(String netscape, boolean accountPageConfirmed) {
         if (netscape == null) return false;
         long now = System.currentTimeMillis() / 1000;
         for (String line : netscape.split("\\r?\\n")) {
@@ -64,11 +85,19 @@ public enum LoginPlatform {
             if (row.length != 7 || !ownsDomain(row[0]) || row[6].trim().isEmpty()) continue;
             try { long expires = Long.parseLong(row[4]); if (expires != 0 && expires <= now) continue; }
             catch (NumberFormatException invalid) { continue; }
+            if (this == PORNHUB && accountPageConfirmed) return true;
             String name = row[5];
             if (this == YOUTUBE && (name.equals("SAPISID") || name.equals("__Secure-1PAPISID") || name.equals("__Secure-3PAPISID"))) return true;
             if (this == BILIBILI && name.equals("SESSDATA")) return true;
             if (this == X && name.equals("auth_token")) return true;
             if (this == DOUYIN && (name.equals("sessionid") || name.equals("sessionid_ss") || name.equals("sid_guard"))) return true;
+            if (this == XIAOHONGSHU && name.equals("web_session")) return true;
+            if (this == KUAISHOU && (name.equals("kuaishou.server.web_st") || name.equals("kuaishou.server.web_ph"))) return true;
+            if ((this == TIKTOK || this == INSTAGRAM) && name.equals("sessionid")) return true;
+            if (this == FACEBOOK && name.equals("c_user")) return true;
+            if (this == PINTEREST && name.equals("_pinterest_sess")) return true;
+            if (this == HEYBOX && (name.equals("pkey") || name.equals("user_pkey"))
+                    && !row[6].trim().matches("(?i)(?:none|null|undefined)")) return true;
         }
         return false;
     }

@@ -26,12 +26,11 @@ public final class MediaExporter {
     }
 
     public static Result save(Context context, File source, BooleanSupplier cancelled) throws Exception {
-        if (!source.isFile() || source.length() == 0) throw new IOException("完整视频文件不存在或为空");
+        if (!source.isFile() || source.length() == 0) throw new IOException("完整媒体文件不存在或为空");
         String fileName = source.getName();
         int dot = fileName.lastIndexOf('.');
         String extension = dot >= 0 ? fileName.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
-        String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
-        if (mime == null) mime = extension.equals("mkv") ? "video/x-matroska" : "video/mp4";
+        String mime = mimeForExtension(extension);
         ContentValues values = new ContentValues();
         values.put(MediaStore.MediaColumns.DISPLAY_NAME, source.getName());
         values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
@@ -76,6 +75,29 @@ public final class MediaExporter {
         String suffix = dot > 0 ? name.substring(dot) : "";
         while (file.exists()) file = new File(directory, stem + " (" + counter++ + ")" + suffix);
         return file;
+    }
+
+    static String mimeForExtension(String extension) {
+        switch (extension.toLowerCase(Locale.ROOT)) {
+            case "mp4": return "video/mp4";
+            case "mkv": return "video/x-matroska";
+            case "webm": return "video/webm";
+            case "m4a": return "audio/mp4";
+            case "mp3": return "audio/mpeg";
+            case "zip": return "application/zip";
+            case "jpg": case "jpeg": return "image/jpeg";
+            case "png": return "image/png";
+            case "webp": return "image/webp";
+            case "avif": return "image/avif";
+            case "vtt": return "text/vtt";
+            case "srt": return "application/x-subrip";
+            case "ass": return "text/x-ssa";
+            case "lrc": return "text/plain";
+            case "ttml": return "application/ttml+xml";
+            default:
+                String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+                return mime == null ? "application/octet-stream" : mime;
+        }
     }
     private static void copy(File source, OutputStream output, BooleanSupplier cancelled) throws Exception {
         try (FileInputStream input = new FileInputStream(source)) {

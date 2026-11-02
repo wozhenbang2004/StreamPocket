@@ -53,6 +53,112 @@ public final class BatchDownloadUiTest {
         }
     }
 
+    @Test public void audioChoiceIsRestoredAndOnlyEnqueuedAfterExplicitDownload() throws Exception {
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()) {
+            MainActivity a=c.get();set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{
+                Engine.Media media=media(url,"小红书 · 离线音频保存样例");media.platform="小红书";media.hasAudio=true;
+                return Collections.singletonList(media);
+            });
+            field(a,"input",EditText.class).setText("xhslink.com/o/audio-fixture");invoke(a,"analyze",new Class<?>[0]);drain(a);
+            find(a.getWindow().getDecorView(),"画质：最高可用画质  ▾").performClick();
+            PocketDialog panel=(PocketDialog)org.robolectric.shadows.ShadowDialog.getLatestDialog();
+            panel.getListView().performItemClick(null,2,2);
+            assertNotNull(find(a.getWindow().getDecorView(),"下载音频"));assertTrue(TaskStore.all(a).isEmpty());
+            capture(a,"audio-ready-fixture.png");
+        }
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()) {
+            MainActivity a=c.get();assertNotNull(find(a.getWindow().getDecorView(),"音频：MP3  ▾"));
+            find(a.getWindow().getDecorView(),"下载音频").performClick();drain(a);
+            assertEquals(1,TaskStore.all(a).size());JSONObject task=TaskStore.all(a).get(0);
+            assertEquals("mp3",task.getJSONObject("quality").optString("audioFormat"));
+            assertEquals("小红书",task.getJSONObject("media").optString("platform"));
+        }
+    }
+
+    @Test public void recentAudioLeadsToDownloadHistoryInsteadOfTheVideoOnlyLibrary() throws Exception {
+        Engine.Media media=media("https://pin.it/fixture","最近保存的音频");media.hasAudio=true;
+        String id=TaskStore.create(app,media,Engine.Quality.audio("mp3"));
+        TaskStore.update(app,id,new JSONObject().put("status","completed").put("mime","audio/mpeg").put("uri","content://fixture/audio"));
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()) {
+            MainActivity a=c.get();TextView action=find(a.getWindow().getDecorView(),"查看下载");assertNotNull(action);
+            action.performClick();assertEquals("queue",field(a,"tab",String.class));
+            assertNotNull(find(a.getWindow().getDecorView(),"最近保存的音频"));
+        }
+    }
+
+    @Test public void loginRecoveryRetriesOnlyTheSelectedFailedLinkAndNeverDownloadsAutomatically() throws Exception {
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()) {
+            MainActivity a=c.get();set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{throw new Exception("ERROR: Login required");});
+            field(a,"input",EditText.class).setText("https://xhslink.com/o/login-fixture https://b23.tv/keep-failed");invoke(a,"analyze",new Class<?>[0]);drain(a);
+            assertEquals(2,inbox(a).count("failed"));find(a.getWindow().getDecorView(),"登录并重试").performClick();drain(a);
+            PocketDialog account=(PocketDialog)org.robolectric.shadows.ShadowDialog.getLatestDialog();
+            assertNotNull(find(account.getWindow().getDecorView(),"小红书"));find(account.getWindow().getDecorView(),"登录小红书").performClick();
+            org.robolectric.shadows.ShadowActivity.IntentForResult login=Shadows.shadowOf(a).getNextStartedActivityForResult();
+            assertNotNull(login);assertEquals("xiaohongshu",login.intent.getStringExtra("platform"));
+            set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->Collections.singletonList(media(url,"登录后重新解析的离线样例")));
+            a.onActivityResult(54,android.app.Activity.RESULT_OK,null);drain(a);
+            assertEquals(1,inbox(a).count("failed"));assertEquals("https://b23.tv/keep-failed",inbox(a).jobs.get(0).url);
+            assertEquals(1,inbox(a).media.size());assertTrue(TaskStore.all(a).isEmpty());
+            capture(a,"login-recovery-ready-fixture.png");
+        }
+    }
+
+    @Test public void cancelledLoginKeepsTheFailureAndNetworkErrorsDoNotOfferLogin() throws Exception {
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()) {
+            MainActivity a=c.get();java.util.concurrent.atomic.AtomicInteger calls=new java.util.concurrent.atomic.AtomicInteger();
+            set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{calls.incrementAndGet();throw new Exception("ERROR: Login required");});
+            field(a,"input",EditText.class).setText("https://xhslink.com/o/login-fixture");invoke(a,"analyze",new Class<?>[0]);drain(a);
+            String id=inbox(a).jobs.get(0).id;capture(a,"login-recovery-failed-fixture.png");find(a.getWindow().getDecorView(),"登录并重试").performClick();drain(a);
+            PocketDialog account=(PocketDialog)org.robolectric.shadows.ShadowDialog.getLatestDialog();find(account.getWindow().getDecorView(),"登录小红书").performClick();
+            a.onActivityResult(54,android.app.Activity.RESULT_CANCELED,null);drain(a);
+            assertEquals(1,calls.get());assertEquals(id,inbox(a).jobs.get(0).id);assertEquals("failed",inbox(a).jobs.get(0).state);
+            assertNull(field(a,"loginRecoveryId",String.class));
+            assertEquals(false,invoke(a,"canOfferLogin",new Class<?>[]{String.class,String.class},"https://xhslink.com/o/fixture","java.net.UnknownHostException: unable to resolve host"));
+            assertEquals(false,invoke(a,"canOfferLogin",new Class<?>[]{String.class,String.class},"https://xhslink.com/o/fixture","ERROR: connection timed out"));
+            assertEquals(false,invoke(a,"canOfferLogin",new Class<?>[]{String.class,String.class},"https://xhslink.com/o/fixture","ERROR: Unable to download webpage: <urlopen error [Errno -2] Name or service not known>"));
+            assertEquals(false,invoke(a,"canOfferLogin",new Class<?>[]{String.class,String.class},"https://xhslink.com/o/fixture","ERROR: Unable to download webpage: nodename nor servname provided, or not known"));
+            assertEquals(false,invoke(a,"canOfferLogin",new Class<?>[]{String.class,String.class},"https://xhslink.com/o/fixture","java.lang.InterruptedException"));
+        }
+    }
+
+    @Test public void pendingLoginRecoverySurvivesActivityRecreation() throws Exception {
+        Bundle saved=new Bundle();String id;
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()) {
+            MainActivity a=c.get();set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{throw new Exception("ERROR: Login required");});
+            field(a,"input",EditText.class).setText("https://xhslink.com/o/restore-login");invoke(a,"analyze",new Class<?>[0]);drain(a);
+            id=inbox(a).jobs.get(0).id;invoke(a,"showLoginRecovery",new Class<?>[]{String.class,String.class,String.class},"inspection",id,inbox(a).jobs.get(0).url);drain(a);a.onSaveInstanceState(saved);
+        }
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create(saved).start().resume().visible()) {
+            MainActivity a=c.get();assertEquals(id,field(a,"loginRecoveryId",String.class));
+            set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->Collections.singletonList(media(url,"恢复后解析")));
+            a.onActivityResult(54,android.app.Activity.RESULT_OK,null);drain(a);
+            assertEquals(1,inbox(a).media.size());assertEquals(0,inbox(a).count("failed"));assertTrue(TaskStore.all(a).isEmpty());
+        }
+    }
+
+    @Test public void cancelledCredentialImportDoesNotRetryTheFailedLink() throws Exception {
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()) {
+            MainActivity a=c.get();set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{throw new Exception("ERROR: Login required");});
+            field(a,"input",EditText.class).setText("https://xhslink.com/o/import-login");invoke(a,"analyze",new Class<?>[0]);drain(a);
+            String id=inbox(a).jobs.get(0).id;invoke(a,"showLoginRecovery",new Class<?>[]{String.class,String.class,String.class},"inspection",id,inbox(a).jobs.get(0).url);drain(a);
+            a.onActivityResult(51,android.app.Activity.RESULT_CANCELED,null);drain(a);
+            assertEquals(id,inbox(a).jobs.get(0).id);assertEquals("failed",inbox(a).jobs.get(0).state);assertNull(field(a,"loginRecoveryId",String.class));
+        }
+    }
+
+    @Test public void loginRecoveryResubmitsTheExistingDownloadInsteadOfCreatingAnotherTask() throws Exception {
+        Engine.Media media=media("https://www.instagram.com/reel/login-fixture/","需登录的下载");
+        String id=TaskStore.create(app,media,media.qualities.get(0));
+        TaskStore.update(app,id,new JSONObject().put("status","failed").put("log","ERROR: Login required"));
+        try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()) {
+            MainActivity a=c.get();invoke(a,"showLoginRecovery",new Class<?>[]{String.class,String.class,String.class},"download",id,media.url);drain(a);
+            PocketDialog account=(PocketDialog)org.robolectric.shadows.ShadowDialog.getLatestDialog();find(account.getWindow().getDecorView(),"登录Instagram").performClick();
+            a.onActivityResult(54,android.app.Activity.RESULT_OK,null);drain(a);
+            Intent request=Shadows.shadowOf(a).getNextStartedService();assertNotNull(request);
+            assertEquals(DownloadService.ENQUEUE,request.getAction());assertEquals(id,request.getStringExtra("id"));assertEquals(1,TaskStore.all(a).size());
+        }
+    }
+
     @Test public void youtubeShortLinkUsesExistingQualitySelectionAndOnlyDownloadsAfterConfirmation()throws Exception{
         try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()){
             MainActivity a=c.get();

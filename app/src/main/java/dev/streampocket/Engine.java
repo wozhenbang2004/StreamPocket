@@ -34,6 +34,7 @@ public final class Engine {
     private final Context app;
     private volatile String inspectProcess;
     private volatile boolean inspectCancelled;
+    private final java.util.Map<String,String> requestScopes = new java.util.concurrent.ConcurrentHashMap<>();
 
     public Engine(Context context) { app = context.getApplicationContext(); }
 
@@ -170,7 +171,10 @@ public final class Engine {
 
     YoutubeDLRequest request(String url, String processId) throws Exception {return request(url,processId,true);}
     YoutubeDLRequest request(String url, String processId,boolean useAccount) throws Exception {
-        String normalized = normalizeUrl(url);
+        return requestFor(normalizeUrl(url), processId, useAccount, false);
+    }
+
+    private YoutubeDLRequest requestFor(String normalized, String processId, boolean useAccount, boolean collection) throws Exception {
         YoutubeDLRequest request = new YoutubeDLRequest(normalized);
         // Some Bilibili CDN nodes reject a plain GET but accept a complete byte
         // range. This exact option passed both full-file/decode regression cases.
@@ -178,7 +182,7 @@ public final class Engine {
         // postprocessor removes this static header only after validating exact
         // CDN ranges; aria2 then generates its own disjoint byte ranges.
         if (CoreRules.isBilibiliUrl(normalized)) request.addOption("--add-headers", "Range:bytes=0-");
-        request.addOption("--no-playlist");
+        request.addOption(collection ? "--yes-playlist" : "--no-playlist");
         request.addOption("--socket-timeout", "15");
         request.addOption("--retries", "3");
         request.addOption("--retry-sleep", "http:exp=1:8");
@@ -193,7 +197,14 @@ public final class Engine {
         File snapshot = cookieSnapshot(processId);
         File parent = snapshot.getParentFile();
         if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException("无法创建登录凭据临时目录");
-        try { if(useAccount)new AccountStore(app).writeSnapshot(snapshot);else try(FileOutputStream empty=new FileOutputStream(snapshot)){empty.write("# Netscape HTTP Cookie File\n".getBytes(StandardCharsets.UTF_8));} }
+        try {
+            AccountStore accounts = new AccountStore(app);
+            if(useAccount) requestScopes.put(processId, accounts.writeScopedSnapshot(snapshot, normalized));
+            else {
+                try(FileOutputStream empty=new FileOutputStream(snapshot)){empty.write("# Netscape HTTP Cookie File\n".getBytes(StandardCharsets.UTF_8));}
+                requestScopes.put(processId, accounts.cacheScope(normalized));
+            }
+        }
         catch (Exception failure) { snapshot.delete(); throw failure; }
         request.addOption("--cookies", snapshot.getAbsolutePath());
         String proxy = app.getSharedPreferences("config", Context.MODE_PRIVATE).getString("proxy", "");
@@ -202,7 +213,9 @@ public final class Engine {
     }
 
     void cleanupRequest(String processId) {
+        requestScopes.remove(processId);
         cookieSnapshot(processId).delete();
+        new File(cookieSnapshot(processId).getParentFile(), processId.replaceAll("[^A-Za-z0-9_-]", "_") + ".info.json").delete();
         // Only this request's temporary Metalink URLs, never media parts,
         // account masters or another active request's metadata.
         deleteTransferMetadata(transferMetadataDirectory(processId));
@@ -271,6 +284,8 @@ public final class Engine {
         inspectCancelled = false;
         init();
         String url = normalizeUrl(input);
+        AccountStore accounts = new AccountStore(app);
+        String accountScope = accounts.cacheScope(url);
         boolean twitter = CoreRules.isTwitterUrl(url);
         boolean signedIn = twitter && hasTwitterLoginCookie();
         List<String> apis = twitter ? (signedIn?java.util.Arrays.asList("","syndication"):SourceScheduler.SHARED.twitterApis()) : Collections.singletonList("");
@@ -298,13 +313,20 @@ public final class Engine {
                         if (inspectCancelled || cancelled.getAsBoolean()) throw new InterruptedException("解析已取消");
                         List<Media> results = mediaFromMetadata(root, url);
                         if (results.isEmpty()) throw new IOException("源站没有返回可下载的完整视频。\n" + cleanLog(response.getErr()));
-                        for (Media media : results) {media.twitterApi = api;media.publicTwitter=publicTwitter;}
+                        for (Media media : results) {
+                            media.twitterApi = api; media.publicTwitter = publicTwitter;
+                            JSONObject info = selectedInfo(root, media.id);
+                            if (info != null && accountScope.equals(accounts.cacheScope(url)))
+                                media.resolvedKey = ResolvedMediaCache.put(info, url, accountScope + ":" + publicTwitter, android.os.SystemClock.elapsedRealtime());
+                        }
+                        if (!publicTwitter) accounts.noteRequest(url, accountScope, null);
                         lease.outcome(null);
                         return results;
                     } catch (Exception error) {
                         if (inspectCancelled || cancelled.getAsBoolean() || error instanceof InterruptedException)
                             throw new InterruptedException("解析已取消");
                         lease.outcome(error);
+                        accounts.noteRequest(url, accountScope, error);
                         String reason = cleanLog(error.getMessage() == null ? error.toString() : error.getMessage());
                         failures.append(api.isEmpty() ? "默认解析" : "X / " + api).append(":\n")
                                 .append(reason.substring(0, Math.min(reason.length(), 3500))).append("\n\n");
@@ -361,6 +383,7 @@ public final class Engine {
 
     static List<Media> mediaFromMetadata(JSONObject root, String url) throws Exception {
         List<Media> results = new ArrayList<>();
+        if (root.optBoolean("_streampocket_album")) { results.add(parseMedia(root, url, 0)); return results; }
         JSONArray entries = root.optJSONArray("entries");
         if (entries == null) {
             results.add(parseMedia(root, url, 0));
@@ -398,61 +421,235 @@ public final class Engine {
         media.uploader = data.optString("uploader", data.optString("channel", ""));
         media.duration = (long) data.optDouble("duration", 0);
         media.thumbnail = data.optString("thumbnail", "");
+        media.album = data.optBoolean("_streampocket_album");
+        media.imageCount = media.album ? data.optInt("_streampocket_image_count", data.optJSONArray("entries") == null ? 0 : data.optJSONArray("entries").length()) : 0;
+        media.subtitleAvailable = hasEntries(data.optJSONObject("subtitles")) || hasEntries(data.optJSONObject("automatic_captions"));
+        media.subtitleLanguage = preferredSubtitle(data);
         media.width = Math.max(0,data.optInt("width",0)); media.height = Math.max(0,data.optInt("height",0));
         media.filesize = data.optLong("filesize",-1);
         if(media.filesize<=0){media.filesize=data.optLong("filesize_approx",-1);media.filesizeEstimated=media.filesize>0;}
         String host = new URI(source).getHost().toLowerCase(Locale.ROOT);
-        media.platform = YouTubeLinks.matches(source) ? "YouTube"
-                : host.equals("x.com") || host.endsWith(".x.com") || host.contains("twitter.com") ? "X / Twitter"
-                : host.contains("bilibili.com") || host.equals("b23.tv") ? "哔哩哔哩"
-                : host.contains("douyin.com") ? "抖音 · 实验性" : host;
+        VideoPlatform channel = VideoPlatform.detect(source);
+        media.platform = channel == null ? host : channel.title;
+        media.hasAudio = audioCodec(data);
+        if (media.album) { media.qualities.add(new Quality("images", "全部图片 · ZIP", "best")); return media; }
         media.qualities.add(new Quality("best", "最高可用画质", "bv*+ba/b"));
         TreeSet<Integer> heights = new TreeSet<>(Collections.reverseOrder());
+        java.util.Map<Integer, Double> frameRates = new java.util.HashMap<>();
         JSONArray formats = data.optJSONArray("formats");
         if (formats != null) for (int index = 0; index < formats.length(); index++) {
             JSONObject format = formats.optJSONObject(index);
+            if (format != null && audioCodec(format)) media.hasAudio = true;
             if (format == null || "none".equals(format.optString("vcodec"))) continue;
             int height = format.optInt("height", 0);
-            if (height > 0) heights.add(height);
+            if (height > 0) {
+                heights.add(height);
+                double fps = format.optDouble("fps", 0);
+                if (Double.isFinite(fps) && fps > 0 && fps <= 1000)
+                    frameRates.put(height, Math.max(frameRates.getOrDefault(height, 0d), fps));
+            }
         }
-        for (int height : heights) media.qualities.add(new Quality(String.valueOf(height), height + "p", 
-                "bv*[height=" + height + "]+ba/b[height=" + height + "]"));
+        for (int height : heights) {
+            Quality quality = new Quality(String.valueOf(height), height + "p",
+                    "bv*[height=" + height + "]+ba/b[height=" + height + "]");
+            double fps = frameRates.getOrDefault(height, 0d);
+            if (fps > 0) quality.details = "源站最高 " + String.format(Locale.ROOT, "%.0f", fps) + " fps";
+            media.qualities.add(quality);
+        }
         return media;
     }
 
-    public static String normalizeUrl(String text) { return YouTubeLinks.normalizeVideo(CoreRules.normalizeUrl(text)); }
+    private static boolean audioCodec(JSONObject format) {
+        String codec = format.optString("acodec", "");
+        return !codec.isEmpty() && !"none".equals(codec) && !"null".equals(codec);
+    }
+
+    private static boolean hasEntries(JSONObject data) { return data != null && data.length() > 0; }
+
+    static String preferredSubtitle(JSONObject data) {
+        java.util.Set<String> languages = new TreeSet<>();
+        for (String key : new String[]{"subtitles", "automatic_captions"}) {
+            JSONObject subs = data.optJSONObject(key); if (subs == null) continue;
+            java.util.Iterator<String> keys = subs.keys();
+            while (keys.hasNext()) { String lang = keys.next(); if (lang.matches("[A-Za-z0-9_-]{1,40}") && !lang.equals("live_chat")) languages.add(lang); }
+        }
+        for (String prefix : new String[]{"zh", "en", ""}) for (String lang : languages) if (lang.startsWith(prefix)) return lang;
+        return "";
+    }
+
+    private static JSONObject selectedInfo(JSONObject root, String id) {
+        if (id.equals(root.optString("id"))) return root;
+        JSONArray entries = root.optJSONArray("entries");
+        if (entries != null) for (int i = 0; i < entries.length(); i++) {
+            JSONObject item = entries.optJSONObject(i);
+            if (item != null && id.equals(item.optString("id"))) return item;
+        }
+        return null;
+    }
+
+    boolean useResolved(YoutubeDLRequest request, Media media, String processId) throws Exception {
+        String scope = new AccountStore(app).cacheScope(media.url);
+        if (!scope.equals(requestScopes.get(processId))) return false;
+        JSONObject info = ResolvedMediaCache.get(media.resolvedKey, media.url, scope + ":" + media.publicTwitter, android.os.SystemClock.elapsedRealtime());
+        if (info == null) return false;
+        // Refresh is explicit and bounded in the worker, not an implicit second extraction by yt-dlp.
+        cleanResolvedInfo(info);
+        File file = new File(cookieSnapshot(processId).getParentFile(), processId.replaceAll("[^A-Za-z0-9_-]", "_") + ".info.json");
+        try (FileOutputStream out = new FileOutputStream(file)) {
+            file.setReadable(false, false); file.setWritable(false, false); file.setReadable(true, true); file.setWritable(true, true);
+            out.write(info.toString().getBytes(StandardCharsets.UTF_8));
+        }
+        request.addOption("--load-info-json", file.getAbsolutePath());
+        // yt-dlp's default info-json cleaner removes playlist entries entirely.
+        if (media.album) request.addOption("--no-clean-info-json");
+        return true;
+    }
+
+    static void cleanResolvedInfo(JSONObject info) {
+        for(String key:new String[]{"webpage_url","original_url","filepath","_filename","filename","infojson_filename",
+                "requested_downloads","requested_formats","requested_subtitles","requested_entries","__files_to_move","__postprocessors"}) info.remove(key);
+        JSONArray entries=info.optJSONArray("entries");if(entries!=null)for(int i=0;i<entries.length();i++) {
+            JSONObject item=entries.optJSONObject(i);if(item!=null)cleanResolvedInfo(item);
+        }
+    }
+
+    String requestScope(String processId) { return requestScopes.getOrDefault(processId, ""); }
+
+    static YoutubeDLRequest withoutResolved(YoutubeDLRequest original) {
+        List<String> args = new ArrayList<>(original.buildCommand());
+        int index = args.indexOf("--load-info-json");
+        if (index >= 0) { args.remove(index); if (index < args.size()) args.remove(index); }
+        return new YoutubeDLRequest(Collections.emptyList()).addCommands(args);
+    }
+
+    static boolean expiredMedia(String text) {
+        String value = text == null ? "" : text.toLowerCase(Locale.ROOT);
+        return value.contains("http error 403") || value.contains("http error 410") || value.contains("url has expired")
+                || value.contains("requested format is not available");
+    }
+
+    public static final class CollectionItem {
+        final String url, title;
+        final long duration, bytes;
+        CollectionItem(String url, String title, long duration, long bytes) { this.url=url;this.title=title;this.duration=duration;this.bytes=bytes; }
+    }
+
+    List<CollectionItem> collection(String input, Consumer<String> progress, java.util.function.BooleanSupplier cancelled) throws Exception {
+        String url = CollectionLinks.normalize(input); init(); inspectCancelled=false;
+        String processId = "collection-" + java.util.UUID.randomUUID();
+        try (SourceScheduler.Lease lease = SourceScheduler.SHARED.acquire(url, cancelled, progress)) {
+            RUNTIME_LOCK.readLock().lockInterruptibly();
+            try {
+                inspectProcess=processId;
+                YoutubeDLRequest request=requestFor(url,processId,true,true);
+                request.addOption("--flat-playlist"); request.addOption("--playlist-end","100");
+                request.addOption("--skip-download");request.addOption("--dump-single-json");
+                YoutubeDLResponse response=YoutubeDL.getInstance().execute(request,processId,false,null);
+                if (cancelled.getAsBoolean() || inspectCancelled) throw new InterruptedException("已取消展开合集");
+                if (response.getExitCode()!=0) throw new IOException(cleanLog(response.getErr()));
+                return collectionItems(lastJsonObject(response.getOut()),url);
+            } finally { inspectProcess=null;cleanupRequest(processId);RUNTIME_LOCK.readLock().unlock(); }
+        }
+    }
+
+    static List<CollectionItem> collectionItems(JSONObject root, String source) {
+        List<CollectionItem> results=new ArrayList<>();java.util.Set<String> seen=new java.util.HashSet<>();
+        JSONArray entries=root.optJSONArray("entries");if(entries==null)return results;
+        for(int i=0;i<Math.min(100,entries.length());i++) {
+            JSONObject item=entries.optJSONObject(i);if(item==null || item.optBoolean("is_live") || "is_upcoming".equals(item.optString("live_status")))continue;
+            try {
+                String url=item.optString("webpage_url",item.optString("url"));
+                if(VideoPlatform.detect(source)==VideoPlatform.YOUTUBE && item.optString("id").matches("[A-Za-z0-9_-]{11}")) url="https://www.youtube.com/watch?v="+item.optString("id");
+                if(url.isEmpty()&&VideoPlatform.detect(source)==VideoPlatform.BILIBILI)url=source+"?p="+(i+1);
+                url=normalizeUrl(url);
+                if(VideoPlatform.detect(url)!=VideoPlatform.detect(source) || !seen.add(url))continue;
+                results.add(new CollectionItem(url,item.optString("title","第 "+(i+1)+" 项"),(long)item.optDouble("duration"),item.optLong("filesize",-1)));
+            }catch(Exception invalid) { /* Unavailable entries are not fabricated or silently downloaded. */ }
+        }
+        return results;
+    }
+
+    public static String normalizeUrl(String text) {
+        String url = HeyboxLinks.normalizeVideo(PornhubLinks.normalizeVideo(YouTubeLinks.normalizeVideo(CoreRules.normalizeUrl(text))));
+        try {
+            URI uri = new URI(url);
+            // The built-in extractor requires www; signed query bytes must survive normalization.
+            if ("xiaohongshu.com".equalsIgnoreCase(uri.getHost()))
+                return "https://www.xiaohongshu.com" + uri.getRawPath()
+                        + (uri.getRawQuery() == null ? "" : "?" + uri.getRawQuery());
+        } catch (Exception ignored) { /* CoreRules already validates the public URL. */ }
+        return url;
+    }
     public static String cleanLog(String text) { return CoreRules.cleanLog(text); }
     public static String userMessage(Throwable error) { return CoreRules.userMessage(error); }
     public static String inspectionMessage(Throwable error) { return CoreRules.inspectionMessage(error); }
 
     public static final class Quality {
         public String id, label, selector;
+        public String audioFormat = "", details = "";
         public Quality(String id, String label, String selector) { this.id = id; this.label = label; this.selector = selector; }
-        public JSONObject toJson() throws Exception { return new JSONObject().put("id", id).put("label", label).put("selector", selector); }
-        public static Quality fromJson(JSONObject json) { return new Quality(json.optString("id", "best"), json.optString("label", "最高可用画质"), json.optString("selector", "bv*+ba/b")); }
+        public boolean audioOnly() { return "m4a".equals(audioFormat) || "mp3".equals(audioFormat); }
+        static Quality audio(String format) {
+            Quality quality = new Quality("audio-" + format, "仅音频 · " + format.toUpperCase(Locale.ROOT), "ba/b");
+            quality.audioFormat = format;
+            quality.details = "mp3".equals(format) ? "兼容常见播放器 · 转换需要一些时间" : "只保存声音 · 必要时转换为 M4A";
+            return quality;
+        }
+        void configure(YoutubeDLRequest request) {
+            request.addOption("--format", selector);
+            if (audioOnly()) {
+                request.addOption("--extract-audio");
+                request.addOption("--audio-format", audioFormat);
+                request.addOption("--audio-quality", "0");
+            } else request.addOption("--merge-output-format", "mp4/mkv");
+        }
+        public JSONObject toJson() throws Exception { return new JSONObject().put("id", id).put("label", label).put("selector", selector).put("audioFormat", audioFormat).put("details", details); }
+        public static Quality fromJson(JSONObject json) {
+            Quality quality = new Quality(json.optString("id", "best"), json.optString("label", "最高可用画质"), json.optString("selector", "bv*+ba/b"));
+            String format = json.optString("audioFormat", "");
+            if ("mp3".equals(format) || "m4a".equals(format)) quality.audioFormat = format;
+            quality.details = json.optString("details", "");
+            return quality;
+        }
     }
 
     public static final class Media {
         public String url = "", id = "", title = "", uploader = "", platform = "";
         public String twitterApi = "", thumbnail = "";
-        public boolean publicTwitter;
+        public boolean publicTwitter, hasAudio;
+        public String resolvedKey = "";
+        public String subtitleLanguage = "";
+        public boolean album, subtitleAvailable, saveSubtitles, saveCover;
+        public int imageCount;
         public int width, height;
         public long filesize=-1;
         public boolean filesizeEstimated;
         public long duration;
         public int playlistIndex;
         public List<Quality> qualities = new ArrayList<>();
+        public List<Quality> downloadChoices() {
+            List<Quality> choices = new ArrayList<>(qualities);
+            if (hasAudio) { choices.add(Quality.audio("m4a")); choices.add(Quality.audio("mp3")); }
+            return choices;
+        }
         public JSONObject toJson() throws Exception {
             JSONArray choices = new JSONArray(); for (Quality quality : qualities) choices.put(quality.toJson());
             return new JSONObject().put("url", url).put("id", id).put("title", title).put("uploader", uploader)
+                    .put("resolvedKey", resolvedKey).put("album", album).put("imageCount", imageCount).put("subtitleAvailable", subtitleAvailable)
+                    .put("saveSubtitles", saveSubtitles).put("saveCover", saveCover)
+                    .put("subtitleLanguage", subtitleLanguage)
                     .put("thumbnail",thumbnail).put("width",width).put("height",height).put("filesize",filesize).put("filesizeEstimated",filesizeEstimated)
-                    .put("platform", platform).put("duration", duration).put("playlistIndex", playlistIndex).put("twitterApi", twitterApi).put("publicTwitter",publicTwitter).put("qualities", choices);
+                    .put("platform", platform).put("duration", duration).put("playlistIndex", playlistIndex).put("twitterApi", twitterApi).put("publicTwitter",publicTwitter).put("hasAudio", hasAudio).put("qualities", choices);
         }
         public static Media fromJson(JSONObject json) {
             Media media = new Media(); media.url = json.optString("url"); media.id = json.optString("id");
             media.title = json.optString("title"); media.uploader = json.optString("uploader"); media.platform = json.optString("platform");
             media.duration = json.optLong("duration"); media.playlistIndex = json.optInt("playlistIndex");
             media.twitterApi = json.optString("twitterApi", "");media.publicTwitter=json.optBoolean("publicTwitter",false);
+            media.hasAudio = json.optBoolean("hasAudio", false);
+            media.resolvedKey=json.optString("resolvedKey"); media.album=json.optBoolean("album"); media.imageCount=json.optInt("imageCount");
+            media.subtitleAvailable=json.optBoolean("subtitleAvailable"); media.saveSubtitles=json.optBoolean("saveSubtitles"); media.saveCover=json.optBoolean("saveCover");
+            media.subtitleLanguage=json.optString("subtitleLanguage");
             media.thumbnail=json.optString("thumbnail", ""); media.width=Math.max(0,json.optInt("width",0));media.height=Math.max(0,json.optInt("height",0));
             media.filesize=json.optLong("filesize",-1);media.filesizeEstimated=json.optBoolean("filesizeEstimated");
             JSONArray choices = json.optJSONArray("qualities"); if (choices != null) for (int i = 0; i < choices.length(); i++) {

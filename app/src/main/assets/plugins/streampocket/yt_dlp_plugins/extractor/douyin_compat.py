@@ -22,6 +22,19 @@ from yt_dlp.utils.traversal import traverse_obj
 class _StreamPocketDouyinIE(DouyinIE, plugin_name='streampocket-experimental'):
     """Port of the pinned upstream patch, packaged as an extractor override."""
 
+    _VALID_URL = r'https?://(?:www\.)?douyin\.com/(?:video|note)/(?P<id>[0-9]+)'
+
+    def _parse_aweme_video_app(self, detail):
+        images = detail.get('images')
+        if not isinstance(images, list) or not images:
+            return super()._parse_aweme_video_app(detail)
+        from yt_dlp_plugins.extractor.albums import album_result
+        from yt_dlp.utils import url_or_none
+        post_id = str(detail.get('aweme_id') or '')
+        urls = [traverse_obj(image, ('url_list', 0, {url_or_none})) for image in images]
+        return album_result(post_id, detail.get('desc'), urls, f'https://www.douyin.com/note/{post_id}',
+                            traverse_obj(detail, ('author', 'nickname', {str})))
+
     _SEC_SALT = 'A96D855A08C0A9707F8BEF0D9A527E4E'
     _REQUIRED_COOKIES = [
         'passport_csrf_token',  # pass anything just works (upstream comment)
@@ -93,5 +106,8 @@ class _StreamPocketDouyinIE(DouyinIE, plugin_name='streampocket-experimental'):
             raise ExtractorError(
                 'Fresh cookies (not necessarily logged in) are needed',
                 expected=not self._get_cookies(self._WEBPAGE_HOST).get('s_v_web_id'))
+
+        if str(aweme_detail.get('aweme_id')) != video_id:
+            raise ExtractorError('抖音未返回所选作品，未使用其他推荐内容', expected=True)
 
         return {**self._parse_aweme_video_app(aweme_detail), 'http_headers': {'Referer': self._WEBPAGE_HOST}}

@@ -51,7 +51,10 @@ public final class PocketDialog extends Dialog {
         TextView title=text(spec.title==null?"":spec.title,18,p.ink,true);title.setMaxLines(2);title.setPadding(0,dp(8),dp(8),dp(12));titleRow.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         Button close=spec.dark?PocketButton.dark(getContext(),"",PocketButton.Role.QUIET):PocketButton.of(getContext(),"",PocketButton.Role.QUIET);PocketIcon icon=new PocketIcon("close",p.muted);icon.setBounds(0,0,dp(20),dp(20));close.setCompoundDrawables(icon,null,null,null);close.setPadding(dp(14),0,dp(14),0);close.setContentDescription("关闭面板");close.setOnClickListener(v->{if(cancellable)cancel();});titleRow.addView(close,new LinearLayout.LayoutParams(dp(48),dp(48)));header.addView(titleRow);
         surface.addView(header,new LinearLayout.LayoutParams(-1,-2));header.setOnTouchListener((v,e)->drag(e));
-        if(spec.items!=null)buildList(p);
+        if(spec.items!=null){
+            if(spec.message!=null){TextView note=text(spec.message,13,p.muted,false);note.setPadding(0,0,0,dp(10));surface.addView(note,new LinearLayout.LayoutParams(-1,-2));}
+            buildList(p);
+        }
         else if(spec.custom!=null||spec.message!=null){
             BoundedScroll scroll=new BoundedScroll(getContext());scroll.setFillViewport(false);scroll.setClipToPadding(false);
             View content=spec.custom;

@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -221,19 +222,35 @@ public final class DownloadService extends Service {
             request.addOption("--newline");
             request.addOption("--progress");
             request.addOption("--no-simulate");
-            request.addOption("--format", quality.selector);
-            request.addOption("--merge-output-format", "mp4/mkv");
+            quality.configure(request);
             request.addOption("--output", new File(workingDirectory, "%(title).100B [%(id)s].%(ext)s").getAbsolutePath());
             request.addOption("--print", DownloadProgress.PLAN_TEMPLATE);
             request.addOption("--progress-template", DownloadProgress.DOWNLOAD_TEMPLATE);
             request.addOption("--progress-template", DownloadProgress.POST_TEMPLATE);
             request.addOption("--print", "after_move:filepath");
+            if (media.saveCover && !media.album) request.addOption("--write-thumbnail");
+            if (media.saveSubtitles && !media.subtitleLanguage.isEmpty() && !media.album) {
+                request.addOption("--write-subs"); request.addOption("--write-auto-subs");
+                request.addOption("--sub-langs", media.subtitleLanguage); request.addOption("--sub-format", "srt/vtt/best");
+            }
+            if (media.album && !engine.useResolved(request, media, "download-" + id)) {
+                admission[0].close();
+                List<Engine.Media> refreshed = engine.inspect(media.url, message -> updateNotification(message,id,-1), () -> isCancelled(id));
+                Engine.Media selected = null;
+                for (Engine.Media item : refreshed) if (item.album && item.id.equals(media.id)) selected = item;
+                if (selected == null || !engine.useResolved(request, selected, "download-" + id)) throw new IOException("图集信息已失效，请重新解析");
+                media.imageCount = selected.imageCount;
+                admission[0] = SourceScheduler.SHARED.acquire(media.url, () -> isCancelled(id), message -> updateNotification(message,id,-1));
+            }
+            boolean resolved = request.hasOption("--load-info-json") || engine.useResolved(request, media, "download-" + id);
+            String requestScope = engine.requestScope("download-" + id);
             lastProgressWrite = 0;
             String output;
             Engine.RUNTIME_LOCK.readLock().lockInterruptibly();
+            boolean runtimeHeld = true;
             try {
                 if (isCancelled(id)) throw new IOException("cancelled");
-                try {
+                for (int refresh = 0;; refresh++) try {
                     // The wrapper only dispatches stdout. Merge download stderr so
                     // retries and real source errors reach the same stage model.
                     output = YoutubeDL.getInstance().execute(request, "download-" + id, true, (progress, eta, line) -> {
@@ -255,7 +272,24 @@ public final class DownloadService extends Service {
                         }
                         return kotlin.Unit.INSTANCE;
                     }).getOut();
+                    if (!media.publicTwitter) new AccountStore(this).noteRequest(media.url, requestScope, null);
+                    break;
                 } catch (Exception failure) {
+                    if (resolved && refresh == 0 && !media.album && !isCancelled(id) && Engine.expiredMedia(log + "\n" + failure)) {
+                        admission[0].close();
+                        request = Engine.withoutResolved(request);
+                        log.setLength(0); updateNotification("媒体地址已失效，正在刷新", id, -1);
+                        // A new inspection acquires the source gate before the runtime lock.
+                        // Release our read lock so a queued core update cannot form a lock cycle.
+                        Engine.RUNTIME_LOCK.readLock().unlock(); runtimeHeld=false;
+                        List<Engine.Media> refreshed=engine.inspect(media.url,message->updateNotification(message,id,-1),()->isCancelled(id));
+                        Engine.Media selected=null;for(Engine.Media item:refreshed)if(item.id.equals(media.id)&&!item.album)selected=item;
+                        if(selected==null||!engine.useResolved(request,selected,"download-"+id))throw new IOException("未能刷新所选内容，请重新解析原链接");
+                        admission[0]=SourceScheduler.SHARED.acquire(media.url,()->isCancelled(id),message->updateNotification(message,id,-1));
+                        Engine.RUNTIME_LOCK.readLock().lockInterruptibly(); runtimeHeld=true;
+                        continue;
+                    }
+                    if (!media.publicTwitter) new AccountStore(this).noteRequest(media.url, requestScope, failure);
                     // Upstream constructs exceptions from stderr, which is empty
                     // after redirecting it. Retain the sanitized actual error.
                     if (!isCancelled(id) && log.length() > 0) {
@@ -267,10 +301,11 @@ public final class DownloadService extends Service {
                     }
                     throw failure;
                 }
-            } finally { Engine.RUNTIME_LOCK.readLock().unlock(); }
+            } finally { if(runtimeHeld)Engine.RUNTIME_LOCK.readLock().unlock(); }
             if (isCancelled(id)) throw new IOException("cancelled");
             SourceScheduler.SHARED.outcomeForUrl(media.url, null);
-            File complete = findFinalFile(workingDirectory, output);
+            File complete = media.album ? ContentFiles.album(workingDirectory, output, media.imageCount, media.title, media.id, () -> isCancelled(id)) : findFinalFile(workingDirectory, output);
+            if (!media.album) MediaValidation.check(complete, media, quality);
             if (!publishProgress(id, tracker.saving())) throw new IOException("stopped");
             updateNotification("正在保存 · " + media.title, id, -1);
             MediaExporter.Result saved = MediaExporter.save(this, complete, () -> isCancelled(id));
@@ -283,6 +318,20 @@ public final class DownloadService extends Service {
                     .put("uri", saved.uri.toString()).put("mime", saved.mime).put("log", "")
                     .put("size", complete.length()).put("completedAt", System.currentTimeMillis());
             TaskStore.update(this, id, success);
+            if (!media.album && (media.saveCover || media.saveSubtitles)) {
+                try {
+                    ContentFiles.Sidecars attachments = ContentFiles.publishSidecars(this, workingDirectory, media, () -> isCancelled(id), savedFiles -> {
+                        try {TaskStore.update(this,id,new JSONObject().put("attachments",savedFiles).put("attachmentNote","媒体已保存，正在保存附件"));}
+                        catch(Exception error) {throw new IllegalStateException(error);}
+                    });
+                    TaskStore.update(this,id,new JSONObject().put("attachments",attachments.saved)
+                            .put("attachmentError",attachments.error)
+                            .put("attachmentNote", !attachments.warning.isEmpty() ? "媒体已保存；部分附件未完成：" + attachments.warning
+                                    : attachments.saved.length() == 0 ? "媒体已保存，源站未返回所选附件" : "已保存 " + attachments.saved.length() + " 个附件"));
+                } catch (Exception attachmentFailure) {
+                    TaskStore.update(this,id,new JSONObject().put("attachmentNote","媒体已保存；部分附件未完成：" + Engine.userMessage(attachmentFailure)));
+                }
+            }
             indexSavedDownload(id);
             try { deleteTree(directory); } catch (Exception ignored) { /* Public output is already committed. */ }
         } catch (Throwable failure) {
@@ -389,6 +438,11 @@ public final class DownloadService extends Service {
 
     private void indexSavedDownload(String id) {
         LibraryStore library = null;
+        JSONObject task = TaskStore.get(this, id);
+        if (task != null && !task.optString("mime", "video/mp4").startsWith("video/")) {
+            try { TaskStore.update(this, id, new JSONObject().put("libraryIndexPending", false)); } catch (Exception ignored) {}
+            return;
+        }
         try {
             library = new LibraryStore(this);
             long entry = library.upsertCompletedDownload(TaskStore.get(this, id));

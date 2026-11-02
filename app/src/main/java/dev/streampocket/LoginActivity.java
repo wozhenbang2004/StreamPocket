@@ -49,6 +49,8 @@ public final class LoginActivity extends Activity {
     private ProgressBar progress;
     private boolean closing, saving, ready, detected, desktop;
     private int browserGeneration;
+    private int pageGeneration;
+    private String confirmedAccountUrl = "";
     private String mobileAgent;
     private final Runnable observe = new Runnable() {
         @Override public void run() {
@@ -155,6 +157,9 @@ public final class LoginActivity extends Activity {
             @Override public boolean shouldOverrideUrlLoading(WebView view, String url) { return blockNavigation(url); }
             @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
                 if (closing) { view.stopLoading(); return; }
+                if (platform == LoginPlatform.PORNHUB) {
+                    pageGeneration++; confirmedAccountUrl = ""; showDetection(false);
+                }
                 if (blockNavigation(url)) { view.stopLoading(); return; }
                 try { address.setText(new URI(url).getHost()); }
                 catch (Exception ignored) { address.setText("官方网页"); }
@@ -260,10 +265,29 @@ public final class LoginActivity extends Activity {
     }
 
     private void updateDetection() {
-        if (saving || cookies == null) return;
+        if (saving || closing || !ready || cookies == null) return;
+        if (platform == LoginPlatform.PORNHUB) {
+            final String url = web.getUrl();
+            final int browserToken = browserGeneration, pageToken = pageGeneration;
+            if (!platform.allowsNavigation(url)) { confirmedAccountUrl = ""; showDetection(false); return; }
+            // Same account markers used by the bundled yt-dlp PornHubBaseIE._login.
+            web.evaluateJavascript("!!document.querySelector('#profileMenuDropdown,.ph-icon-logout')", result -> {
+                if (!currentBrowser(browserToken) || saving || pageToken != pageGeneration || !url.equals(web.getUrl())) return;
+                boolean found;
+                try { found = platform.hasLogin(collectSession(), "true".equals(result)); }
+                catch (IllegalArgumentException malformed) { found = false; }
+                confirmedAccountUrl = found ? url : "";
+                showDetection(found);
+            });
+            return;
+        }
         boolean found;
         try { found = platform.hasLogin(collectSession()); }
         catch (IllegalArgumentException malformed) { found = false; }
+        showDetection(found);
+    }
+
+    private void showDetection(boolean found) {
         if (found != detected) {
             detected = found;
             status.setText(found ? "已检测到登录信息，可以保存。" : instruction());
@@ -278,7 +302,9 @@ public final class LoginActivity extends Activity {
         final String session;
         try {
             session = collectSession();
-            if (!platform.hasLogin(session)) {
+            boolean confirmed = platform == LoginPlatform.PORNHUB && detected
+                    && confirmedAccountUrl.equals(web.getUrl()) && platform.allowsNavigation(web.getUrl());
+            if (!platform.hasLogin(session, confirmed)) {
                 status.setText("还未检测到账号登录信息，请先完成网页登录。");
                 return;
             }

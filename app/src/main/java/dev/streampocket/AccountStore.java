@@ -71,7 +71,8 @@ public final class AccountStore {
     public void setEnabled(LoginPlatform platform, boolean enabled) throws IOException {
         synchronized (LOCK) {
             migrateLegacy();
-            if (!metadata.edit().putBoolean(platform.id + ".enabled", enabled).commit())
+            if (!metadata.edit().putBoolean(platform.id + ".enabled", enabled)
+                    .putString(platform.id + ".revision", java.util.UUID.randomUUID().toString()).remove(platform.id + ".requestState").commit())
                 throw new IOException("未能保存账号启用设置，请重试。");
         }
     }
@@ -82,6 +83,35 @@ public final class AccountStore {
 
     public String source(LoginPlatform platform) {
         synchronized (LOCK) { return metadata.getString(platform.id + ".source", "文件导入"); }
+    }
+
+    String cacheScope(String url) throws IOException {
+        synchronized (LOCK) {
+            migrateLegacy();
+            VideoPlatform channel = VideoPlatform.detect(url);
+            LoginPlatform platform = channel == null ? null : LoginPlatform.fromId(channel.id);
+            String id = platform == null ? "other" : platform.id;
+            return metadata.getString("cacheEpoch", "initial") + ":" + id + ":"
+                    + metadata.getString("other.revision", "initial") + ":"
+                    + metadata.getString(id + ".revision", "legacy-" + metadata.getLong(id + ".savedAt", 0))
+                    + ":" + (platform == null || isEnabled(platform));
+        }
+    }
+
+    public String requestStatus(LoginPlatform platform) {
+        synchronized (LOCK) { return metadata.getString(platform.id + ".requestState", "未验证"); }
+    }
+
+    void noteRequest(String url, String scope, Throwable failure) throws IOException {
+        synchronized (LOCK) {
+            VideoPlatform channel = VideoPlatform.detect(url);
+            LoginPlatform platform = channel == null ? null : LoginPlatform.fromId(channel.id);
+            if (platform == null || !isEnabled(platform) || !scope.equals(cacheScope(url))) return;
+            // A public request with saved cookies does not prove account permissions.
+            if (failure == null) metadata.edit().putString(platform.id + ".requestState", "最近请求成功").apply();
+            else if (SourceFailure.kind(failure) == SourceFailure.Kind.AUTH)
+                metadata.edit().putString(platform.id + ".requestState", "需要重新登录").apply();
+        }
     }
 
     public String load(LoginPlatform platform) throws IOException {
@@ -110,7 +140,8 @@ public final class AccountStore {
             AtomicFile atomic = new AtomicFile(file(platform.id));
             atomic.delete();
             if (exists(platform.id)) throw new IOException("无法清除此平台的登录信息，请稍后重试。");
-            if (!metadata.edit().remove(platform.id + ".enabled").remove(platform.id + ".savedAt").remove(platform.id + ".source").commit())
+            if (!metadata.edit().remove(platform.id + ".enabled").remove(platform.id + ".savedAt").remove(platform.id + ".source")
+                    .remove(platform.id + ".requestState").putString(platform.id + ".revision", java.util.UUID.randomUUID().toString()).commit())
                 throw new IOException("登录信息已清除，但状态记录未完成，请重新打开账号管理。");
         }
     }
@@ -125,7 +156,7 @@ public final class AccountStore {
             File legacyStaged = new File(app.getFilesDir(), "cookies.txt.new");
             if (legacyStaged.exists() && !legacyStaged.delete()) throw new IOException("部分旧登录临时文件未能清除，请重试。");
             if (hasAnySaved()) throw new IOException("部分本机登录信息未能清除，请重试。");
-            if (!metadata.edit().clear().putBoolean("legacy.migrated", true).putBoolean(YOUTUBE_MIGRATED, true).commit())
+            if (!metadata.edit().clear().putString("cacheEpoch", java.util.UUID.randomUUID().toString()).putBoolean("legacy.migrated", true).putBoolean(YOUTUBE_MIGRATED, true).commit())
                 throw new IOException("登录信息已清除，但状态记录未完成，请重新打开账号管理。");
         }
     }
@@ -138,6 +169,7 @@ public final class AccountStore {
             migrateLegacy();
             for (Map.Entry<String, StringBuilder> part : parts.entrySet()) {
                 writeEncrypted(part.getKey(), HEADER + part.getValue());
+                if (part.getKey().equals("other")) metadata.edit().putString("other.revision", java.util.UUID.randomUUID().toString()).commit();
                 LoginPlatform platform = LoginPlatform.fromId(part.getKey());
                 if (platform != null) recordSaved(platform, "文件导入");
             }
@@ -159,6 +191,10 @@ public final class AccountStore {
     }
 
     /** Never gives a request permission to modify the encrypted masters. */
+    String writeScopedSnapshot(File destination, String url) throws IOException {
+        synchronized (LOCK) { writeSnapshot(destination); return cacheScope(url); }
+    }
+
     public void writeSnapshot(File destination) throws IOException {
         synchronized (LOCK) {
             migrateLegacy();
@@ -301,7 +337,7 @@ public final class AccountStore {
     }
 
     private void migrateLegacy() throws IOException {
-        if (metadata.getBoolean("legacy.migrated", false)) { migrateYouTubeOther(); return; }
+        if (metadata.getBoolean("legacy.migrated", false)) { migrateChannelOther(); migrateYouTubeOther(); return; }
         File legacy = new File(app.getFilesDir(), "cookies.txt");
         if (legacy.isFile()) {
             String original = new String(readLimited(legacy), StandardCharsets.UTF_8);
@@ -319,7 +355,31 @@ public final class AccountStore {
         File legacyStaged = new File(app.getFilesDir(), "cookies.txt.new");
         if (legacyStaged.exists() && !legacyStaged.delete()) throw new IOException("旧登录临时文件迁移未完成，请稍后重试。");
         if (!metadata.edit().putBoolean("legacy.migrated", true).commit()) throw new IOException("无法记录本机登录信息迁移状态。");
+        migrateChannelOther();
         migrateYouTubeOther();
+    }
+
+    /** Reclassify older generic imports before a platform's pause/clear can take effect. */
+    private void migrateChannelOther() throws IOException {
+        if (metadata.getBoolean("channels038.migrated", false)) return;
+        Map<String, StringBuilder> parts = split(readEncrypted("other", true));
+        for (LoginPlatform platform : LoginPlatform.values()) {
+            StringBuilder rows = parts.get(platform.id);
+            if (rows != null && !exists(platform.id)) {
+                writeEncrypted(platform.id, HEADER + rows);
+                recordSaved(platform, "文件导入");
+            }
+        }
+        if (exists("other")) {
+            StringBuilder remaining = parts.get("other");
+            if (remaining != null) writeEncrypted("other", HEADER + remaining);
+            else {
+                new AtomicFile(file("other")).delete();
+                if (exists("other")) throw new IOException("旧登录信息迁移未完成，请稍后重试。");
+            }
+        }
+        if (!metadata.edit().putBoolean("channels038.migrated", true).commit())
+            throw new IOException("无法记录本机登录信息迁移状态。");
     }
 
     /** Older releases kept YouTube in the encrypted generic jar, without a platform switch. */
@@ -346,6 +406,7 @@ public final class AccountStore {
 
     private void recordSaved(LoginPlatform platform, String source) throws IOException {
         if (!metadata.edit().putBoolean(platform.id + ".enabled", true)
+                .putString(platform.id + ".revision", java.util.UUID.randomUUID().toString()).remove(platform.id + ".requestState")
                 .putLong(platform.id + ".savedAt", System.currentTimeMillis()).putString(platform.id + ".source", source).commit())
             throw new IOException("登录信息已保存在本机，但状态记录未完成，请重新打开账号管理。");
     }
@@ -390,7 +451,7 @@ public final class AccountStore {
         return readEncrypted(id, false);
     }
 
-    private String readEncrypted(String id, boolean allowYouTubeRepartition) throws IOException {
+    private String readEncrypted(String id, boolean allowLegacyRepartition) throws IOException {
         File saved = file(id);
         if (!exists(id)) return HEADER;
         try {
@@ -405,10 +466,15 @@ public final class AccountStore {
             cipher.updateAAD(id.getBytes(StandardCharsets.UTF_8));
             String value = new String(cipher.doFinal(bytes, start + ivLength, bytes.length - start - ivLength), StandardCharsets.UTF_8);
             Map<String, StringBuilder> parts = split(value);
-            if (allowYouTubeRepartition && id.equals("other")) {
-                // Authenticate with the original `other` AAD, then permit only the newly
-                // recognized YouTube owner. Other platform files keep strict ownership.
-                for (String owner : parts.keySet()) if (!owner.equals("other") && !owner.equals(LoginPlatform.YOUTUBE.id)) throw new IOException();
+            if (allowLegacyRepartition && id.equals("other")) {
+                // Authenticate with the original `other` AAD before reclassifying sites
+                // that old releases stored there. Already-owned platform jars stay strict.
+                for (String owner : parts.keySet()) if (!owner.equals("other")
+                        && !owner.equals(LoginPlatform.YOUTUBE.id) && !owner.equals(LoginPlatform.XIAOHONGSHU.id)
+                        && !owner.equals(LoginPlatform.KUAISHOU.id) && !owner.equals(LoginPlatform.TIKTOK.id)
+                        && !owner.equals(LoginPlatform.INSTAGRAM.id) && !owner.equals(LoginPlatform.FACEBOOK.id)
+                        && !owner.equals(LoginPlatform.PINTEREST.id) && !owner.equals(LoginPlatform.PORNHUB.id)
+                        && !owner.equals(LoginPlatform.HEYBOX.id)) throw new IOException();
             } else if (parts.size() > 1 || (!parts.isEmpty() && !parts.containsKey(id))) throw new IOException();
             return value;
         } catch (Exception error) { throw new IOException("本机保存的登录信息暂时无法读取，原文件已保留；请在账号管理中检查或重新登录此平台。", error); }
