@@ -37,6 +37,7 @@ final class AppUpdates {
     enum Phase { IDLE, CHECKING, NONE, AVAILABLE, DOWNLOADING, PAUSED, VERIFYING, READY, ERROR }
     interface Listener { void changed(Snapshot state); }
     interface InstallReady { void ready(File apk); }
+    interface JsonReader { String read(String url,int limit,boolean missingIsNone) throws Exception; }
     static final class Snapshot {
         final Phase phase;final UpdateOffer offer;final String message;final long downloaded;
         Snapshot(Phase phase,UpdateOffer offer,String message,long downloaded){this.phase=phase;this.offer=offer;this.message=message;this.downloaded=downloaded;}
@@ -47,6 +48,7 @@ final class AppUpdates {
     private final Context app;
     private final SharedPreferences prefs;
     private final DownloadManager downloads;
+    private final JsonReader metadata;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService worker=Executors.newSingleThreadExecutor(task->new Thread(task,"app-updates"));
     private final CopyOnWriteArrayList<Listener> listeners=new CopyOnWriteArrayList<>();
@@ -56,15 +58,19 @@ final class AppUpdates {
     private long downloadId=-1;
     private boolean busy;
     private Intent installConfirmation;
+    private long foregroundSession,checkedForegroundSession=-1,notifiedCode;
+    private boolean foreground;
 
-    private AppUpdates(Context app){
-        this.app=app;prefs=app.getSharedPreferences("app_updates",Context.MODE_PRIVATE);downloads=(DownloadManager)app.getSystemService(Context.DOWNLOAD_SERVICE);
+    private AppUpdates(Context app){this(app,AppUpdates::getJson);}
+    AppUpdates(Context app,JsonReader metadata){
+        this.app=app;this.metadata=metadata;prefs=app.getSharedPreferences("app_updates",Context.MODE_PRIVATE);downloads=(DownloadManager)app.getSystemService(Context.DOWNLOAD_SERVICE);
         try {
             UpdateOffer saved=UpdateOffer.saved(prefs.getString("offer",""));
             if(saved.code>BuildConfig.VERSION_CODE){downloadId=prefs.getLong("download_id",-1);
                 if(downloadId>=0)state=new Snapshot(Phase.DOWNLOADING,saved,"正在恢复下载…",0);
                 else if(prefs.getBoolean("ready",false)&&readyFile(app,saved).isFile())state=new Snapshot(Phase.READY,saved,"更新已下载，可以安装",saved.size);
                 else if(prefs.getBoolean("ready",false)){prefs.edit().putBoolean("ready",false).apply();state=new Snapshot(Phase.AVAILABLE,saved,"请重新下载更新",0);}
+                else{compatible(saved);state=new Snapshot(Phase.AVAILABLE,saved,"发现新版本",0);}
             }else worker.execute(()->{long old=prefs.getLong("download_id",-1);if(old>=0)downloads.remove(old);prefs.edit().remove("offer").remove("download_id").remove("ready").apply();discardFiles();});
         }catch(Exception absent){/* First run has no update state. */}
     }
@@ -72,9 +78,14 @@ final class AppUpdates {
     void listen(Listener listener){listeners.addIfAbsent(listener);listener.changed(state);}
     void unlisten(Listener listener){listeners.remove(listener);}
     boolean automatic(){return prefs.getBoolean("automatic",true);}
-    void automatic(boolean value){prefs.edit().putBoolean("automatic",value).apply();}
-    boolean shouldNotify(long code){return prefs.getLong("notified_code",0)<code;}
-    void notified(long code){prefs.edit().putLong("notified_code",code).apply();}
+    void automatic(boolean value){
+        boolean enabled=value&&!automatic();prefs.edit().putBoolean("automatic",value).apply();
+        if(enabled){synchronized(lock){checkedForegroundSession=-1;notifiedCode=0;}checkIfDue();}
+    }
+    void enteredForeground(){synchronized(lock){foreground=true;foregroundSession++;notifiedCode=0;}}
+    void leftForeground(){synchronized(lock){foreground=false;}}
+    boolean shouldNotify(long code){synchronized(lock){return automatic()&&notifiedCode<code;}}
+    void notified(long code){synchronized(lock){notifiedCode=code;}}
     boolean shouldNotifyReady(long code){return prefs.getLong("ready_notified_code",0)<code;}
     void notifiedReady(long code){prefs.edit().putLong("ready_notified_code",code).apply();}
     static String installKey(UpdateOffer offer){return offer.code+":"+offer.sha256;}
@@ -177,30 +188,47 @@ final class AppUpdates {
     }
     boolean ownsDownload(long id){synchronized(lock){return id>=0&&id==downloadId&&state.offer!=null;}}
     void clearDownloadReminder(){UpdateDownloadReceiver.clearReminder(app);}
-    void checkIfDue(){if(automatic()&&System.currentTimeMillis()-prefs.getLong("last_check",0)>24*60*60*1000L)check();}
+    void checkIfDue(){synchronized(lock){if(automatic()&&checkedForegroundSession!=foregroundSession)check();}}
 
     void check(){
-        final long token;
-        synchronized(lock){if(busy||state.active())return;busy=true;token=++generation;publish(new Snapshot(Phase.CHECKING,null,"正在检查更新…",0));}
-        prefs.edit().putLong("last_check",System.currentTimeMillis()).apply();
+        final long token;final UpdateOffer known;
+        synchronized(lock){if(busy||state.active())return;known=state.phase==Phase.AVAILABLE?state.offer:null;busy=true;token=++generation;checkedForegroundSession=foregroundSession;publish(new Snapshot(Phase.CHECKING,known,"正在检查更新…",0));}
         worker.execute(()->{
             try {
-                String json=getJson(UpdateOffer.API,256*1024,true);
-                if(json==null){finish(token,new Snapshot(Phase.NONE,null,"暂无可用更新",0));return;}
+                String json=metadata.read(UpdateOffer.API,256*1024,true);
+                if(json==null){finishCheck(token,new Snapshot(Phase.NONE,null,"暂无可用更新",0),true);return;}
                 JSONObject release=new JSONObject(json);
-                if(release.optBoolean("draft",true)||release.optBoolean("prerelease",true)){finish(token,new Snapshot(Phase.NONE,null,"暂无可用更新",0));return;}
+                if(release.optBoolean("draft",true)||release.optBoolean("prerelease",true)){finishCheck(token,new Snapshot(Phase.NONE,null,"暂无可用更新",0),true);return;}
                 JSONObject asset=UpdateOffer.asset(release,UpdateOffer.APK),manifestAsset=UpdateOffer.asset(release,UpdateOffer.MANIFEST);
-                if(asset==null||manifestAsset==null){finish(token,new Snapshot(Phase.NONE,null,"更新尚未准备好，请稍后重试",0));return;}
+                if(asset==null||manifestAsset==null)throw new IOException("更新尚未准备好，请稍后重试");
                 String tag=release.getString("tag_name"),manifestUrl=manifestAsset.getString("browser_download_url");
                 if(!UpdateOffer.validAssetUrl(manifestUrl,tag,UpdateOffer.MANIFEST))throw new IOException("更新清单来源不匹配");
-                UpdateOffer offer=new UpdateOffer(new JSONObject(getJson(manifestUrl,64*1024,false)),tag,release.optString("body"),asset.getString("browser_download_url"));
-                if(offer.code<=BuildConfig.VERSION_CODE){finish(token,new Snapshot(Phase.NONE,null,"已是最新版本",0));return;}
+                UpdateOffer offer=new UpdateOffer(new JSONObject(metadata.read(manifestUrl,64*1024,false)),tag,release.optString("body"),asset.getString("browser_download_url"));
+                if(offer.code<=BuildConfig.VERSION_CODE){finishCheck(token,new Snapshot(Phase.NONE,null,"已是最新版本",0),true);return;}
                 compatible(offer);
                 if(asset.getLong("size")!=offer.size)throw new IOException("安装包大小与发布清单不一致");
                 String digest=asset.optString("digest");if(!digest.isEmpty()&&!digest.equals("sha256:"+offer.sha256))throw new IOException("安装包摘要与发布清单不一致");
-                finish(token,new Snapshot(Phase.AVAILABLE,offer,"发现新版本",0));
-            }catch(Exception failure){fail(token,null,message(failure,"无法检查更新，请检查网络后重试"));}
+                finishCheck(token,new Snapshot(Phase.AVAILABLE,offer,"发现新版本",0),true);
+            }catch(Exception failure){finishCheck(token,new Snapshot(known==null?Phase.ERROR:Phase.AVAILABLE,known,
+                    known==null?message(failure,"无法检查更新，下次打开应用会重试"):"暂时无法检查更新，已保留之前发现的版本",0),false);}
         });
+    }
+
+    private void finishCheck(long token,Snapshot result,boolean success){
+        synchronized(lock){
+            if(token!=generation)return;
+            if(success){
+                try{
+                    SharedPreferences.Editor saved=prefs.edit();
+                    if(result.offer!=null)saved.putString("offer",result.offer.json().toString());
+                    else saved.remove("offer").remove("download_id").remove("ready");
+                    saved.apply();checkedForegroundSession=foregroundSession;
+                }catch(Exception unavailable){result=new Snapshot(Phase.ERROR,null,"无法保存更新信息，请重试",0);}
+            }
+            busy=false;publish(result);
+            // A request from the previous foreground session must not consume a new opening's retry.
+            if(foreground&&checkedForegroundSession!=foregroundSession)main.post(()->{synchronized(lock){if(foreground)checkIfDue();}});
+        }
     }
 
     void download(){

@@ -3,9 +3,11 @@ package dev.streampocket;
 import android.app.Activity;
 import android.content.Context;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import org.junit.Test;
@@ -30,6 +32,52 @@ public final class PocketComponentsTest {
             android.view.inputmethod.InputConnection connection=field.onCreateInputConnection(new android.view.inputmethod.EditorInfo());
             assertNotNull(connection);assertTrue(connection.commitText("https://x.com/test/status/123",1));
             assertEquals("https://x.com/test/status/123",field.getText().toString());
+        }
+    }
+    @Test public void unstyledSwitchTogglesOnceFromBothLabelAndTrackTouches(){
+        try(ActivityController<Activity> c=Robolectric.buildActivity(Activity.class).setup()){
+            PocketSwitch toggle=new PocketSwitch(c.get());toggle.setText("打开应用时检查更新");
+            int[] changes={0};toggle.setOnCheckedChangeListener((button,checked)->changes[0]++);
+            c.get().setContentView(toggle);layout(toggle,280,56);
+            assertTrue("The label must accept a real touch without an OnClickListener",tap(toggle,60,28));
+            assertTrue(toggle.isChecked());assertEquals(1,changes[0]);
+            assertTrue("The drawn track must accept the same gesture",tap(toggle,258,28));
+            assertFalse(toggle.isChecked());assertEquals("Each tap toggles exactly once",2,changes[0]);
+        }
+    }
+    @Test public void disabledAndCancelledSwitchTouchesDoNotChangeTheValue(){
+        try(ActivityController<Activity> c=Robolectric.buildActivity(Activity.class).setup()){
+            PocketSwitch toggle=new PocketSwitch(c.get());int[] changes={0};
+            toggle.setOnCheckedChangeListener((button,checked)->changes[0]++);
+            c.get().setContentView(toggle);layout(toggle,280,56);
+            toggle.setEnabled(false);tap(toggle,258,28);
+            assertFalse(toggle.isChecked());assertEquals(0,changes[0]);
+            toggle.setEnabled(true);long down=SystemClock.uptimeMillis();
+            dispatch(toggle,MotionEvent.ACTION_DOWN,258,28,down,down);
+            dispatch(toggle,MotionEvent.ACTION_CANCEL,258,28,down,down+20);
+            Shadows.shadowOf(Looper.getMainLooper()).idle();
+            assertFalse(toggle.isChecked());assertEquals(0,changes[0]);
+            assertTrue(tap(toggle,258,28));assertTrue(toggle.isChecked());assertEquals(1,changes[0]);
+        }
+    }
+    @Test public void switchExposesFocusAndAnAccessibleClickThatRespectsDisabledState(){
+        try(ActivityController<Activity> c=Robolectric.buildActivity(Activity.class).setup()){
+            PocketSwitch toggle=new PocketSwitch(c.get());toggle.setText("打开应用时检查更新");
+            int[] changes={0};toggle.setOnCheckedChangeListener((button,checked)->changes[0]++);
+            c.get().setContentView(toggle);layout(toggle,280,56);
+            assertTrue("The unstyled control must be reachable by focus navigation",toggle.isFocusable());
+            assertTrue(toggle.requestFocus());
+            AccessibilityNodeInfo node=toggle.createAccessibilityNodeInfo();
+            try{
+                assertEquals("android.widget.Switch",node.getClassName().toString());
+                assertTrue(node.isCheckable());assertFalse(node.isChecked());assertTrue(node.isClickable());
+                assertTrue(node.getActionList().contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK));
+            }finally{node.recycle();}
+            assertTrue(toggle.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,null));
+            assertTrue(toggle.isChecked());assertEquals(1,changes[0]);
+            toggle.setEnabled(false);
+            assertFalse(toggle.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,null));
+            assertTrue(toggle.isChecked());assertEquals("Disabled accessibility actions must not toggle",1,changes[0]);
         }
     }
     @Test public void draggingTabsCanCancelAndCommitWithoutMovingLabels(){
@@ -76,4 +124,14 @@ public final class PocketComponentsTest {
     }
     private static void layout(View view,int w,int h){view.measure(View.MeasureSpec.makeMeasureSpec(w,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(h,View.MeasureSpec.EXACTLY));view.layout(0,0,w,h);}
     private static void touch(View view,int action,float x,float y){MotionEvent event=MotionEvent.obtain(0,20,action,x,y,0);view.dispatchTouchEvent(event);event.recycle();}
+    private static boolean tap(View view,float x,float y){
+        long down=SystemClock.uptimeMillis();
+        boolean pressed=dispatch(view,MotionEvent.ACTION_DOWN,x,y,down,down);
+        boolean released=dispatch(view,MotionEvent.ACTION_UP,x,y,down,down+20);
+        Shadows.shadowOf(Looper.getMainLooper()).idle();return pressed&&released;
+    }
+    private static boolean dispatch(View view,int action,float x,float y,long down,long time){
+        MotionEvent event=MotionEvent.obtain(down,time,action,x,y,0);
+        try{return view.dispatchTouchEvent(event);}finally{event.recycle();}
+    }
 }

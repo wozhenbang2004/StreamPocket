@@ -16,6 +16,7 @@ public final class PocketSwitch extends CompoundButton {
     private ValueAnimator movement;
     public PocketSwitch(Context context){
         super(context,null,0);setButtonDrawable(null);setTextSize(14);setTextColor(UiTheme.get(context).ink);
+        setClickable(true);setFocusable(true);
         setMinWidth(dp(48));setMinimumWidth(dp(48));setMinHeight(dp(48));setPadding(0,0,dp(52),0);
         setGravity(android.view.Gravity.START|android.view.Gravity.CENTER_VERTICAL);setBackgroundColor(android.graphics.Color.TRANSPARENT);
     }

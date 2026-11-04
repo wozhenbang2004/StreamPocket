@@ -27,7 +27,7 @@ public final class MainActivity extends Activity {
     private Engine collectionEngine;
     private LinearLayout brand, inspectionResults, notice, linkEditor, homeExtras, addLinkRow, linkPreview;
     private boolean linkEditorExpanded;
-    private PocketDialog clipboardReview;
+    private PocketDialog clipboardReview,appUpdateDialog;
     private SwipeActionRow openSwipeRow;
     private boolean queueTouchActive;
     private FrameLayout navigationFrame;
@@ -1289,17 +1289,18 @@ public final class MainActivity extends Activity {
     }
     private final AppUpdates.Listener appUpdateListener=state->{
         boolean ready=state.phase==AppUpdates.Phase.READY;
-        if((!ready&&state.phase!=AppUpdates.Phase.AVAILABLE)||state.offer==null||isFinishing()||isDestroyed())return;
+        if((!ready&&state.phase!=AppUpdates.Phase.AVAILABLE)||state.offer==null||!foreground||appUpdateDialog!=null||isFinishing()||isDestroyed())return;
         AppUpdates updates=AppUpdates.get(this);
-        if(ready){if(!updates.shouldNotifyReady(state.offer.code))return;updates.notifiedReady(state.offer.code);}
-        else{if(!updates.shouldNotify(state.offer.code))return;updates.notified(state.offer.code);}
-        new PocketDialog.Builder(this).setTitle(ready?"拾流更新已下载":"拾流有新版本 "+state.offer.version)
+        if(ready){if(!updates.shouldNotifyReady(state.offer.code))return;}
+        else if(!updates.shouldNotify(state.offer.code))return;
+        PocketDialog dialog=new PocketDialog.Builder(this).setTitle(ready?"拾流更新已下载":"拾流有新版本 "+state.offer.version)
                 .setMessage(ready?"打开更新页即可继续安装，现有数据会保留。":"安装包 "+UpdateActivity.size(state.offer.size)+"。可查看更新内容后再下载。")
-                .setNegativeButton("稍后",null).setPositiveButton("查看更新",(d,w)->startActivity(new Intent(this,UpdateActivity.class))).show();
+                .setNegativeButton("稍后",null).setPositiveButton("查看更新",(d,w)->startActivity(new Intent(this,UpdateActivity.class))).create();
+        appUpdateDialog=dialog;dialog.setOnDismissListener(d->{if(appUpdateDialog==dialog)appUpdateDialog=null;});dialog.show();
+        if(ready)updates.notifiedReady(state.offer.code);else updates.notified(state.offer.code);
     };
-    private final Runnable appUpdateCheck=()->AppUpdates.get(this).checkIfDue();
-    @Override protected void onResume(){super.onResume();foreground=true;clipboardCheckPending=true;main.post(checkClipboard);AppUpdates.get(this).listen(appUpdateListener);main.postDelayed(appUpdateCheck,1500);main.removeCallbacks(poll);main.post(poll);if(libraryView!=null)libraryView.refresh();}
-    @Override protected void onPause(){foreground=false;main.removeCallbacks(checkClipboard);hideClipboardOffer();AppUpdates.get(this).unlisten(appUpdateListener);main.removeCallbacks(appUpdateCheck);if(openSwipeRow!=null)openSwipeRow.close(false);queueTouchActive=false;super.onPause();main.removeCallbacks(poll);if(input!=null)draft=input.getText().toString();getPreferences(0).edit().putString("draft",draft).apply();persistInspectionInbox();}
+    @Override protected void onResume(){super.onResume();foreground=true;clipboardCheckPending=true;main.post(checkClipboard);AppUpdates.get(this).listen(appUpdateListener);main.removeCallbacks(poll);main.post(poll);if(libraryView!=null)libraryView.refresh();}
+    @Override protected void onPause(){foreground=false;main.removeCallbacks(checkClipboard);hideClipboardOffer();AppUpdates.get(this).unlisten(appUpdateListener);if(appUpdateDialog!=null)appUpdateDialog.dismiss();if(openSwipeRow!=null)openSwipeRow.close(false);queueTouchActive=false;super.onPause();main.removeCallbacks(poll);if(input!=null)draft=input.getText().toString();getPreferences(0).edit().putString("draft",draft).apply();persistInspectionInbox();}
     @Override protected void onSaveInstanceState(Bundle state){
         state.putBoolean("queue_selecting",queueSelecting);state.putStringArrayList("queue_selection",new ArrayList<>(queueSelection));
         state.putString("pending_queue_action",pendingQueueAction);state.putStringArrayList("pending_queue_ids",new ArrayList<>(pendingQueueIds));

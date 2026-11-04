@@ -10,7 +10,7 @@ capture_evidence() {
   adb -s "$qa_serial" logcat -d > "$qa_output/logcat.txt" 2>&1 || true
   adb -s "$qa_serial" shell dumpsys audio > "$qa_output/audio-focus.txt" 2>&1 || true
   adb -s "$qa_serial" exec-out run-as dev.streampocket.localtest \
-    tar -C files/qa-captures -cf - upgrade050 > "$qa_output/captures.tar" 2> "$qa_output/capture-errors.txt" || true
+    tar -C files/qa-captures -cf - upgrade050 startup051 > "$qa_output/captures.tar" 2> "$qa_output/capture-errors.txt" || true
   if [ -s "$qa_output/captures.tar" ]; then
     tar -xf "$qa_output/captures.tar" -C "$qa_output" || true
   fi
@@ -33,4 +33,19 @@ result = Path(sys.argv[1]).read_text()
 if 'PASS: upgrade050;' not in result or 'INSTRUMENTATION_CODE: -1' not in result:
     raise SystemExit('Android media/PiP acceptance did not report success; inspect the uploaded evidence.')
 print('Real Android media/PiP acceptance passed.')
+PY
+
+# Start the second scenario in a fresh process of this CI emulator's target app.
+adb -s "$qa_serial" shell am force-stop dev.streampocket.localtest
+timeout 90s adb -s "$qa_serial" shell am instrument -w -r -e scenario startup051 \
+  dev.streampocket.localtest.test/dev.streampocket.UiAcceptanceInstrumentation \
+  | tee "$qa_output/startup-instrumentation.txt"
+
+python3 - "$qa_output/startup-instrumentation.txt" <<'PY'
+from pathlib import Path
+import sys
+result = Path(sys.argv[1]).read_text()
+if 'PASS: startup051;' not in result or 'INSTRUMENTATION_CODE: -1' not in result:
+    raise SystemExit('Android startup-update acceptance did not report success; inspect the uploaded evidence.')
+print('Real Android startup-update lifecycle and switch acceptance passed; metadata transport was a fixture.')
 PY

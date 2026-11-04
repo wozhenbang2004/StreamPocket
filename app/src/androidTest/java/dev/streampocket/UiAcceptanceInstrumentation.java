@@ -6,6 +6,7 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.graphics.drawable.BitmapDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -22,9 +23,13 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
@@ -41,6 +46,11 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             phase=arguments.getString("scenario","after");Context app=getTargetContext();
             check(app.getPackageName().equals("dev.streampocket.localtest"),"QA must target only localtest");
             output=new File(app.getFilesDir(),"qa-captures/"+phase);check(output.isDirectory()||output.mkdirs(),"capture directory");
+            if("startup051".equals(phase)){
+                verifyStartupUpdates();
+                result.putString("stream","PASS: startup051; real Activity navigation and HOME/reopen; failed check retries on next opening; internal navigation does not repeat; real switch disables/enables checks; metadata is an offline fixture, no APK download or installation; captures="+output.getAbsolutePath());
+                finish(Activity.RESULT_OK,result);return;
+            }
             File media=new File(app.getFilesDir(),"qa-media");check(media.isDirectory()||media.mkdirs(),"media directory");
             File wide=copyAsset(media,"bbb-licensed-20s.mp4"),tall=copyAsset(media,"bbb-portrait-crop-20s.mp4");
             MainActivity main=(MainActivity)startActivitySync(new Intent(app,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();
@@ -90,6 +100,87 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             onMain(()->{field(main,"input",android.widget.EditText.class).setText(parsed.url);invoke(main,"showMedia",new Class<?>[]{java.util.List.class},java.util.Collections.singletonList(parsed));});SystemClock.sleep(1000);capture("10-inline-real-artwork-metadata-fixture");
             result.putString("stream","PASS: "+phase+"; real horizontal/portrait decode, first frame, library return"+("before".equals(phase)?"":"; real scrub bitmap, sheet drag/cancel/back, non-executing swipe")+("upgrade050".equals(phase)?"; system PiP retains playback, next media keeps playback and audio focus, returns to fullscreen, releases on exit":"")+"; captures="+output.getAbsolutePath());finish(Activity.RESULT_OK,result);
         }catch(Throwable failure){result.putString("stream","FAIL at "+phase+": "+android.util.Log.getStackTraceString(failure));finish(Activity.RESULT_CANCELED,result);}
+    }
+    /** Real Android lifecycle and controls, with only the metadata transport replaced. */
+    private void verifyStartupUpdates()throws Exception{
+        Context app=getTargetContext().getApplicationContext();
+        app.getSharedPreferences("app_updates",0).edit().clear().putBoolean("automatic",true)
+                .putLong("last_check",System.currentTimeMillis()).commit();
+        AtomicInteger requests=new AtomicInteger();
+        AppUpdates updates=new AppUpdates(app,(url,limit,missingIsNone)->{
+            check(UpdateOffer.API.equals(url)&&missingIsNone,"startup uses the pinned release endpoint");
+            if(requests.incrementAndGet()==1)throw new IOException("测试网络暂不可用");
+            return null;
+        });
+        Field singleton=AppUpdates.class.getDeclaredField("instance");singleton.setAccessible(true);singleton.set(null,updates);
+        MainActivity main=null;UpdateActivity updatePage=null;
+        try{
+            main=(MainActivity)startActivitySync(new Intent(app,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            MainActivity home=main;
+            // Navigate immediately; report timing rather than assuming a fast CI machine.
+            boolean pendingWhenLeavingMain=requests.get()==0;
+            updatePage=openUpdatePage(home);
+            UpdateActivity firstPage=updatePage;
+            waitUntil(()->firstPage.hasWindowFocus()&&updates.snapshot().phase==AppUpdates.Phase.ERROR,10000,"startup check completes on the update page after leaving MainActivity");
+            check(requests.get()==1,"one failed request in the first foreground session");
+            capture("01-network-failure-fixture");
+
+            onMain(firstPage::finish);waitUntil(home::hasWindowFocus,10000,"internal Back returns to MainActivity");
+            SystemClock.sleep(1800);check(requests.get()==1,"internal return must not retry the same foreground session");
+            backgroundAndReopen(home,app);
+            waitUntil(()->requests.get()==2&&updates.snapshot().phase==AppUpdates.Phase.NONE,10000,"reopening after a failed check retries despite the old last_check value");
+
+            updatePage=openUpdatePage(home);
+            toggleAutomatic(updatePage,updates,false);
+            backgroundAndReopen(home,app);
+            SystemClock.sleep(1800);check(requests.get()==2,"disabled automatic updates do not request metadata on reopening");
+
+            updatePage=openUpdatePage(home);
+            toggleAutomatic(updatePage,updates,true);
+            waitUntil(()->requests.get()==3&&updates.snapshot().phase==AppUpdates.Phase.NONE,10000,"enabling the switch immediately starts a check");
+            capture("02-enabled-check-completed-network-fixture");
+            try(FileOutputStream out=new FileOutputStream(new File(output,"startup-fixture.txt"))){
+                out.write(("Real Android Activity/foreground lifecycle. Only GitHub metadata is a fixture: first request throws IOException, later requests return no release. Requests="+requests.get()+". Startup check pending when leaving MainActivity="+pendingWhenLeavingMain+". No update package was downloaded or installed.\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        }finally{
+            UpdateActivity page=updatePage;MainActivity home=main;
+            onMain(()->{if(page!=null&&!page.isFinishing())page.finish();if(home!=null&&!home.isFinishing())home.finish();});
+            waitForIdleSync();
+            ExecutorService worker=field(updates,"worker",ExecutorService.class);worker.shutdownNow();
+            check(worker.awaitTermination(5,TimeUnit.SECONDS),"fixture update worker stops");
+        }
+    }
+    private UpdateActivity openUpdatePage(MainActivity home)throws Exception{
+        ActivityMonitor monitor=addMonitor(UpdateActivity.class.getName(),null,false);
+        try{
+            onMain(()->home.startActivity(new Intent(home,UpdateActivity.class)));
+            Activity opened=waitForMonitorWithTimeout(monitor,10000);check(opened instanceof UpdateActivity,"update page opens through real navigation");
+            UpdateActivity page=(UpdateActivity)opened;waitUntil(page::hasWindowFocus,10000,"update page has focus");return page;
+        }finally{removeMonitor(monitor);}
+    }
+    private void toggleAutomatic(UpdateActivity page,AppUpdates updates,boolean enabled)throws Exception{
+        PocketSwitch toggle=onMainValue(()->(PocketSwitch)findType(page.getWindow().getDecorView(),PocketSwitch.class));
+        check(toggle!=null&&onMainValue(()->toggle.isShown()&&toggle.isChecked()!=enabled),"automatic update switch has the expected state");
+        String step=enabled?"04-switch-enable":"03-switch-disable";
+        capture(step+"-before-touch");
+        int[] target=onMainValue(()->{
+            Rect visible=new Rect();boolean inView=toggle.getLocalVisibleRect(visible);
+            int[] at=new int[2];toggle.getLocationOnScreen(at);
+            android.util.Log.i("StreamPocketQA",step+" focus="+page.hasWindowFocus()+" clickable="+toggle.isClickable()+" focusable="+toggle.isFocusable()+" enabled="+toggle.isEnabled()+" checked="+toggle.isChecked()+" visible="+visible+" screen="+at[0]+","+at[1]+" size="+toggle.getWidth()+"x"+toggle.getHeight());
+            check(page.hasWindowFocus()&&toggle.isEnabled()&&toggle.isClickable()&&toggle.isFocusable(),"visible switch must accept touch and keyboard/accessibility focus");
+            check(inView&&visible.contains(toggle.getWidth()/2,toggle.getHeight()/2),"switch touch target is inside the visible, unclipped row");
+            return new int[]{at[0]+toggle.getWidth()/2,at[1]+toggle.getHeight()/2};
+        });
+        long down=SystemClock.uptimeMillis();
+        inject(MotionEvent.ACTION_DOWN,target[0],target[1],down);inject(MotionEvent.ACTION_UP,target[0],target[1],down);
+        try{waitUntil(()->toggle.isChecked()==enabled&&updates.automatic()==enabled,5000,"touching the real switch updates the preference");}
+        catch(AssertionError failure){capture(step+"-touch-failed");throw failure;}
+    }
+    private void backgroundAndReopen(MainActivity home,Context app)throws Exception{
+        check(getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME),"HOME backgrounds the app");
+        waitUntil(()->{try{return field(app,"startedActivities",Integer.class)==0;}catch(Exception unavailable){return false;}},10000,"all app Activities stop in the background");
+        onMain(()->app.startActivity(new Intent(app,MainActivity.class).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
+        waitUntil(home::hasWindowFocus,10000,"launcher reopening restores MainActivity");
     }
     private void verifyPictureInPicture(PlayerActivity activity,MainActivity libraryActivity,long videoId,long nextVideoId)throws Exception{
         check(getTargetContext().getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE),"emulator supports system PiP");
