@@ -89,7 +89,8 @@ public final class SubtitlePlaybackTest {
     }
 
     @Test public void deniedMissingMalformedAndOversizeSidecarsAreSkippedIndividually() throws Exception {
-        DeniedProvider denied=new DeniedProvider();ShadowContentResolver.registerProviderInternal("subtitle-denied",denied);
+        DeniedProvider denied=new DeniedProvider();android.content.pm.ProviderInfo info=new android.content.pm.ProviderInfo();info.authority="subtitle-denied";
+        denied.attachInfo(app,info);ShadowContentResolver.registerProviderInternal("subtitle-denied",denied);
         JSONObject noPermission=new JSONObject().put("id",1).put("uri","content://subtitle-denied/file/1").put("name","denied.srt");
         JSONObject missing=record(2,new File(app.getCacheDir(),"missing-subtitle-unique.srt"),"missing.srt","text/plain","en");
         JSONObject html=record(3,file(".srt","<!doctype html><html>sign in</html>"),"login.srt","application/x-subrip","en");
@@ -97,7 +98,8 @@ public final class SubtitlePlaybackTest {
         JSONObject oversize=record(4,large,"large.srt","text/plain","en").put("preferred",true);
         JSONObject valid=record(5,file(".srt",SRT),"valid.srt","text/plain","en");
         SubtitlePlayback.Result result=SubtitlePlayback.load(app,Arrays.asList(noPermission,missing,html,oversize,valid));
-        assertTrue(denied.opens>0);assertEquals(4,result.skipped);assertEquals(1,result.tracks.size());
+        assertTrue("The permission fixture must reject a real provider file-open attempt",denied.opens>0);
+        assertEquals(4,result.skipped);assertEquals(1,result.tracks.size());
         assertEquals("sp-subtitle-5",result.tracks.get(0).id);assertEquals(C.SELECTION_FLAG_DEFAULT,result.tracks.get(0).selectionFlags);
         assertTrue(result.warning().contains("4 份"));assertTrue(result.warning().contains("权限"));
     }

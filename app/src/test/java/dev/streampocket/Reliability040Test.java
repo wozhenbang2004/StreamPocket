@@ -58,8 +58,13 @@ public final class Reliability040Test {
         assertTrue(Engine.Media.fromJson(media.toJson()).album);
     }
     @Test public void subtitlesPreferChineseThenEnglishAndNeverDownloadLiveChat() throws Exception {
-        assertEquals("zh-Hans",Engine.preferredSubtitle(new JSONObject("{\"subtitles\":{\"en\":[],\"zh-Hans\":[]},\"automatic_captions\":{\"fr\":[]}}")));
-        assertEquals("",Engine.preferredSubtitle(new JSONObject("{\"subtitles\":{\"live_chat\":[]}}")));
+        JSONObject available=new JSONObject("{\"subtitles\":{\"en\":[{\"url\":\"https://example.org/en.vtt\"}],\"zh-Hans\":[{\"url\":\"https://example.org/zh.vtt\"}]},\"automatic_captions\":{\"fr\":[{\"url\":\"https://example.org/fr.vtt\"}]}}");
+        assertEquals("zh-Hans",Engine.preferredSubtitle(available));
+        available.getJSONObject("subtitles").put("zh-Hans",new JSONArray());
+        assertEquals("en",Engine.preferredSubtitle(available));
+        available.getJSONObject("subtitles").put("en",new JSONArray());
+        assertEquals("fr",Engine.preferredSubtitle(available));
+        assertEquals("",Engine.preferredSubtitle(new JSONObject("{\"subtitles\":{\"zh-Hans\":[],\"en\":[{}],\"live_chat\":[{\"url\":\"https://example.org/chat.json\"}]}}")));
     }
     @Test public void htmlWithSuccessfulHttpStatusNeverCountsAsACompletedMediaFile() throws Exception {
         File file=File.createTempFile("not-media-",".mp4");

@@ -71,7 +71,7 @@ public final class LibraryWatch050Test {
         JSONObject video=store.video(41);assertNotNull(video);assertFalse(video.getBoolean("favorite"));assertEquals(12345,video.getLong("playbackMs"));
         assertEquals(Collections.singletonList(9L),store.collectionIds(41));assertEquals("收藏",store.collections().get(0).getString("name"));
         try(SQLiteDatabase migrated=app.openOrCreateDatabase("media-library.db",0,null)) {
-            assertEquals(2,migrated.getVersion());assertEquals(before,snapshotV1(migrated));
+            assertEquals(3,migrated.getVersion());assertEquals(before,snapshotV1(migrated));
             try(Cursor check=migrated.rawQuery("PRAGMA foreign_key_check",null)){assertEquals(0,check.getCount());}
         }
         store.setFavorite(41,true);store.close();store=new LibraryStore(app);
