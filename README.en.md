@@ -8,6 +8,8 @@ Save videos from YouTube, X / Twitter, Bilibili, and Douyin, then watch, organiz
 
 Android 7.0+ · ARM64 · No ads · No StreamPocket account required
 
+**0.5.0 is the current release**, adding whole-queue and batch download controls, watch-state and favorite filters, picture-in-picture, playback modes, and audio/subtitle selection. [Release notes](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.5.0) · [Release verification](docs/RELEASE_STATUS.md).
+
 ## From a link to your library
 
 1. Paste a video URL or share text. Multiple links are supported.
@@ -29,7 +31,7 @@ Failed links stay available for retry. Unfinished work and selected qualities ar
 | Make a short collection | Trim and arrange clips, export a new video, and keep the original files and editing draft |
 | Manage accounts | Optional website sign-in or login-file import, with per-platform enable/disable and removal |
 
-This branch contains the **0.5.0 development preview**. The published release is still 0.4.1; see [PR #1](https://github.com/wozhenbang2004/StreamPocket/pull/1) for the preview build and verification. The existing selectable save folder, download relocation, extraction reuse, album ZIPs, optional attachments, and collection selection remain available. See [download usage](docs/DOWNLOAD_FLOW.md).
+Resuming the whole queue preserves tasks paused individually, and continuous playback follows the current library filters. Picture-in-picture requires Android 8.0+ and device support. Existing save-folder selection, download relocation, extraction reuse, album ZIPs, optional attachments, and collection selection remain available. See [download usage](docs/DOWNLOAD_FLOW.md) and [playback and editing](docs/MEDIA_EXPERIENCE.md).
 
 ## Supported sites
 
@@ -103,7 +105,7 @@ StreamPocket's own code is licensed under [GPL-3.0-or-later](LICENSE). Video ext
 
 ## Development previews
 
-The preview includes recent extraction reuse, image-album ZIPs, optional subtitles and covers, collection-item selection, batch quality rules and per-platform account controls.
+Use development previews to test source changes in a separate installation.
 
 `./gradlew assembleDebug -PpreviewInstall=true` produces a separately installed preview (`dev.streampocket.localtest.preview`). It does not overwrite the release app or share its data. Production updates require the original signing certificate.
 

@@ -10,7 +10,7 @@ An open-source Android video downloader, local video player, and lightweight vid
 
 Android 7.0 及以上 · ARM64 · 无广告 · 无需注册拾流账号
 
-**0.5.0 开发预览**：这一分支加入整队与批量下载管理、观看状态与收藏筛选，以及画中画、播放模式和音轨/字幕选择。正式发行仍为 0.4.1；预览构建与验证入口见 [PR #1](https://github.com/wozhenbang2004/StreamPocket/pull/1)。
+**0.5.0 正式版**：新增整队与批量下载管理、观看状态与收藏筛选，以及画中画、播放模式和音轨/字幕选择。[本次更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.5.0) · [发行与验证](docs/RELEASE_STATUS.md)。
 
 ## 从一条链接开始
 
@@ -35,7 +35,7 @@ Android 7.0 及以上 · ARM64 · 无广告 · 无需注册拾流账号
 | 管理平台账号 | 可选网页登录或导入登录信息；按平台停用、重新登录或清除 |
 | 自由选择保存位置 | 选择手机文件夹保存新下载；一键剪切已有下载，并保留视频库、进度、标记和剪辑引用 |
 
-0.4.1 加入保存位置选择与已有下载一键剪切，解析列表可删除条目；视频库点击封面直接播放，更多菜单靠近右上角。保留近期解析复用、图集 ZIP、字幕封面和合集选择。使用说明见 [下载流程](docs/DOWNLOAD_FLOW.md)。
+整队继续保留单独暂停的任务，连续播放遵守当前视频库筛选。画中画需要 Android 8.0+ 且设备支持。保存位置选择、已有下载一键剪切、解析条目删除、点击封面直接播放等已有功能继续保留。使用说明见 [下载流程](docs/DOWNLOAD_FLOW.md) 和 [播放与剪辑](docs/MEDIA_EXPERIENCE.md)。
 
 ## 支持的平台
 

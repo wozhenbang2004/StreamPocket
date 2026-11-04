@@ -1,15 +1,42 @@
 # 安装与版本
 
-当前发行版本 **0.4.1 / versionCode 30**，应用名“拾流”。支持 Android 7.0+ / ARM64，包名为 `dev.streampocket.localtest`，沿用既有安装身份。2026-11-04 的开发分支已递增至 **0.5.0 / versionCode 31**，用于下载管理、视频库和播放器的功能升级及配套稳定性修改；尚未作为新发行版本发布，正式版下载链接仍指向 0.4.1。
+当前发行版本 **0.5.0 / versionCode 31**，应用名“拾流”。支持 Android 7.0+ / ARM64，包名为 `dev.streampocket.localtest`，沿用既有安装身份与签名。此版本加入下载队列管理、观看状态与收藏、合集整理、系统画中画、播放模式和音轨/字幕选择，并保留下载与更新恢复修复。
 
-- [安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.4.1/StreamPocket-arm64-v8a.apk)
-- [版本更新内容](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.4.1)
+- [安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.5.0/StreamPocket-arm64-v8a.apk)
+- [版本更新内容](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.5.0)
 - [应用内更新](APP_UPDATES.md)
 - [第三方对应源码](THIRD_PARTY_SOURCES.md)
 
 已有拾流直接覆盖安装，不必卸载或清除数据。来源安装权限由系统管理，最后一步由用户确认。
 
 应用源码随该 Release 标签提供；原生组件保持不变，其对应源码八分片继续保留在 v0.2.9-test 的固定链接中。请按第三方源码说明合并、校验后查看构建配方与许可证。
+
+## 0.5.0 · 2026-11-04
+
+发行标签 `v0.5.0` 对应源码提交 `780752dad98674f2b64dc67eba5eae1019bd86c9`，与已验证提交 `f3b35c65eb2d974e6623b83b373d886f04e592d6` 具有相同 Git 树。验证记录见 [CI run 41774940683](https://github.com/wozhenbang2004/StreamPocket/actions/runs/41774940683)；合并后的 [main CI run 41778320226](https://github.com/wozhenbang2004/StreamPocket/actions/runs/41778320226) 同样通过。
+
+### 安装包身份
+
+| 项目 | 值 |
+| --- | --- |
+| 版本 | 0.5.0 / versionCode 31 |
+| 包名与平台 | `dev.streampocket.localtest` · ARM64 · minSdk 24 |
+| 固定发行资产名 | `StreamPocket-arm64-v8a.apk` |
+| 签名后大小 | 65,107,685 bytes |
+| APK SHA-256 | `7e4f0d43aa5c479feee20fe733ac3d81cd68f86593070d729a27d3f75bcfc5da` |
+| 证书 SHA-256 | `67d2d8e285c629f3c9076a9f00f12d4a79c9139d452aa2b876dae803df8373fd` |
+
+签名成品的包名、版本、ARM64、minSdk 24、非 debuggable、16KB 对齐与 APK v2/v3 签名校验均通过。固定名与带版本号安装包使用相同字节；`update-manifest.json` 依据签名后成品的大小、摘要和身份生成，作为独立 Release 资产提供。发布后远端资产大小与摘要已核对一致。
+
+### 验证结果与边界
+
+- **58 个测试套件、409 项测试全部通过**：0 失败、0 错误、0 跳过。
+- 独立执行 **83 项下载核心更新检查**与 **5 项进程停止检查**，全部通过。
+- `testDebugUnitTest lintDebug assembleDebug assembleRelease` 及可并装预览构建通过；**Lint 0 错误、74 警告**，未宣称清除全部警告。
+- **Android 15 / x86_64 模拟器实际媒体验收通过**：许可横屏、竖屏视频解码与首帧，拖动取帧，面板取消与返回，侧滑露出操作不误执行，返回视频库与退出释放播放器。
+- **系统画中画验收通过**：窗口缩小后回到系统桌面，主界面离开前台仍继续播放；切换下一条后出现首帧、保持播放和音频焦点、进度继续推进；随后返回全屏和视频库。画中画需要 Android 8.0+ 且设备支持。
+
+上述模拟器和离线回归不代表用户手机/OEM、ARM64 硬件解码性能、耗电、真实源站下载、真实剪辑导出或实机覆盖安装已经验证。本次没有速度或耗电改善百分比结论。
 
 以下保留历史发行与验证记录；各版本的签名摘要和测试结果只属于其对应产物。
 
