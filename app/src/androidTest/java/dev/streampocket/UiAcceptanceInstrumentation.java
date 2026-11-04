@@ -6,6 +6,7 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.graphics.drawable.BitmapDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -160,9 +161,20 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
     private void toggleAutomatic(UpdateActivity page,AppUpdates updates,boolean enabled)throws Exception{
         PocketSwitch toggle=onMainValue(()->(PocketSwitch)findType(page.getWindow().getDecorView(),PocketSwitch.class));
         check(toggle!=null&&onMainValue(()->toggle.isShown()&&toggle.isChecked()!=enabled),"automatic update switch has the expected state");
-        int[] at=location(toggle);float x=at[0]+onMainValue(toggle::getWidth)/2f,y=at[1]+onMainValue(toggle::getHeight)/2f;long down=SystemClock.uptimeMillis();
-        inject(MotionEvent.ACTION_DOWN,x,y,down);inject(MotionEvent.ACTION_UP,x,y,down);
-        waitUntil(()->toggle.isChecked()==enabled&&updates.automatic()==enabled,5000,"touching the real switch updates the preference");
+        String step=enabled?"04-switch-enable":"03-switch-disable";
+        capture(step+"-before-touch");
+        int[] target=onMainValue(()->{
+            Rect visible=new Rect();boolean inView=toggle.getLocalVisibleRect(visible);
+            int[] at=new int[2];toggle.getLocationOnScreen(at);
+            android.util.Log.i("StreamPocketQA",step+" focus="+page.hasWindowFocus()+" clickable="+toggle.isClickable()+" focusable="+toggle.isFocusable()+" enabled="+toggle.isEnabled()+" checked="+toggle.isChecked()+" visible="+visible+" screen="+at[0]+","+at[1]+" size="+toggle.getWidth()+"x"+toggle.getHeight());
+            check(page.hasWindowFocus()&&toggle.isEnabled()&&toggle.isClickable()&&toggle.isFocusable(),"visible switch must accept touch and keyboard/accessibility focus");
+            check(inView&&visible.contains(toggle.getWidth()/2,toggle.getHeight()/2),"switch touch target is inside the visible, unclipped row");
+            return new int[]{at[0]+toggle.getWidth()/2,at[1]+toggle.getHeight()/2};
+        });
+        long down=SystemClock.uptimeMillis();
+        inject(MotionEvent.ACTION_DOWN,target[0],target[1],down);inject(MotionEvent.ACTION_UP,target[0],target[1],down);
+        try{waitUntil(()->toggle.isChecked()==enabled&&updates.automatic()==enabled,5000,"touching the real switch updates the preference");}
+        catch(AssertionError failure){capture(step+"-touch-failed");throw failure;}
     }
     private void backgroundAndReopen(MainActivity home,Context app)throws Exception{
         check(getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME),"HOME backgrounds the app");
