@@ -75,6 +75,7 @@ final class ContentFiles {
     static Sidecars publishSidecars(Context app, File directory, Engine.Media media, BooleanSupplier cancelled, java.util.function.Consumer<JSONArray> onSaved, DownloadLocation.Target target) {
         Sidecars result = new Sidecars();
         JSONArray saved = result.saved;
+        int savedSubtitles = 0;
         try {
         File[] files = directory.listFiles(); if (files == null) return result;
         Arrays.sort(files, Comparator.comparing(File::getName));
@@ -94,10 +95,29 @@ final class ContentFiles {
                 }
             }
             MediaExporter.Result published = MediaExporter.save(app, file, cancelled, target);
-            saved.put(new JSONObject().put("name", file.getName()).put("uri", published.uri.toString()).put("mime", published.mime));
+            JSONObject attachment = new JSONObject().put("name", file.getName()).put("uri", published.uri.toString()).put("mime", published.mime);
+            if (subtitle) {
+                savedSubtitles++;
+                List<String> languages = media.selectedSubtitles();
+                String code = "";
+                for (String selected : languages) if (file.getName().endsWith("." + selected + name.substring(name.lastIndexOf('.')))) { code = selected; break; }
+                String language = SubtitleTracks.language(code, file.getName(), languages.size() == 1 ? languages.get(0) : "");
+                attachment.put("language", language).put("preferred", !code.isEmpty() && !languages.isEmpty() && languages.get(0).equals(code));
+                String source = "来源未记录";
+                for (SubtitleChoices.Language available : media.availableSubtitles()) if (available.code.equals(code)) {
+                    if (SubtitleChoices.AUTOMATIC.equals(media.subtitleMode) && available.automatic) source = "自动字幕";
+                    else if (available.original) source = "平台字幕";
+                    else if (available.automatic) source = "自动字幕";
+                    break;
+                }
+                attachment.put("label", SubtitleTracks.label("", language, file.getName()) + " · " + source);
+            }
+            saved.put(attachment);
             onSaved.accept(saved);
         }
         } catch (Exception failure) { result.warning = Engine.userMessage(failure); result.error = Engine.cleanLog(failure.toString()); }
+        if (media.saveSubtitles && savedSubtitles == 0 && result.warning.isEmpty())
+            result.warning = "视频已保存，但源站没有返回可保存的所选字幕。";
         return result;
     }
 }
