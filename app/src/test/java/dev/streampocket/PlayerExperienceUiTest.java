@@ -5,6 +5,8 @@ import android.app.PictureInPictureParams;
 import android.app.RemoteAction;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.BroadcastReceiver;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -146,6 +148,20 @@ public final class PlayerExperienceUiTest {
         }
     }
 
+    @Test public void pipReceiverMatchesTheActualSessionUriAndRejectsOtherAuthorities() throws Exception {
+        try(Session session=open(null,null)){
+            enterPip(session);PendingIntent command=action(session,"暂停").getActionIntent();
+            Intent sent=Shadows.shadowOf(command).getSavedIntent();assertNotNull(sent.getData());
+            BroadcastReceiver receiver=field(session.activity,"pipReceiver",BroadcastReceiver.class);IntentFilter actual=null;
+            for(org.robolectric.shadows.ShadowApplication.Wrapper registration:Shadows.shadowOf(RuntimeEnvironment.getApplication()).getRegisteredReceivers())if(registration.getBroadcastReceiver()==receiver){actual=registration.getIntentFilter();break;}
+            assertNotNull("The production receiver must be registered",actual);
+            assertTrue("Its filter must match the real PendingIntent data, not only the action",actual.match(app.getContentResolver(),sent,true,"PiPContract")>=0);
+            Intent unrelated=new Intent(sent).setData(Uri.parse("streampocket://another-window/ignored"));
+            assertEquals(IntentFilter.NO_MATCH_DATA,actual.match(app.getContentResolver(),unrelated,true,"PiPContract"));
+            command.send();idle();assertFalse("Matching must deliver the actual pause command",session.clock.base.play);
+        }
+    }
+
     @Test public void closingPipReleasesItsPlayerAndCancelsOldRemoteActions() throws Exception {
         try(Session session=open(null,null)){
             enterPip(session);session.pause();PendingIntent old=action(session,"暂停").getActionIntent();
@@ -229,7 +245,8 @@ public final class PlayerExperienceUiTest {
         ExoPlayer proxy=clock.proxy();set(activity,"player",proxy);set(activity,"firstFrameRendered",true);field(activity,"playerView",PlayerView.class).setPlayer(proxy);
         invoke(activity,"setMediaActions",new Class<?>[]{boolean.class},true);field(activity,"errorPanel",View.class).setVisibility(View.GONE);
         TextView provenance=new TextView(activity);provenance.setText("原生控件夹具 · 不含视频解码或系统小窗验证");provenance.setTextSize(11);provenance.setTextColor(0xFF8C979B);provenance.setGravity(Gravity.CENTER);
-        FrameLayout.LayoutParams label=new FrameLayout.LayoutParams(-1,48,Gravity.CENTER);field(activity,"root",FrameLayout.class).addView(provenance,label);
+        float density=activity.getResources().getDisplayMetrics().density;
+        FrameLayout.LayoutParams label=new FrameLayout.LayoutParams(-1,Math.round(24*density),Gravity.TOP|Gravity.CENTER_HORIZONTAL);label.topMargin=Math.round(64*density);field(activity,"root",FrameLayout.class).addView(provenance,label);
         controller.start().resume().visible();idle();layout(activity);return new Session(controller,activity,clock);
     }
     private void enterPip(Session session) throws Exception {more(session);click(session,"画中画");assertTrue(session.activity.isInPictureInPictureMode());session.activity.onPictureInPictureModeChanged(true,session.activity.getResources().getConfiguration());}

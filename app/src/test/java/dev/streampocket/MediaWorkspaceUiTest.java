@@ -120,8 +120,9 @@ public final class MediaWorkspaceUiTest {
             View cell=grid.getChildAt(0); assertNotNull(cell);
             View more=findDescription(cell,"视频更多操作："+chosen.optString("title")); assertNotNull(more); more.performClick(); idle();
             PocketDialog actions=latestAlert();
-            assertEquals("重命名文件",actions.getListView().getAdapter().getItem(2).toString());
-            actions.getListView().performItemClick(null,2,2); idle();
+            int renameItem=-1;for(int i=0;i<actions.getListView().getAdapter().getCount();i++)if("重命名文件".equals(actions.getListView().getAdapter().getItem(i).toString()))renameItem=i;
+            assertTrue("The video menu must offer real file rename",renameItem>=0);
+            actions.getListView().performItemClick(null,renameItem,renameItem); idle();
             PocketDialog rename=latestAlert();
             EditText name=findEdit(rename.getWindow().getDecorView()); assertNotNull(name);
             assertEquals("日落山脊",name.getText().toString());

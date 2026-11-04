@@ -183,7 +183,11 @@ public final class PlayerActivity extends Activity {
             if(state.getBundle("track_parameters")!=null)trackParameters=TrackSelectionParameters.fromBundle(state.getBundle("track_parameters"));
         }
         store=new LibraryStore(getApplicationContext()); buildUi(); loadTransitionCover(); immersive();
-        if(Build.VERSION.SDK_INT>=26){ContextCompat.registerReceiver(this,pipReceiver,new IntentFilter(PIP_CONTROL),ContextCompat.RECEIVER_NOT_EXPORTED);pipReceiverRegistered=true;}
+        if(Build.VERSION.SDK_INT>=26){
+            IntentFilter controls=new IntentFilter(PIP_CONTROL);
+            controls.addDataScheme("streampocket");controls.addDataAuthority("pip",null);
+            ContextCompat.registerReceiver(this,pipReceiver,controls,ContextCompat.RECEIVER_NOT_EXPORTED);pipReceiverRegistered=true;
+        }
         if (Build.VERSION.SDK_INT>=33) getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                 android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,this::handleBack);
         if (state!=null && state.getBoolean("range_open",false)) {

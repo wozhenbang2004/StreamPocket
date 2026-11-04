@@ -4,10 +4,13 @@ import android.app.Activity;
 import android.app.DownloadManager;
 import android.app.Notification;
 import android.app.NotificationManager;
+import android.content.ComponentName;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInstaller;
 import org.robolectric.annotation.Implements;
@@ -52,12 +55,14 @@ public final class UpdateFlow030Test {
     private AppUpdates updates;
     private ExecutorService worker;
     private UpdateOffer offer;
+    private UpdateInstallReceiver fixtureInstallReceiver;
 
     private void ready(boolean permission)throws Exception{
         ReadableSession.corrupt=false;ReadableSession.lastBytes=null;
         Field singleton=AppUpdates.class.getDeclaredField("instance");singleton.setAccessible(true);singleton.set(null,null);
         Field providerCache=androidx.core.content.FileProvider.class.getDeclaredField("sCache");providerCache.setAccessible(true);((java.util.Map<?,?>)providerCache.get(null)).clear();
         Context app=RuntimeEnvironment.getApplication();app.getSharedPreferences("app_updates",0).edit().clear().commit();
+        bindExplicitInstallReceiver(app);
         ReflectionHelpers.setStaticField(Build.class,"SUPPORTED_ABIS",new String[]{"arm64-v8a"});
         Signature signature=new Signature(new byte[]{1,2,3,4});String cert=AppUpdates.hex(MessageDigest.getInstance("SHA-256").digest(signature.toByteArray()));
         PackageInfo own=app.getPackageManager().getPackageInfo(app.getPackageName(),android.content.pm.PackageManager.GET_PROVIDERS|android.content.pm.PackageManager.GET_RECEIVERS|android.content.pm.PackageManager.GET_META_DATA);own.signatures=new Signature[]{signature};own.signingInfo=null;
@@ -75,7 +80,22 @@ public final class UpdateFlow030Test {
         set(updates,"state",new AppUpdates.Snapshot(AppUpdates.Phase.READY,offer,"已下载，等待交给系统",DATA.length));
     }
     private void settle()throws Exception{for(int n=0;n<4;n++){worker.submit(()->{}).get(5,TimeUnit.SECONDS);Shadows.shadowOf(Looper.getMainLooper()).idle();}}
-    @After public void closeWorker()throws Exception{if(worker!=null){worker.shutdownNow();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));}}
+    /** Robolectric keeps PackageManager manifest metadata separate from receiver dispatch wrappers.
+     * Keep the real private receiver and PendingIntent path; an empty filter accepts only its explicit component. */
+    private void bindExplicitInstallReceiver(Context app)throws Exception{
+        ActivityInfo declared=app.getPackageManager().getReceiverInfo(new ComponentName(app,UpdateInstallReceiver.class),0);
+        assertEquals(UpdateInstallReceiver.class.getName(),declared.name);
+        assertEquals(app.getPackageName(),declared.packageName);assertTrue(declared.enabled);
+        assertFalse("Install status receiver must stay private",declared.exported);
+        for(org.robolectric.shadows.ShadowApplication.Wrapper wrapper:Shadows.shadowOf(RuntimeEnvironment.getApplication()).getRegisteredReceivers())
+            if(wrapper.broadcastReceiver instanceof UpdateInstallReceiver)return;
+        fixtureInstallReceiver=new UpdateInstallReceiver();
+        app.registerReceiver(fixtureInstallReceiver,new IntentFilter(),Context.RECEIVER_NOT_EXPORTED);
+    }
+    @After public void closeWorker()throws Exception{
+        try{if(worker!=null){worker.shutdownNow();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));}}
+        finally{if(fixtureInstallReceiver!=null)RuntimeEnvironment.getApplication().unregisterReceiver(fixtureInstallReceiver);}
+    }
 
     @Test public void separateReleasesNeverReuseInstallerUri()throws Exception{
         ready(true);Context app=RuntimeEnvironment.getApplication();

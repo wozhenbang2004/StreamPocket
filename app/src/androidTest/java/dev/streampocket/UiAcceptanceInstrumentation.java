@@ -93,11 +93,13 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
     }
     private void verifyPictureInPicture(PlayerActivity activity,long videoId,long nextVideoId)throws Exception{
         check(getTargetContext().getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE),"emulator supports system PiP");
+        int fullWidth=onMainValue(()->activity.getWindow().getDecorView().getWidth()),fullHeight=onMainValue(()->activity.getWindow().getDecorView().getHeight());
         ExoPlayer original=onMainValue(()->field(activity,"player",ExoPlayer.class));
         onMain(()->{original.seekTo(2000);original.play();field(activity,"playerView",PlayerView.class).showController();activity.findViewById(R.id.sp_player_more).performClick();});
         waitForIdleSync();
         onMain(()->{View entry=findText(activity.getWindow().getDecorView(),"画中画");check(entry!=null&&entry.isShown(),"PiP has a real visible tool entry");check(entry.performClick(),"PiP entry invokes its action");});
         waitUntil(activity::isInPictureInPictureMode,15000,"system enters PiP");
+        waitUntil(()->activity.getWindow().getDecorView().getWidth()<fullWidth*.8&&activity.getWindow().getDecorView().getHeight()<fullHeight*.8,15000,"system PiP transition reaches a visibly smaller window");
         check(onMainValue(()->field(activity,"player",ExoPlayer.class))==original,"PiP onPause keeps the current player");
         long position=onMainValue(original::getCurrentPosition);
         waitUntil(()->original.getCurrentPosition()>position+500,10000,"real media position advances while in PiP");

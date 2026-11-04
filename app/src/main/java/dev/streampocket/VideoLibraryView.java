@@ -190,7 +190,10 @@ public final class VideoLibraryView extends LinearLayout {
         int token = reset ? ++generation : generation; int offset = reset ? 0 : videos.size();
         List<String> chosenSources=new ArrayList<>(selectedSources);String chosenQuery = query, chosenOrder=order; long chosenCollection = collection,knownCount=totalVideos;
         String chosenWatch=watchFilter;boolean chosenFavorites=favoritesOnly;
-        int requestCount = preserveViewport ? Math.max(PAGE, videos.size()) : PAGE;
+        int cachedCount = preserveViewport ? Math.max(PAGE, videos.size()) : PAGE;
+        // A pending deep restore needs its viewport in the first adapter update;
+        // publishing earlier pages would first establish a viewport at row zero.
+        int requestCount = reset && restoreFirst>=0 ? Math.max(cachedCount,restoreFirst+PAGE) : cachedCount;
         int firstVisible = preserveViewport ? grid.getFirstVisiblePosition() : 0;
         int firstTop = preserveViewport && grid.getChildCount() > 0 ? grid.getChildAt(0).getTop() : 0;
         loading = true; status.setOnClickListener(null);

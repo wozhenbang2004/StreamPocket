@@ -308,7 +308,8 @@ public final class Library022UiTest {
         try(LibraryStore store=new LibraryStore(app)){group=store.createCollection("旅行");other=store.createCollection("工作");store.setCollection(a,group,true);store.setCollection(a,other,true);store.savePlayback(a,9000);store.addMarker(a,1000,"保留");}
         open();field(library,"collectionButton",TextView.class).performClick();choose("旅行 · 1");await();
         manage("旅行 · 1","重命名合集");PocketDialog rename=latest();EditText input=(EditText)described(rename.getWindow().getDecorView(),"新的合集名称");assertNotNull(input);
-        input.setText("工作");rename.getButton(PocketDialog.BUTTON_POSITIVE).performClick();await();assertTrue(rename.isShowing());assertNotNull(input.getError());
+        input.setText("工作");rename.getButton(PocketDialog.BUTTON_POSITIVE).performClick();await();assertTrue("A duplicate name must keep the editor open",rename.isShowing());assertNotNull(input.getError());assertEquals("工作",input.getText().toString());
+        try(LibraryStore store=new LibraryStore(app)){assertEquals("旅行",store.collections().stream().filter(item->item.optLong("id")==group).findFirst().get().optString("name"));}
         input.setText("周末旅行");rename.getButton(PocketDialog.BUTTON_POSITIVE).performClick();await();assertFalse(rename.isShowing());assertEquals("周末旅行",field(library,"collectionButton",TextView.class).getText().toString());
         manage("周末旅行 · 1","删除合集");assertTrue(text(latest().getWindow().getDecorView()).contains("观看进度、精彩标记和剪辑草稿不变"));latest().getButton(PocketDialog.BUTTON_NEGATIVE).performClick();await();
         assertEquals(group,library.saveUiState().getLong("collection"));manage("周末旅行 · 1","删除合集");latest().getButton(PocketDialog.BUTTON_POSITIVE).performClick();await();
@@ -331,7 +332,7 @@ public final class Library022UiTest {
     private static List<String> dialogItems(){List<String> values=new ArrayList<>();PocketDialog dialog=latest();for(int i=0;i<dialog.getListView().getAdapter().getCount();i++)values.add(dialog.getListView().getAdapter().getItem(i).toString());return values;}
     private static void choose(String label){PocketDialog dialog=latest();List<String> values=dialogItems();int position=values.indexOf(label);assertTrue("Missing dialog item: "+label+" in "+values,position>=0);dialog.getListView().performItemClick(null,position,position);}
     private void watch(String label)throws Exception{field(library,"watchButton",TextView.class).performClick();choose(label);await();}
-    private void manage(String name,String action)throws Exception{described(library,"视频库更多操作").performClick();choose("管理合集");await();choose(name);choose(action);}
+    private void manage(String name,String action)throws Exception{described(library,"视频库更多操作").performClick();choose("管理合集");await();choose(name);choose(action);Shadows.shadowOf(Looper.getMainLooper()).idle();}
     private void awaitNotice(String message)throws Exception{long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);while(System.nanoTime()<deadline){Shadows.shadowOf(Looper.getMainLooper()).idle();if(text(activity.getWindow().getDecorView()).contains(message))return;Thread.sleep(10);}fail("Missing completed operation feedback: "+message);}
 
     private long seed(String key,String title,String url,long bytes,int width,int height) throws Exception {
