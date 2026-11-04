@@ -4,7 +4,7 @@
 
 本批升级 Media3 1.11.1、compileSdk 36、AGP 8.13.2 与 Gradle 8.14.6，保留 targetSdk 35 / minSdk 24。下载整队控制、批量/优先级、库筛选/收藏/合集、画中画/播放模式/轨道选择的新增回归与全量检查一起执行，最终结果以同一提交的 CI 为准。
 
-除原有单元、View、Lint 与 ARM64 构建外，CI 新增隔离的 Android 15 / x86_64 模拟器任务。它复用 `UiAcceptanceInstrumentation`、许可参考媒体和 `tools/qa-x86.init.gradle`，用真实 Android Media3 解码与系统窗口验证横/竖视频首帧、拖动取帧、返回视频库，以及从真实菜单进入 PiP 后播放位置继续前进、回全屏和退出释放。构建与执行入口为：
+除原有单元、View、Lint 与 ARM64 构建外，CI 新增隔离的 Android 15 / x86_64 模拟器任务。它复用 `UiAcceptanceInstrumentation`、许可参考媒体和 `tools/qa-x86.init.gradle`，用真实 Android Media3 解码与系统窗口验证横/竖视频首帧、拖动取帧、返回视频库，以及从真实菜单进入 PiP 后播放位置继续前进、小窗内切换下一条仍有音频焦点并继续播放、回全屏和退出释放。构建与执行入口为：
 
 ```bash
 gradle --no-daemon --console=plain -I tools/qa-x86.init.gradle assembleDebug assembleDebugAndroidTest
