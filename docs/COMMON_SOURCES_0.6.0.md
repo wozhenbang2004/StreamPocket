@@ -4,7 +4,7 @@
 
 基于 0.5.1（主线 `841b545ce57e94e81ecc5288b56926fe2f3041e3`）增量开发。用户希望吸收 OmniGet 的常用来源覆盖和实用下载能力，不以通用提取器的站点数量作为产品完成度。
 
-本轮继续使用 Android 本机 yt-dlp、现有队列、账号隔离、自定义面板和视频库。没有引入新的下载服务器、gallery-dl、Rust 下载引擎或并行应用壳。安装包身份保持 `dev.streampocket.localtest`，版本规划为 `0.6.0 / 33`；正式覆盖升级仍要求原签名。
+本轮继续使用 Android 本机 yt-dlp、现有队列、账号隔离、自定义面板和视频库。没有引入新的下载服务器、gallery-dl、Rust 下载引擎或并行应用壳。安装包身份保持 `dev.streampocket.localtest`，当前开发版本为 `0.6.0 / 33`；正式覆盖升级仍要求原签名。
 
 ## 新增六个常用来源
 
@@ -71,7 +71,21 @@
 - 下载选项元数据规则：6 项 JUnit。
 - 实际内置 yt-dlp 2026.10.26 的离线格式选择：H.264 + AAC 正确选中，只有 AV1 时无兼容结果。
 
-以上是分层证据，不代替当前版本完整 Android 构建、Media3 实际播放、六平台实网下载或真机 WebView 登录。新增数据库、播放、面板草稿、队列序列化与升级顺序测试一并交由仓库既有 Android CI 执行。正式发布以该次 CI 和原签名产物为准，不将预览包标为覆盖升级包。
+### 完整 CI 结果
+
+[PR #3](https://github.com/wozhenbang2004/StreamPocket/pull/3) 的代码提交 `fff4ed600d648650462965c4a470162aaf082e1e` 已通过 [Android APK #23](https://github.com/wozhenbang2004/StreamPocket/actions/runs/41903040949?pr=3) 的两条检查线：
+
+- `build` 成功：完整 `testDebugUnitTest`、`lintDebug`、`assembleDebug`、`assembleRelease`，以及并行安装的预览版构建。全套测试共 506 项；首轮发现的 6 处测试夹具/过期假设已修正后复验，保留原有数据保全断言，并补齐所有 18 个渠道的来源与账号 fixture。
+- `playback-emulator` 成功：Android 35 模拟器执行项目原有真实媒体播放与画中画验收。该结果不代表新增六个平台的实网下载或所有外挂字幕格式均已逐一实机播放。
+- 工作流已生成 `StreamPocket-preview`、`StreamPocket-release-unsigned`、`StreamPocket-verification`、`StreamPocket-emulator-playback` 和签名工具产物。
+
+CI 附件下载在本次浏览器中遇到文件分发地址网络错误，因此未取得当前界面截图进行人工视觉验收，也未把远端产物伪称为本机已校验的安装包。源站实网下载、真实 WebView 登录、用户手机的覆盖安装仍未验证。
+
+### 正式发布状态
+
+0.6.0 的代码与 CI 构建已完成，正式签名更新包尚未发布。已找回既有签名备份，并从当前 0.5.1 公开发布记录核对原证书摘要；本次环境中仍缺少该备份的原签名参数，尚不能核验其内部证书或签名新版。备份保留在项目外的私有位置，不进入仓库。
+
+`StreamPocket-preview` 是并行安装预览版，`StreamPocket-release-unsigned` 是待签名 Release；二者均不能标为可覆盖现有应用的正式更新。恢复原签名配置后，应取得 Release 产物，核验包名/版本/ABI/非 debuggable/对齐和签名，再按既有流程生成更新清单、发布和回读核验。无需更换应用身份。
 
 ## 研究与采用
 
