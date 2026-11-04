@@ -47,7 +47,7 @@ public final class LoginActivity extends Activity {
     private TextView address, status;
     private Button save, loginEntry;
     private ProgressBar progress;
-    private boolean closing, saving, ready, detected, desktop;
+    private boolean closing, saving, ready, detected, desktop, unverifiedSession;
     private int browserGeneration;
     private int pageGeneration;
     private String confirmedAccountUrl = "";
@@ -182,7 +182,7 @@ public final class LoginActivity extends Activity {
 
     private void prepareWebSession(boolean reuseSaved) {
         final int token = ++browserGeneration;
-        ready = false; detected = false; save.setEnabled(false); save.setText("登录后保存到本机");
+        ready = false; detected = false; unverifiedSession = false; save.setEnabled(false); save.setText("登录后保存到本机");
         if (loginEntry != null) { loginEntry.setVisibility(View.VISIBLE); loginEntry.setEnabled(false); }
         status.setText(reuseSaved ? "正在读取本机已保存的登录信息…" : "正在准备新的官方登录页…");
         // Isolate the temporary browser before restoring ONLY the selected
@@ -235,6 +235,7 @@ public final class LoginActivity extends Activity {
     }
 
     private String instruction() {
+        if(!platform.hasKnownLoginMarker())return "请在官方网页确认已登录，再保存网页 Cookie；应用暂不能自动确认此平台的登录状态。";
         if(platform==LoginPlatform.YOUTUBE)return "在 YouTube 完成登录后保存。无法登录时，可返回账号管理导入登录信息。";
         if (platform == LoginPlatform.DOUYIN) return desktop
                 ? "抖音官方账号页：请选择「验证码登录」或「密码登录」。若只有首页，点「重新打开登录」。"
@@ -266,6 +267,15 @@ public final class LoginActivity extends Activity {
 
     private void updateDetection() {
         if (saving || closing || !ready || cookies == null) return;
+        if (!platform.hasKnownLoginMarker()) {
+            boolean available;
+            try { available = platform.allowsNavigation(web.getUrl()) && hasUnverifiedSession(platform, collectSession()); }
+            catch (Exception malformed) { available = false; }
+            detected = false; unverifiedSession = available;
+            save.setEnabled(available); save.setText(available ? "保存网页 Cookie" : "登录后保存到本机");
+            status.setText(available ? "网页 Cookie 可保存。请先在网页中确认已登录；保存后会标记为「登录状态未确认」。" : instruction());
+            return;
+        }
         if (platform == LoginPlatform.PORNHUB) {
             final String url = web.getUrl();
             final int browserToken = browserGeneration, pageToken = pageGeneration;
@@ -297,6 +307,10 @@ public final class LoginActivity extends Activity {
         if (loginEntry != null) loginEntry.setVisibility(found ? View.GONE : View.VISIBLE);
     }
 
+    static boolean hasUnverifiedSession(LoginPlatform platform, String session) throws Exception {
+        return !platform.hasKnownLoginMarker() && !AccountStore.webRestoreCookies(platform, session).isEmpty();
+    }
+
     private void saveSession() {
         if (saving || closing || !ready) return;
         final String session;
@@ -304,7 +318,9 @@ public final class LoginActivity extends Activity {
             session = collectSession();
             boolean confirmed = platform == LoginPlatform.PORNHUB && detected
                     && confirmedAccountUrl.equals(web.getUrl()) && platform.allowsNavigation(web.getUrl());
-            if (!platform.hasLogin(session, confirmed)) {
+            boolean canSave = platform.hasKnownLoginMarker() ? platform.hasLogin(session, confirmed)
+                    : platform.allowsNavigation(web.getUrl()) && hasUnverifiedSession(platform, session);
+            if (!canSave) {
                 status.setText("还未检测到账号登录信息，请先完成网页登录。");
                 return;
             }
@@ -313,7 +329,7 @@ public final class LoginActivity extends Activity {
         if (loginEntry != null) loginEntry.setEnabled(false);
         io.execute(() -> {
             try {
-                new AccountStore(this).save(platform, session, "网页登录");
+                new AccountStore(this).save(platform, session, platform.hasKnownLoginMarker() ? "网页登录" : "网页登录 · 状态未确认");
                 main.post(() -> {
                     if (isDestroyed() || closing) return;
                     setResult(RESULT_OK); closeWebSession();
@@ -384,7 +400,7 @@ public final class LoginActivity extends Activity {
 
     private void requestClose() {
         if (closing || saving) return;
-        if (detected) new PocketDialog.Builder(this).setTitle("登录信息尚未保存")
+        if (detected || unverifiedSession) new PocketDialog.Builder(this).setTitle(unverifiedSession ? "网页 Cookie 尚未保存" : "登录信息尚未保存")
                 .setMessage("保存后可用于下载，也可以直接离开。原有已保存信息会保留。")
                 .setNegativeButton("继续登录", null)
                 .setNeutralButton("离开", (d, w) -> closeWebSession())

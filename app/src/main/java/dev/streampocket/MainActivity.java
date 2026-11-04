@@ -697,7 +697,7 @@ public final class MainActivity extends Activity {
         pendingRemoval.clear();
         if(refresh&&!isDestroyed()){
             hideNotice();if("queue".equals(tab))refreshQueue(true);
-            if(retained)toast("任务已重新开始，记录已保留");
+            if(retained)toast("部分记录仍在使用或附件信息暂未保存，已保留记录");
         }
     }
     private void hideNotice(){notice.removeAllViews();notice.setVisibility(View.GONE);}
@@ -930,6 +930,7 @@ public final class MainActivity extends Activity {
     private String accountStatus(AccountState state) {
         if(!state.saved)return "尚未添加账号";
         if(!state.enabled)return "登录信息已暂停";
+        if(!state.platform.hasKnownLoginMarker())return "已保存 Cookie · 登录状态未确认";
         return "需要重新登录".equals(new AccountStore(this).requestStatus(state.platform))?"需要检查账号状态":"登录信息已启用";
     }
 
@@ -1093,21 +1094,68 @@ public final class MainActivity extends Activity {
     }
 
     private static String attachmentLabel(Engine.Media media) {
-        List<String> selected=new ArrayList<>();if(media.saveCover)selected.add("封面");if(media.saveSubtitles)selected.add("字幕");
+        List<String> selected=new ArrayList<>();if(media.saveCover)selected.add("封面");if(media.saveSubtitles)selected.add(media.selectedSubtitles().size()>1?media.selectedSubtitles().size()+" 种字幕":"字幕");
         return selected.isEmpty()?"字幕与封面  ›":"同时保存："+String.join("、",selected)+"  ›";
     }
 
     private void showAttachments(Engine.Media media) {
+        try { showAttachments(media,Engine.Media.fromJson(media.toJson())); }
+        catch(Exception failure){showMessage("暂时无法设置附件",friendly(failure));}
+    }
+
+    private void showAttachments(Engine.Media media,Engine.Media draft) {
         List<String> labels=new ArrayList<>();List<Boolean> values=new ArrayList<>();
-        if(media.subtitleAvailable&&!media.subtitleLanguage.isEmpty()){labels.add("字幕（"+media.subtitleLanguage+"）");values.add(media.saveSubtitles);}
-        if(!media.thumbnail.isEmpty()){labels.add("封面图片");values.add(media.saveCover);}
+        boolean hasSubtitles=!draft.availableSubtitles().isEmpty();
+        if(hasSubtitles){
+            List<String> selected=draft.selectedSubtitles();
+            labels.add("字幕（"+(selected.isEmpty()?"尚未选择语言":String.join("、",selected))+"）");values.add(draft.saveSubtitles);
+        }
+        if(!draft.thumbnail.isEmpty()){labels.add("封面图片");values.add(draft.saveCover);}
         if(labels.isEmpty()){showMessage("暂无附件","源站没有返回可保存的字幕或封面。");return;}
         boolean[] checked=new boolean[values.size()];for(int i=0;i<checked.length;i++)checked[i]=values.get(i);
-        PocketDialog panel=new PocketDialog.Builder(this).setTitle("同时保存")
+        Runnable updateDraft=()->{
+            int index=0;if(hasSubtitles)draft.saveSubtitles=checked[index++];
+            if(!draft.thumbnail.isEmpty())draft.saveCover=checked[index];
+        };
+        PocketDialog.Builder builder=new PocketDialog.Builder(this).setTitle("同时保存")
                 .setMultiChoiceItems(labels.toArray(new String[0]),checked,(d,n,value)->checked[n]=value)
                 .setNegativeButton("返回",null).setPositiveButton("应用",(d,w)->{
-                    int index=0;if(media.subtitleAvailable&&!media.subtitleLanguage.isEmpty())media.saveSubtitles=checked[index++];
-                    if(!media.thumbnail.isEmpty())media.saveCover=checked[index];persistInspectionInbox();renderInspection();
+                    updateDraft.run();
+                    if(draft.saveSubtitles&&draft.selectedSubtitles().isEmpty()){showSubtitleSettings(media,draft);return;}
+                    media.saveSubtitles=draft.saveSubtitles;media.saveCover=draft.saveCover;
+                    media.subtitleMode=draft.subtitleMode;media.subtitleLanguages=new ArrayList<>(draft.selectedSubtitles());
+                    media.subtitleLanguage=media.subtitleLanguages.isEmpty()?"":media.subtitleLanguages.get(0);
+                    persistInspectionInbox();renderInspection();
+                });
+        if(hasSubtitles)builder.setNeutralButton("字幕语言与来源",(d,w)->{updateDraft.run();showSubtitleSettings(media,draft);});
+        PocketDialog panel=builder.show();bottom(panel);
+    }
+
+    private void showSubtitleSettings(Engine.Media media,Engine.Media draft) {
+        String[] modes={SubtitleChoices.PREFER_ORIGINAL,SubtitleChoices.ORIGINAL,SubtitleChoices.AUTOMATIC};
+        String[] labels=new String[modes.length];int current=0;
+        for(int i=0;i<modes.length;i++){labels[i]=SubtitleChoices.modeLabel(modes[i]);if(modes[i].equals(draft.subtitleMode))current=i;}
+        PocketDialog panel=new PocketDialog.Builder(this).setTitle("字幕来源")
+                .setSingleChoiceItems(labels,current,(d,which)->{d.dismiss();showSubtitleLanguages(media,draft,modes[which]);})
+                .setNegativeButton("返回",(d,w)->showAttachments(media,draft))
+                .setOnCancelListener(d->showAttachments(media,draft)).show();bottom(panel);
+    }
+
+    private void showSubtitleLanguages(Engine.Media media,Engine.Media draft,String mode) {
+        List<SubtitleChoices.Language> available=new ArrayList<>();
+        for(SubtitleChoices.Language language:draft.availableSubtitles())if(language.available(mode))available.add(language);
+        if(available.isEmpty()){toast("源站没有提供这种字幕");showSubtitleSettings(media,draft);return;}
+        String[] labels=new String[available.size()];boolean[] selected=new boolean[labels.length];
+        List<String> previous=draft.selectedSubtitles();
+        for(int i=0;i<labels.length;i++){labels[i]=available.get(i).label();selected[i]=previous.contains(available.get(i).code);}
+        PocketDialog panel=new PocketDialog.Builder(this).setTitle("字幕语言 · 可多选")
+                .setMultiChoiceItems(labels,selected,(d,n,value)->selected[n]=value)
+                .setNegativeButton("返回",(d,w)->showSubtitleSettings(media,draft))
+                .setOnCancelListener(d->showAttachments(media,draft))
+                .setPositiveButton("应用语言",(d,w)->{
+                    draft.subtitleLanguages.clear();for(int i=0;i<selected.length;i++)if(selected[i])draft.subtitleLanguages.add(available.get(i).code);
+                    draft.subtitleLanguage=draft.subtitleLanguages.isEmpty()?"":draft.subtitleLanguages.get(0);
+                    draft.subtitleMode=mode;draft.saveSubtitles=!draft.subtitleLanguages.isEmpty();showAttachments(media,draft);
                 }).show();bottom(panel);
     }
 

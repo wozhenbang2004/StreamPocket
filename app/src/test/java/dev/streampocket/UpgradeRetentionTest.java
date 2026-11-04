@@ -12,6 +12,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.util.Arrays;
+import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,14 +76,32 @@ public final class UpgradeRetentionTest {
     }
 
     @Test public void applicationAndStoresRecreateWithoutDroppingSessionsHistoryLibraryOrDrafts() throws Exception {
-        accounts.save(LoginPlatform.X,HEADER+row(".x.com",true,"/",true,0,"auth_token","synthetic-x"),"网页登录");
-        accounts.save(LoginPlatform.BILIBILI,HEADER+row(".bilibili.com",true,"/",true,0,"SESSDATA","synthetic-bili"),"网页登录");
-        accounts.save(LoginPlatform.DOUYIN,HEADER+row(".douyin.com",true,"/",true,0,"sessionid","synthetic-douyin"),"文件导入");
-        accounts.save(LoginPlatform.YOUTUBE,HEADER+row(".youtube.com",true,"/",true,0,"SAPISID","synthetic-youtube"),"文件导入");
-        String[][] extra={{"xiaohongshu",".xiaohongshu.com","web_session"},{"kuaishou",".kuaishou.com","kuaishou.server.web_st"},
-                {"tiktok",".tiktok.com","sessionid"},{"instagram",".instagram.com","sessionid"},{"facebook",".facebook.com","c_user"},{"pinterest",".pinterest.com","_pinterest_sess"},
-                {"pornhub",".pornhub.com","synthetic_session"},{"heybox",".xiaoheihe.cn","pkey"}};
-        for(String[] channel:extra) accounts.save(LoginPlatform.fromId(channel[0]),HEADER+row(channel[1],true,"/",true,0,channel[2],"synthetic-"+channel[0]),"文件导入");
+        Map<LoginPlatform,String[]> sessionFixtures=new EnumMap<>(LoginPlatform.class);
+        sessionFixtures.put(LoginPlatform.X,new String[]{".x.com","auth_token"});
+        sessionFixtures.put(LoginPlatform.BILIBILI,new String[]{".bilibili.com","SESSDATA"});
+        sessionFixtures.put(LoginPlatform.DOUYIN,new String[]{".douyin.com","sessionid"});
+        sessionFixtures.put(LoginPlatform.YOUTUBE,new String[]{".youtube.com","SAPISID"});
+        sessionFixtures.put(LoginPlatform.XIAOHONGSHU,new String[]{".xiaohongshu.com","web_session"});
+        sessionFixtures.put(LoginPlatform.KUAISHOU,new String[]{".kuaishou.com","kuaishou.server.web_st"});
+        sessionFixtures.put(LoginPlatform.TIKTOK,new String[]{".tiktok.com","sessionid"});
+        sessionFixtures.put(LoginPlatform.INSTAGRAM,new String[]{".instagram.com","sessionid"});
+        sessionFixtures.put(LoginPlatform.FACEBOOK,new String[]{".facebook.com","c_user"});
+        sessionFixtures.put(LoginPlatform.PINTEREST,new String[]{".pinterest.com","_pinterest_sess"});
+        sessionFixtures.put(LoginPlatform.PORNHUB,new String[]{".pornhub.com","synthetic_session"});
+        sessionFixtures.put(LoginPlatform.HEYBOX,new String[]{".xiaoheihe.cn","pkey"});
+        sessionFixtures.put(LoginPlatform.WEIBO,new String[]{".weibo.com","synthetic_session"});
+        sessionFixtures.put(LoginPlatform.XIGUA,new String[]{".ixigua.com","synthetic_session"});
+        sessionFixtures.put(LoginPlatform.ACFUN,new String[]{".acfun.cn","synthetic_session"});
+        sessionFixtures.put(LoginPlatform.REDDIT,new String[]{".reddit.com","reddit_session"});
+        sessionFixtures.put(LoginPlatform.VIMEO,new String[]{".vimeo.com","vimeo"});
+        sessionFixtures.put(LoginPlatform.TWITCH,new String[]{".twitch.tv","auth-token"});
+        assertEquals("Each platform needs its own retention fixture",EnumSet.allOf(LoginPlatform.class),sessionFixtures.keySet());
+        for(Map.Entry<LoginPlatform,String[]> fixture:sessionFixtures.entrySet()) {
+            LoginPlatform platform=fixture.getKey(); String[] cookie=fixture.getValue();
+            assertTrue(platform.id,platform.ownsDomain(cookie[0]));
+            accounts.save(platform,HEADER+row(cookie[0],true,"/",true,0,cookie[1],"synthetic-"+platform.id),
+                    platform==LoginPlatform.X||platform==LoginPlatform.BILIBILI?"网页登录":"文件导入");
+        }
         accounts.setEnabled(LoginPlatform.BILIBILI,false);
         Map<String,byte[]> encrypted=new LinkedHashMap<>();
         for(LoginPlatform p:LoginPlatform.values()) encrypted.put(p.id,Files.readAllBytes(session(p).toPath()));

@@ -11,6 +11,7 @@ import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.Closeable;
 import java.io.File;
@@ -19,6 +20,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 
 /** Private, independent media catalogue. Call disk/DB methods from a worker thread. */
@@ -35,12 +38,13 @@ public final class LibraryStore implements Closeable {
     }
 
     private static final class Database extends SQLiteOpenHelper {
-        Database(Context context) { super(context, "media-library.db", null, 2); }
+        Database(Context context) { super(context, "media-library.db", null, 3); }
         @Override public void onConfigure(SQLiteDatabase db) { db.setForeignKeyConstraintsEnabled(true); }
         @Override public void onCreate(SQLiteDatabase db) {
             db.execSQL("CREATE TABLE video (id INTEGER PRIMARY KEY AUTOINCREMENT,uri TEXT NOT NULL UNIQUE,title TEXT NOT NULL,mime TEXT NOT NULL,source TEXT NOT NULL,file_name TEXT NOT NULL DEFAULT '',duration_ms INTEGER NOT NULL DEFAULT 0,width INTEGER NOT NULL DEFAULT 0,height INTEGER NOT NULL DEFAULT 0,bytes INTEGER NOT NULL DEFAULT 0,playback_ms INTEGER NOT NULL DEFAULT 0,author TEXT NOT NULL DEFAULT '',source_url TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL,favorite INTEGER NOT NULL DEFAULT 0)");
             // A separate ledger prevents repeated imports, including after catalogue removal.
             db.execSQL("CREATE TABLE imported_task (task_id TEXT PRIMARY KEY,uri TEXT NOT NULL,video_id INTEGER REFERENCES video(id) ON DELETE SET NULL)");
+            createSubtitles(db);
             db.execSQL("CREATE INDEX video_created ON video(created_at DESC,id DESC)");
             db.execSQL("CREATE INDEX video_favorite_created ON video(favorite,created_at DESC,id DESC)");
             db.execSQL("CREATE TABLE marker (id INTEGER PRIMARY KEY AUTOINCREMENT,video_id INTEGER NOT NULL REFERENCES video(id) ON DELETE CASCADE,position_ms INTEGER NOT NULL,end_ms INTEGER NOT NULL DEFAULT 0,label TEXT NOT NULL DEFAULT '')");
@@ -54,12 +58,17 @@ public final class LibraryStore implements Closeable {
             db.execSQL("CREATE INDEX clip_order ON edit_clip(project_id,position,id)");
         }
         @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-            if (oldVersion == 1 && newVersion == 2) {
+            if (oldVersion < 1 || oldVersion > 2 || newVersion != 3)
+                throw new IllegalStateException("Unsupported media library migration " + oldVersion + " -> " + newVersion);
+            if (oldVersion == 1) {
                 db.execSQL("ALTER TABLE video ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0");
                 db.execSQL("CREATE INDEX video_favorite_created ON video(favorite,created_at DESC,id DESC)");
-                return;
             }
-            throw new IllegalStateException("Unsupported media library migration " + oldVersion + " -> " + newVersion);
+            createSubtitles(db);
+        }
+        private static void createSubtitles(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE video_subtitle (id INTEGER PRIMARY KEY AUTOINCREMENT,video_id INTEGER NOT NULL REFERENCES video(id) ON DELETE CASCADE,uri TEXT NOT NULL,name TEXT NOT NULL DEFAULT '',mime TEXT NOT NULL,language TEXT NOT NULL DEFAULT '',label TEXT NOT NULL DEFAULT '',preferred INTEGER NOT NULL DEFAULT 0,UNIQUE(video_id,uri))");
+            db.execSQL("CREATE INDEX subtitle_video ON video_subtitle(video_id,id)");
         }
     }
 
@@ -69,12 +78,17 @@ public final class LibraryStore implements Closeable {
 
     private void syncCompletedDownloadsLocked() {
         recoverDocumentRenames();
-        Set<String> imported = new HashSet<>();
-        try (Cursor c = helper.getReadableDatabase().query("imported_task", new String[]{"task_id"}, null, null, null, null, null)) {
-            while (c.moveToNext()) imported.add(c.getString(0));
+        Map<String,Long> imported = new HashMap<>();
+        try (Cursor c = helper.getReadableDatabase().query("imported_task", new String[]{"task_id","video_id"}, null, null, null, null, null)) {
+            while (c.moveToNext()) imported.put(c.getString(0),c.isNull(1)?0:c.getLong(1));
         }
         for (JSONObject task : TaskStore.all(app)) if ("completed".equals(task.optString("status"))) {
-            if (imported.contains(task.optString("id"))) continue;
+            // Refresh attachments for existing rows: sidecars may finish after the video was indexed.
+            // A null ledger target still means the user removed that catalogue entry.
+            if (imported.containsKey(task.optString("id"))) {
+                JSONArray attachments=task.optJSONArray("attachments");
+                if(imported.get(task.optString("id"))==0 || attachments==null || attachments.length()==0)continue;
+            }
             upsertCompletedDownload(task);
         }
     }
@@ -85,6 +99,9 @@ public final class LibraryStore implements Closeable {
         try (Cursor c = helper.getReadableDatabase().rawQuery("SELECT imported_task.uri,video.title,video.mime,video.file_name FROM imported_task LEFT JOIN video ON video.id=imported_task.video_id", null)) {
             while (c.moveToNext()) files.add(json("uri", c.getString(0), "title", c.isNull(1) ? "已下载文件" : c.getString(1),
                     "mime", c.isNull(2) ? "application/octet-stream" : c.getString(2), "name", c.isNull(3) ? "" : c.getString(3)));
+        }
+        try (Cursor c = helper.getReadableDatabase().query("video_subtitle", new String[]{"uri","label","mime","name"}, null, null, null, null, "id")) {
+            while (c.moveToNext()) files.add(json("uri",c.getString(0),"title",c.getString(1),"mime",c.getString(2),"name",c.getString(3)));
         }
         return files;
     }
@@ -98,6 +115,8 @@ public final class LibraryStore implements Closeable {
             ContentValues video = new ContentValues(uri); video.put("file_name", displayName(Uri.parse(to), false));
             db.update("video", video, "uri=?", new String[]{from});
             db.update("imported_task", uri, "uri=?", new String[]{from});
+            mergeRelocatedSubtitles(db,from,to);
+            db.update("video_subtitle", uri, "uri=?", new String[]{from});
             db.update("edit_clip", uri, "uri=?", new String[]{from});
             ContentValues output = new ContentValues(); output.put("output_uri", to);
             db.update("edit_project", output, "output_uri=?", new String[]{from});
@@ -105,9 +124,35 @@ public final class LibraryStore implements Closeable {
         } finally { db.endTransaction(); }
     }
 
+    /** A failed queue commit can leave the new URI indexed and the old task URI backfilled. */
+    private void mergeRelocatedSubtitles(SQLiteDatabase db,String from,String to) {
+        if(from.equals(to))return;
+        List<JSONObject> sources=new ArrayList<>();
+        try(Cursor c=db.query("video_subtitle",null,"uri=?",new String[]{from},null,null,null)) {
+            while(c.moveToNext())sources.add(readSubtitle(c));
+        }
+        for(JSONObject source:sources) {
+            JSONObject target=null;
+            try(Cursor c=db.query("video_subtitle",null,"video_id=? AND uri=?",new String[]{String.valueOf(source.optLong("videoId")),to},null,null,null)) {
+                if(c.moveToFirst())target=readSubtitle(c);
+            }
+            if(target==null)continue;
+            // The oldest row owns the original track identity; a stale backfill has a newer ID.
+            JSONObject keep=source.optLong("id")<target.optLong("id")?source:target;
+            JSONObject duplicate=keep==source?target:source;
+            ContentValues merged=new ContentValues();merged.put("uri",to);
+            for(String field:new String[]{"name","mime","language","label"}) {
+                String value=keep.optString(field);merged.put(field,value.isEmpty()?duplicate.optString(field):value);
+            }
+            merged.put("preferred",keep.optBoolean("preferred")||duplicate.optBoolean("preferred")?1:0);
+            db.delete("video_subtitle","id=?",strings(duplicate.optLong("id")));
+            db.update("video_subtitle",merged,"id=?",strings(keep.optLong("id")));
+        }
+    }
+
     boolean referencesUri(String uri) {
         SQLiteDatabase db = helper.getReadableDatabase();
-        for (String table : new String[]{"video", "imported_task", "edit_clip", "edit_project"}) {
+        for (String table : new String[]{"video", "imported_task", "video_subtitle", "edit_clip", "edit_project"}) {
             String field = table.equals("edit_project") ? "output_uri" : "uri";
             try (Cursor c = db.query(table, new String[]{field}, field+"=?", new String[]{uri}, null, null, null, "1")) {
                 if (c.moveToFirst()) return true;
@@ -136,7 +181,9 @@ public final class LibraryStore implements Closeable {
         db.beginTransaction();
         try {
             try (Cursor seen = db.query("imported_task", new String[]{"video_id"}, "task_id=?", new String[]{taskId}, null, null, null)) {
-                if (seen.moveToFirst() && !seen.isNull(0)) { long id = seen.getLong(0); db.setTransactionSuccessful(); return id; }
+                if (seen.moveToFirst() && !seen.isNull(0)) {
+                    long id = seen.getLong(0); saveSubtitleAttachments(db,id,task); db.setTransactionSuccessful(); return id;
+                }
             }
             JSONObject media = task.optJSONObject("media");
             if (media == null) media = new JSONObject();
@@ -154,8 +201,83 @@ public final class LibraryStore implements Closeable {
                 id = db.insertOrThrow("video", null, v);
             }
             ContentValues imported = new ContentValues(); imported.put("task_id", taskId); imported.put("uri", uri); imported.put("video_id", id);
-            db.insertWithOnConflict("imported_task", null, imported, SQLiteDatabase.CONFLICT_REPLACE); db.setTransactionSuccessful(); return id;
+            db.insertWithOnConflict("imported_task", null, imported, SQLiteDatabase.CONFLICT_REPLACE);
+            saveSubtitleAttachments(db,id,task); db.setTransactionSuccessful(); return id;
         } finally { db.endTransaction(); }
+    }
+
+    /**
+     * Preserve a completed task's subtitles before its only legacy attachment snapshot is removed.
+     * The caller owns TaskStore.class, which also serializes mover/rename URI commits.
+     * This metadata-only operation must not acquire FILE_LOCK or call back into TaskStore.
+     * A removed catalogue entry (null ledger target) stays removed. Storage failure aborts queue removal.
+     */
+    public void preserveCompletedSubtitles(JSONObject task) {
+        if(task==null || !"completed".equals(task.optString("status")) || !task.optString("mime","video/mp4").startsWith("video/"))return;
+        JSONArray attachments=task.optJSONArray("attachments");String taskId=task.optString("id").trim();
+        if(taskId.isEmpty() || attachments==null || attachments.length()==0)return;
+        SQLiteDatabase db=helper.getWritableDatabase();db.beginTransaction();
+        try {
+            try(Cursor c=db.query("imported_task",new String[]{"video_id"},"task_id=?",new String[]{taskId},null,null,null)) {
+                if(c.moveToFirst()&&!c.isNull(0))saveSubtitleAttachments(db,c.getLong(0),task);
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
+    /** Explicit download ownership survives task-history deletion and video rename/move. */
+    public List<JSONObject> subtitles(long videoId) {
+        synchronized(DownloadMover.FILE_LOCK) {
+            SQLiteDatabase db = helper.getWritableDatabase();
+            Set<String> tasks = new HashSet<>();
+            try (Cursor c = db.query("imported_task",new String[]{"task_id"},"video_id=?",strings(videoId),null,null,null)) {
+                while(c.moveToNext()) tasks.add(c.getString(0));
+            }
+            // Existing v1/v2 libraries have the exact task mapping. Never scan by title or filename.
+            if (!tasks.isEmpty()) {
+                List<JSONObject> snapshots=TaskStore.all(app);
+                db.beginTransaction();
+                try {
+                    for(JSONObject task:snapshots) if(tasks.contains(task.optString("id")) && "completed".equals(task.optString("status")))
+                        saveSubtitleAttachments(db,videoId,task);
+                    db.setTransactionSuccessful();
+                } finally { db.endTransaction(); }
+            }
+            List<JSONObject> result = new ArrayList<>();
+            try (Cursor c = db.query("video_subtitle",null,"video_id=?",strings(videoId),null,null,"id")) {
+                while(c.moveToNext()) result.add(readSubtitle(c));
+            }
+            return result;
+        }
+    }
+
+    private JSONObject readSubtitle(Cursor c) {
+        return json("id",num(c,"id"),"videoId",num(c,"video_id"),"uri",str(c,"uri"),"name",str(c,"name"),
+                "mime",str(c,"mime"),"language",str(c,"language"),"label",str(c,"label"),"preferred",num(c,"preferred")!=0);
+    }
+
+    private void saveSubtitleAttachments(SQLiteDatabase db,long videoId,JSONObject task) {
+        JSONArray attachments = task.optJSONArray("attachments");
+        if (attachments == null || attachments.length() == 0) return;
+        String videoUri = task.optString("uri");
+        try (Cursor c = db.query("video",new String[]{"uri"},"id=?",strings(videoId),null,null,null)) {
+            if (!c.moveToFirst() || !videoUri.equals(c.getString(0))) return;
+        }
+        JSONObject media = task.optJSONObject("media");
+        String requested = media == null ? "" : media.optString("subtitleLanguage");
+        for (int index=0;index<attachments.length();index++) {
+            JSONObject attachment = attachments.optJSONObject(index); if(attachment==null) continue;
+            String uri = attachment.optString("uri").trim(),name = attachment.optString("name");
+            String mime = SubtitleTracks.mimeType(name,attachment.optString("mime"));
+            if (mime.isEmpty() || uri.equals(videoUri) || !SubtitleTracks.localUri(uri)) continue;
+            String language = SubtitleTracks.language(attachment.optString("language"),name,requested);
+            ContentValues values = new ContentValues(); values.put("video_id",videoId);values.put("uri",uri);values.put("name",name);
+            values.put("mime",mime);values.put("language",language);values.put("label",SubtitleTracks.label(attachment.optString("label"),language,name));
+            values.put("preferred",attachment.optBoolean("preferred",false)?1:0);
+            long existing = findId(db,"video_subtitle","video_id=? AND uri=?",new String[]{String.valueOf(videoId),uri});
+            if(existing==0) db.insertOrThrow("video_subtitle",null,values);
+            else db.update("video_subtitle",values,"id=?",strings(existing));
+        }
     }
 
     public List<JSONObject> listVideos(String query, String source, long collectionId, int limit, int offset) {

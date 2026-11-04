@@ -313,10 +313,7 @@ public final class DownloadService extends Service {
             request.addOption("--progress-template", DownloadProgress.POST_TEMPLATE);
             request.addOption("--print", "after_move:filepath");
             if (media.saveCover && !media.album) request.addOption("--write-thumbnail");
-            if (media.saveSubtitles && !media.subtitleLanguage.isEmpty() && !media.album) {
-                request.addOption("--write-subs"); request.addOption("--write-auto-subs");
-                request.addOption("--sub-langs", media.subtitleLanguage); request.addOption("--sub-format", "srt/vtt/best");
-            }
+            media.configureSubtitles(request);
             if (media.album && !engine.useResolved(request, media, processId)) {
                 admission[0].close();
                 List<Engine.Media> refreshed = engine.inspect(media.url, message -> updateNotification(message,id,-1), () -> isCancelled(id));

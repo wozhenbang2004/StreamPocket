@@ -365,9 +365,25 @@ public final class TaskStore {
         JSONArray tasks = read(context), retained = new JSONArray();
         for (int index = 0; index < tasks.length(); index++) {
             JSONObject task = tasks.optJSONObject(index);
-            if (task != null && !task.optString("id").equals(id)) retained.put(task);
+            if (task == null) continue;
+            if (task.optString("id").equals(id)) {
+                if (!preserveSubtitlesBeforeRemoval(context, task)) return;
+            } else retained.put(task);
         }
         write(context, retained);
+    }
+
+    /** Preserve old-version attachment metadata before its last queue copy is removed. */
+    private static boolean preserveSubtitlesBeforeRemoval(Context context, JSONObject task) {
+        JSONArray attachments = task.optJSONArray("attachments");
+        if (!"completed".equals(task.optString("status")) || attachments == null || attachments.length() == 0) return true;
+        try (LibraryStore library = new LibraryStore(context)) {
+            library.preserveCompletedSubtitles(task);
+            return true;
+        } catch (RuntimeException unavailable) {
+            // A failed library migration/write must leave the original attachments recoverable.
+            return false;
+        }
     }
 
     /** Final removal after an undo delay; an accepted resume always wins. */
@@ -377,6 +393,7 @@ public final class TaskStore {
 
     /** An explicit resume into a held queue also supersedes an older removal request. */
     static synchronized boolean removeIfInactive(Context context, String id, long expectedQueuedAt) {
+        // Serialize metadata with mover commits without waiting on its whole-file copy lock.
         init(context);
         JSONArray tasks = read(context), retained = new JSONArray();
         boolean found = false;
@@ -388,6 +405,7 @@ public final class TaskStore {
                 if (task.optBoolean("publicationBusy") || (expectedQueuedAt >= 0 && task.optLong("queuedAt", 0) != expectedQueuedAt)) return false;
                 if (status.equals("queued") || status.equals("downloading") || status.equals("merging")
                         || status.equals("saving") || status.equals("cancelling") || status.equals("pausing")) return false;
+                if (!preserveSubtitlesBeforeRemoval(context, task)) return false;
                 found = true;
             } else retained.put(task);
         }

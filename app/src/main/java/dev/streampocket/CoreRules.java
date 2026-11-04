@@ -118,6 +118,7 @@ public final class CoreRules {
 
     public static String userMessage(Throwable error) {
         String local=error==null||error.getMessage()==null?"":error.getMessage();
+        if(local.startsWith("请复制具体的 Twitch 剪辑"))return local;
         if(local.startsWith("保存文件夹")||local.startsWith("文件夹授权")||local.startsWith("文件夹需要")||local.startsWith("请选择可写入的文件夹")||local.startsWith("未能保存文件夹设置")||local.startsWith("未能恢复默认保存位置"))return cleanLog(local);
         String text = cleanLog(error == null ? "" : error.toString());
         String lower = text.toLowerCase(Locale.ROOT);

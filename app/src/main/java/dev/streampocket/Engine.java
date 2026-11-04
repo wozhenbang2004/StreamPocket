@@ -37,7 +37,10 @@ public final class Engine {
     private volatile boolean inspectCancelled;
     private final java.util.Map<String,String> requestScopes = new java.util.concurrent.ConcurrentHashMap<>();
 
-    public Engine(Context context) { app = context.getApplicationContext(); }
+    public Engine(Context context) {
+        app = context.getApplicationContext();
+        SourceScheduler.SHARED.setPersistence(new SourceCooldownStore(app));
+    }
 
     public void init() throws Exception {
         synchronized (INIT_LOCK) {
@@ -237,6 +240,7 @@ public final class Engine {
     }
 
     private YoutubeDLRequest requestFor(String normalized, String processId, boolean useAccount, boolean collection) throws Exception {
+        if (!collection) CommonVideoLinks.validateSingleVideoUrl(normalized);
         YoutubeDLRequest request = new YoutubeDLRequest(normalized);
         // Some Bilibili CDN nodes reject a plain GET but accept a complete byte
         // range. This exact option passed both full-file/decode regression cases.
@@ -485,8 +489,10 @@ public final class Engine {
         media.thumbnail = data.optString("thumbnail", "");
         media.album = data.optBoolean("_streampocket_album");
         media.imageCount = media.album ? data.optInt("_streampocket_image_count", data.optJSONArray("entries") == null ? 0 : data.optJSONArray("entries").length()) : 0;
-        media.subtitleAvailable = hasEntries(data.optJSONObject("subtitles")) || hasEntries(data.optJSONObject("automatic_captions"));
-        media.subtitleLanguage = preferredSubtitle(data);
+        media.subtitleChoices = SubtitleChoices.fromMetadata(data);
+        media.subtitleAvailable = !media.subtitleChoices.isEmpty();
+        media.subtitleLanguage = media.subtitleAvailable ? media.subtitleChoices.get(0).code : "";
+        if (media.subtitleAvailable) media.subtitleLanguages.add(media.subtitleLanguage);
         media.width = Math.max(0,data.optInt("width",0)); media.height = Math.max(0,data.optInt("height",0));
         media.filesize = data.optLong("filesize",-1);
         if(media.filesize<=0){media.filesize=data.optLong("filesize_approx",-1);media.filesizeEstimated=media.filesize>0;}
@@ -518,6 +524,13 @@ public final class Engine {
             if (fps > 0) quality.details = "源站最高 " + String.format(Locale.ROOT, "%.0f", fps) + " fps";
             media.qualities.add(quality);
         }
+        String compatible = CompatibleVideo.selector(data, media.hasAudio);
+        if (!compatible.isEmpty()) {
+            Quality quality = new Quality("compatible-mp4", "兼容优先 · MP4", compatible);
+            quality.compatibleMp4 = true;
+            quality.details = media.hasAudio ? "源站 H.264 / AAC · 不转码" : "源站 H.264 · 无音轨 · 不转码";
+            media.qualities.add(quality);
+        }
         return media;
     }
 
@@ -526,17 +539,9 @@ public final class Engine {
         return !codec.isEmpty() && !"none".equals(codec) && !"null".equals(codec);
     }
 
-    private static boolean hasEntries(JSONObject data) { return data != null && data.length() > 0; }
-
     static String preferredSubtitle(JSONObject data) {
-        java.util.Set<String> languages = new TreeSet<>();
-        for (String key : new String[]{"subtitles", "automatic_captions"}) {
-            JSONObject subs = data.optJSONObject(key); if (subs == null) continue;
-            java.util.Iterator<String> keys = subs.keys();
-            while (keys.hasNext()) { String lang = keys.next(); if (lang.matches("[A-Za-z0-9_-]{1,40}") && !lang.equals("live_chat")) languages.add(lang); }
-        }
-        for (String prefix : new String[]{"zh", "en", ""}) for (String lang : languages) if (lang.startsWith(prefix)) return lang;
-        return "";
+        List<SubtitleChoices.Language> choices = SubtitleChoices.fromMetadata(data);
+        return choices.isEmpty() ? "" : choices.get(0).code;
     }
 
     private static JSONObject selectedInfo(JSONObject root, String id) {
@@ -632,7 +637,7 @@ public final class Engine {
     }
 
     public static String normalizeUrl(String text) {
-        String url = HeyboxLinks.normalizeVideo(PornhubLinks.normalizeVideo(YouTubeLinks.normalizeVideo(CoreRules.normalizeUrl(text))));
+        String url = CommonVideoLinks.normalizeVideo(HeyboxLinks.normalizeVideo(PornhubLinks.normalizeVideo(YouTubeLinks.normalizeVideo(CoreRules.normalizeUrl(text)))));
         try {
             URI uri = new URI(url);
             // The built-in extractor requires www; signed query bytes must survive normalization.
@@ -649,6 +654,7 @@ public final class Engine {
     public static final class Quality {
         public String id, label, selector;
         public String audioFormat = "", details = "";
+        public boolean compatibleMp4;
         public Quality(String id, String label, String selector) { this.id = id; this.label = label; this.selector = selector; }
         public boolean audioOnly() { return "m4a".equals(audioFormat) || "mp3".equals(audioFormat); }
         static Quality audio(String format) {
@@ -663,13 +669,17 @@ public final class Engine {
                 request.addOption("--extract-audio");
                 request.addOption("--audio-format", audioFormat);
                 request.addOption("--audio-quality", "0");
-            } else request.addOption("--merge-output-format", "mp4/mkv");
+            } else {
+                request.addOption("--merge-output-format", compatibleMp4 ? "mp4" : "mp4/mkv");
+                if (compatibleMp4) request.addOption("--remux-video", "mp4");
+            }
         }
-        public JSONObject toJson() throws Exception { return new JSONObject().put("id", id).put("label", label).put("selector", selector).put("audioFormat", audioFormat).put("details", details); }
+        public JSONObject toJson() throws Exception { return new JSONObject().put("id", id).put("label", label).put("selector", selector).put("audioFormat", audioFormat).put("compatibleMp4", compatibleMp4).put("details", details); }
         public static Quality fromJson(JSONObject json) {
             Quality quality = new Quality(json.optString("id", "best"), json.optString("label", "最高可用画质"), json.optString("selector", "bv*+ba/b"));
             String format = json.optString("audioFormat", "");
             if ("mp3".equals(format) || "m4a".equals(format)) quality.audioFormat = format;
+            quality.compatibleMp4 = !quality.audioOnly() && json.optBoolean("compatibleMp4");
             quality.details = json.optString("details", "");
             return quality;
         }
@@ -681,6 +691,9 @@ public final class Engine {
         public boolean publicTwitter, hasAudio;
         public String resolvedKey = "";
         public String subtitleLanguage = "";
+        public String subtitleMode = SubtitleChoices.PREFER_ORIGINAL;
+        public List<String> subtitleLanguages = new ArrayList<>();
+        public List<SubtitleChoices.Language> subtitleChoices = new ArrayList<>();
         public boolean album, subtitleAvailable, saveSubtitles, saveCover;
         public int imageCount;
         public int width, height;
@@ -694,12 +707,32 @@ public final class Engine {
             if (hasAudio) { choices.add(Quality.audio("m4a")); choices.add(Quality.audio("mp3")); }
             return choices;
         }
+        List<SubtitleChoices.Language> availableSubtitles() {
+            if (!subtitleChoices.isEmpty()) return subtitleChoices;
+            if (subtitleAvailable && SubtitleChoices.validLanguage(subtitleLanguage))
+                return Collections.singletonList(new SubtitleChoices.Language(subtitleLanguage, false, false));
+            return Collections.emptyList();
+        }
+        List<String> selectedSubtitles() {
+            return SubtitleChoices.selected(availableSubtitles(), subtitleLanguages, subtitleLanguage, subtitleMode);
+        }
+        void configureSubtitles(YoutubeDLRequest request) {
+            List<String> selected = selectedSubtitles();
+            if (!saveSubtitles || album || selected.isEmpty()) return;
+            String mode = SubtitleChoices.mode(subtitleMode);
+            if (!SubtitleChoices.AUTOMATIC.equals(mode)) request.addOption("--write-subs");
+            if (!SubtitleChoices.ORIGINAL.equals(mode)) request.addOption("--write-auto-subs");
+            request.addOption("--sub-langs", String.join(",", selected));
+            request.addOption("--sub-format", "srt/vtt/best");
+        }
         public JSONObject toJson() throws Exception {
             JSONArray choices = new JSONArray(); for (Quality quality : qualities) choices.put(quality.toJson());
+            JSONArray subtitles = new JSONArray(); for (SubtitleChoices.Language language : subtitleChoices) subtitles.put(language.toJson());
             return new JSONObject().put("url", url).put("id", id).put("title", title).put("uploader", uploader)
                     .put("resolvedKey", resolvedKey).put("album", album).put("imageCount", imageCount).put("subtitleAvailable", subtitleAvailable)
                     .put("saveSubtitles", saveSubtitles).put("saveCover", saveCover)
                     .put("subtitleLanguage", subtitleLanguage)
+                    .put("subtitleMode", SubtitleChoices.mode(subtitleMode)).put("subtitleLanguages", new JSONArray(selectedSubtitles())).put("subtitleChoices", subtitles)
                     .put("thumbnail",thumbnail).put("width",width).put("height",height).put("filesize",filesize).put("filesizeEstimated",filesizeEstimated)
                     .put("platform", platform).put("duration", duration).put("playlistIndex", playlistIndex).put("twitterApi", twitterApi).put("publicTwitter",publicTwitter).put("hasAudio", hasAudio).put("qualities", choices);
         }
@@ -712,6 +745,11 @@ public final class Engine {
             media.resolvedKey=json.optString("resolvedKey"); media.album=json.optBoolean("album"); media.imageCount=json.optInt("imageCount");
             media.subtitleAvailable=json.optBoolean("subtitleAvailable"); media.saveSubtitles=json.optBoolean("saveSubtitles"); media.saveCover=json.optBoolean("saveCover");
             media.subtitleLanguage=json.optString("subtitleLanguage");
+            media.subtitleMode=SubtitleChoices.mode(json.optString("subtitleMode"));
+            media.subtitleChoices=SubtitleChoices.fromJson(json.optJSONArray("subtitleChoices"));
+            JSONArray languages=json.optJSONArray("subtitleLanguages");
+            if(languages!=null)for(int i=0;i<languages.length();i++)if(SubtitleChoices.validLanguage(languages.optString(i)))media.subtitleLanguages.add(languages.optString(i));
+            media.subtitleLanguages=media.selectedSubtitles();
             media.thumbnail=json.optString("thumbnail", ""); media.width=Math.max(0,json.optInt("width",0));media.height=Math.max(0,json.optInt("height",0));
             media.filesize=json.optLong("filesize",-1);media.filesizeEstimated=json.optBoolean("filesizeEstimated");
             JSONArray choices = json.optJSONArray("qualities"); if (choices != null) for (int i = 0; i < choices.length(); i++) {

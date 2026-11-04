@@ -59,6 +59,9 @@ import androidx.media3.common.TrackSelectionParameters;
 import androidx.media3.common.VideoSize;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.analytics.AnalyticsListener;
+import androidx.media3.exoplayer.source.LoadEventInfo;
+import androidx.media3.exoplayer.source.MediaLoadData;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerControlView;
 import androidx.media3.ui.PlayerView;
@@ -102,6 +105,9 @@ public final class PlayerActivity extends Activity {
     private Uri mediaUri;
     private JSONObject video;
     private List<JSONObject> markers=new ArrayList<>();
+    private List<MediaItem.SubtitleConfiguration> subtitles=new ArrayList<>();
+    private String subtitleWarning="";
+    private final java.util.Map<Uri,IOException> subtitleLoadErrors=new java.util.HashMap<>();
     private ExoPlayer player;
     private PlayerView playerView;
     private PlayerControlView controller;
@@ -463,27 +469,30 @@ public final class PlayerActivity extends Activity {
         TrackSelectionParameters parameters=player==null?trackParameters:player.getTrackSelectionParameters();
         renderTrackType(tracks,parameters,C.TRACK_TYPE_AUDIO,"声音");
         renderTrackType(tracks,parameters,C.TRACK_TYPE_TEXT,"字幕");
+        if(!subtitleWarning.isEmpty())add(menuPanel,text(subtitleWarning,12,MUTED,false),10,4);
     }
     private void renderTrackType(Tracks tracks,TrackSelectionParameters parameters,int type,String label){
         add(menuPanel,text(label,13,MUTED,true),14,0);LinearLayout choices=actionGroup(menuPanel);
         boolean disabled=type==C.TRACK_TYPE_TEXT&&subtitlesOff,manual=false;
         if(parameters!=null)for(TrackSelectionOverride override:parameters.overrides.values())if(override.getType()==type){manual=true;break;}
         final boolean available=player!=null&&!missing;
-        choiceRow(choices,"自动",type==C.TRACK_TYPE_AUDIO?"使用视频默认声音":"按视频与系统字幕设置显示",!disabled&&!manual,available,()->selectAutomaticTrack(type));
+        choiceRow(choices,"自动",type==C.TRACK_TYPE_AUDIO?"使用视频默认声音":"自动选择已下载或视频内的字幕",!disabled&&!manual,available,()->selectAutomaticTrack(type));
         if(type==C.TRACK_TYPE_TEXT)choiceRow(choices,"关闭字幕","本次及之后的视频都不显示字幕",disabled,available,()->disableSubtitles());
         DefaultTrackNameProvider names=new DefaultTrackNameProvider(getResources());int count=0;
         for(Tracks.Group group:tracks.getGroups()){
             if(group.getType()!=type)continue;
             for(int index=0;index<group.length;index++){
-                final int track=index;count++;String name=names.getTrackName(group.getTrackFormat(index));
+                final int track=index;count++;
+                MediaItem.SubtitleConfiguration sidecar=type==C.TRACK_TYPE_TEXT?SubtitlePlayback.forFormat(subtitles,group.getTrackFormat(index).id):null;
+                String name=sidecar!=null&&!TextUtils.isEmpty(sidecar.label)?sidecar.label:names.getTrackName(group.getTrackFormat(index));
                 if(TextUtils.isEmpty(name)||"未知".equals(name))name=label+" "+count;
                 boolean supported=group.isTrackSupported(index);
-                String description=supported?(type==C.TRACK_TYPE_AUDIO?"视频中的声音":"视频内嵌字幕"):"当前设备暂不支持";
+                String description=supported?(type==C.TRACK_TYPE_AUDIO?"视频中的声音":sidecar!=null?"已下载字幕":"视频内嵌字幕"):"当前设备暂不支持";
                 if(supported&&!disabled&&!manual&&group.isTrackSelected(index))description="当前使用 · "+description;
                 choiceRow(choices,name,description,!disabled&&manual&&group.isTrackSelected(index),available&&supported,()->selectTrack(type,group,track));
             }
         }
-        if(count==0){String empty=type==C.TRACK_TYPE_AUDIO?"此视频没有可选择的音轨。":"此视频没有内嵌字幕。";if(player==null)empty="开始播放后可查看"+label+"。";else if(player.getPlaybackState()==Player.STATE_BUFFERING)empty="正在读取"+label+"…";add(menuPanel,text(empty,12,MUTED,false),10,4);}
+        if(count==0){String empty=type==C.TRACK_TYPE_AUDIO?"此视频没有可选择的音轨。":"此视频没有可用的字幕。";if(player==null)empty="开始播放后可查看"+label+"。";else if(player.getPlaybackState()==Player.STATE_BUFFERING)empty="正在读取"+label+"…";add(menuPanel,text(empty,12,MUTED,false),10,4);}
     }
     private void applyTrackParameters(TrackSelectionParameters parameters){trackParameters=parameters;if(player!=null)player.setTrackSelectionParameters(parameters);}
     private void selectAutomaticTrack(int type){
@@ -783,12 +792,20 @@ public final class PlayerActivity extends Activity {
 
     private void loadVideo() {
         int generation=++loadGeneration;final long requestedId=videoId; releasePlayer(); loaded=false; missing=false; playbackFailed=false; measuredDuration=0; measuredWidth=0; measuredHeight=0;
+        subtitles=new ArrayList<>();subtitleWarning="";subtitleLoadErrors.clear();
         setMediaActions(false); errorPanel.setVisibility(isPipPlayback()?View.GONE:View.VISIBLE); status.setText("正在读取本地视频…"); retryButton.setVisibility(View.GONE);if("tracks".equals(sheetMode))renderTrackChoices();updatePipParams();
         io.execute(()->{ try {
             JSONObject item=requestedId>0?store.video(requestedId):null; List<JSONObject> saved=requestedId>0?store.markers(requestedId):new ArrayList<>();
             String accessError=item!=null&&item.optBoolean("missing",true)?unreadableVideoMessage(Uri.parse(item.optString("uri",""))):null;
+            SubtitlePlayback.Result subtitleResult=new SubtitlePlayback.Result();
+            if(item!=null && accessError==null) {
+                try { subtitleResult=SubtitlePlayback.load(getApplicationContext(),store.subtitles(requestedId)); }
+                catch(RuntimeException unavailable) { subtitleResult.failure="字幕记录暂时无法读取，可稍后重试。"; }
+            }
+            final SubtitlePlayback.Result attached=subtitleResult;
             main.post(()->{
                 if (destroyed || generation!=loadGeneration) return; markers=saved; video=item; renderMarkers();
+                subtitles=attached.tracks;subtitleWarning=attached.warning();
                 if (item==null) { title.setText("视频记录不存在"); showError("视频记录不存在，请返回视频库选择其他视频。",false); return; }
                 title.setText(item.optString("title","本地视频")); durationMs=Math.max(0,item.optLong("durationMs")); videoWidth=item.optInt("width"); videoHeight=item.optInt("height"); if (highlightTicks!=null) highlightTicks.setMarkers(markers,durationMs);
                 if (!restoredPosition) positionMs=Math.max(0,item.optLong("playbackMs")); restoredPosition=true;
@@ -807,10 +824,22 @@ public final class PlayerActivity extends Activity {
         if (!started || !loaded || missing || destroyed || player!=null) return;
         try {
             ExoPlayer current=new ExoPlayer.Builder(this,new DefaultRenderersFactory(this).setEnableDecoderFallback(true)).build(); player=current;
+            subtitleLoadErrors.clear();
             playbackResourceClaimed=true; MediaWorkload.playerStarted();
             current.setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true); current.setHandleAudioBecomingNoisy(true);
             current.setRepeatMode(MODE_LOOP.equals(playbackMode)?Player.REPEAT_MODE_ONE:Player.REPEAT_MODE_OFF);
             applyTrackParameters((trackParameters==null?current.getTrackSelectionParameters():trackParameters).buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT,subtitlesOff).build());
+            current.addAnalyticsListener(new AnalyticsListener() {
+                @Override public void onLoadError(EventTime time,LoadEventInfo info,MediaLoadData data,IOException error,boolean wasCanceled) {
+                    if(player!=current)return;
+                    for(MediaItem.SubtitleConfiguration subtitle:subtitles) if(subtitle.uri.equals(info.dataSpec.uri)) {
+                        subtitleLoadErrors.put(subtitle.uri,error);break;
+                    }
+                }
+                @Override public void onLoadCompleted(EventTime time,LoadEventInfo info,MediaLoadData data) {
+                    if(player==current)subtitleLoadErrors.remove(info.dataSpec.uri);
+                }
+            });
             current.addListener(new Player.Listener() {
                 @Override public void onPlaybackStateChanged(int state) {
                     if (player!=current) return;
@@ -836,12 +865,31 @@ public final class PlayerActivity extends Activity {
                 @Override public void onTracksChanged(Tracks tracks) { if(player==current){rejectUnrenderableTracks(tracks);if("tracks".equals(sheetMode)){int scroll=details.getScrollY();renderTrackChoices();layoutSheet();details.post(()->details.scrollTo(0,scroll));}} }
                 @Override public void onVideoSizeChanged(VideoSize size) { if (player==current) { videoWidth=size.width; videoHeight=size.height; persistActualMetadata();updatePipParams(); } }
                 @Override public void onPlayerError(PlaybackException error) { if (player==current) {
+                    if(skipFailedSubtitle(current,error))return;
                     current.pause();shouldPlay=false;main.removeCallbacks(checkpoint); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); showError(playbackError(error),true);
                 } }
             });
-            firstFrameRendered=false; playerView.setPlayer(current); current.setMediaItem(new MediaItem.Builder().setMediaId(Long.toString(videoId)).setUri(mediaUri).build()); current.setPlaybackSpeed(speed);
+            firstFrameRendered=false; playerView.setPlayer(current); current.setMediaItem(playbackItem()); current.setPlaybackSpeed(speed);
             positionMs=LibraryWatchState.isWatched(positionMs,durationMs)?0:positionMs; current.seekTo(Math.max(0,positionMs)); current.prepare(); current.setPlayWhenReady(playbackVisible() && shouldPlay); main.removeCallbacks(videoStartupCheck);main.postDelayed(videoStartupCheck,8000);if(!isPipPlayback())playerView.showController();updatePipParams();
         } catch (RuntimeException error) { releasePlayer(); showError("播放器初始化失败，请重试或返回视频库。",true); }
+    }
+    private MediaItem playbackItem() {
+        return new MediaItem.Builder().setMediaId(Long.toString(videoId)).setUri(mediaUri).setSubtitleConfigurations(subtitles).build();
+    }
+    private boolean skipFailedSubtitle(ExoPlayer current,PlaybackException error) {
+        for(MediaItem.SubtitleConfiguration subtitle:new ArrayList<>(subtitles)) {
+            if(!SubtitleTracks.causedBy(error,subtitleLoadErrors.get(subtitle.uri)))continue;
+            // Only a confirmed sidecar failure is optional. A main-video error keeps the usual retry UI.
+            long resumeAt=Math.max(0,current.getCurrentPosition());boolean resume=shouldPlay;
+            subtitles=new ArrayList<>(subtitles);subtitles.remove(subtitle);subtitleLoadErrors.remove(subtitle.uri);
+            if(!subtitles.isEmpty())subtitles.set(0,subtitles.get(0).buildUpon().setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build());
+            subtitleWarning="有字幕无法读取或解析，已跳过。可检查字幕文件后重新打开视频。";
+            applyTrackParameters(current.getTrackSelectionParameters().buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT).build());
+            current.setMediaItem(playbackItem(),resumeAt);current.prepare();current.setPlayWhenReady(playbackVisible()&&resume);
+            if("tracks".equals(sheetMode)){renderTrackChoices();layoutSheet();}
+            return true;
+        }
+        return false;
     }
     private boolean rejectUnrenderableTracks(Tracks tracks) {
         if(tracks.isEmpty()||tracks.containsType(C.TRACK_TYPE_VIDEO)&&tracks.isTypeSelected(C.TRACK_TYPE_VIDEO))return false;

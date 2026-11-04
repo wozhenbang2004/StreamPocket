@@ -1,5 +1,8 @@
 package dev.streampocket;
 
+import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.Map;
 import org.json.JSONObject;
 import org.junit.Test;
 import static org.junit.Assert.*;
@@ -35,21 +38,36 @@ public final class VideoPlatformTest {
     }
 
     @Test public void parsedChannelsKeepTheirIdentityAfterQueueSerialization() throws Exception {
+        Map<VideoPlatform, String> urls = new EnumMap<>(VideoPlatform.class);
+        urls.put(VideoPlatform.X, "https://x.com/u/status/123");
+        urls.put(VideoPlatform.BILIBILI, "https://www.bilibili.com/video/BVfixture");
+        urls.put(VideoPlatform.DOUYIN, "https://www.douyin.com/video/123");
+        urls.put(VideoPlatform.YOUTUBE, "https://www.youtube.com/watch?v=BaW_jenozKc");
+        urls.put(VideoPlatform.XIAOHONGSHU, "https://www.xiaohongshu.com/explore/abcdef");
+        urls.put(VideoPlatform.KUAISHOU, "https://www.kuaishou.com/short-video/3fixture");
+        urls.put(VideoPlatform.TIKTOK, "https://www.tiktok.com/@fixture/video/123");
+        urls.put(VideoPlatform.INSTAGRAM, "https://www.instagram.com/reel/fixture");
+        urls.put(VideoPlatform.FACEBOOK, "https://www.facebook.com/reel/123");
+        urls.put(VideoPlatform.PINTEREST, "https://www.pinterest.com/pin/123");
+        urls.put(VideoPlatform.HEYBOX, "https://www.xiaoheihe.cn/app/bbs/link/123");
+        urls.put(VideoPlatform.PORNHUB, "https://www.pornhub.com/view_video.php?viewkey=phfixture123");
+        urls.put(VideoPlatform.WEIBO, "https://weibo.com/tv/show?fid=1034%3A123");
+        urls.put(VideoPlatform.XIGUA, "https://www.ixigua.com/?id=123");
+        urls.put(VideoPlatform.ACFUN, "https://www.acfun.cn/v/ac123");
+        urls.put(VideoPlatform.REDDIT, "https://www.reddit.com/r/videos/comments/abc123/title/");
+        urls.put(VideoPlatform.VIMEO, "https://vimeo.com/123/privateHash?h=queryHash");
+        urls.put(VideoPlatform.TWITCH, "https://www.twitch.tv/videos/635475444?t=5m10s");
+        assertEquals("Each platform needs its own serialization fixture", EnumSet.allOf(VideoPlatform.class), urls.keySet());
         for (VideoPlatform channel : VideoPlatform.values()) {
-            String host = channel == VideoPlatform.YOUTUBE ? "www.youtube.com/watch?v=BaW_jenozKc"
-                    : channel == VideoPlatform.XIAOHONGSHU ? "www.xiaohongshu.com/explore/abcdef"
-                    : channel == VideoPlatform.KUAISHOU ? "www.kuaishou.com/short-video/3fixture"
-                    : channel == VideoPlatform.TIKTOK ? "www.tiktok.com/@fixture/video/123"
-                    : channel == VideoPlatform.INSTAGRAM ? "www.instagram.com/reel/fixture"
-                    : channel == VideoPlatform.FACEBOOK ? "www.facebook.com/reel/123"
-                    : channel == VideoPlatform.PINTEREST ? "www.pinterest.com/pin/123"
-                    : channel == VideoPlatform.HEYBOX ? "www.xiaoheihe.cn/app/bbs/link/123"
-                    : channel == VideoPlatform.PORNHUB ? "www.pornhub.com/view_video.php?viewkey=phfixture123"
-                    : channel == VideoPlatform.X ? "x.com/u/status/123"
-                    : channel == VideoPlatform.BILIBILI ? "www.bilibili.com/video/BVfixture" : "www.douyin.com/video/123";
+            String url = urls.get(channel);
+            assertEquals(channel.id, channel, VideoPlatform.detect(url));
             Engine.Media item = Engine.mediaFromMetadata(new JSONObject().put("id", "fixture").put("title", "fixture")
-                    .put("url", "https://media.example/video.mp4"), "https://" + host).get(0);
-            assertEquals(channel.title, Engine.Media.fromJson(item.toJson()).platform);
+                    .put("url", "https://media.example/video.mp4"), url).get(0);
+            Engine.Media restored = Engine.Media.fromJson(new JSONObject(item.toJson().toString()));
+            assertEquals(channel.id, channel.title, restored.platform);
+            assertEquals(channel.id, url, restored.url);
+            assertEquals(channel.id, "fixture", restored.id);
+            assertEquals(channel.id, "fixture", restored.title);
         }
     }
 }

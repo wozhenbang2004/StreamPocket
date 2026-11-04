@@ -17,7 +17,13 @@ public enum VideoPlatform {
     FACEBOOK("facebook", "Facebook", "facebook.com", "fb.watch", "fb.me"),
     PINTEREST("pinterest", "Pinterest", "pinterest.com", "pin.it"),
     PORNHUB("pornhub", "Pornhub", "pornhub.com", "pornhub.net", "pornhub.org"),
-    HEYBOX("heybox", "小黑盒", "xiaoheihe.cn");
+    HEYBOX("heybox", "小黑盒", "xiaoheihe.cn"),
+    WEIBO("weibo", "微博", "weibo.com", "weibo.cn", "t.cn"),
+    XIGUA("xigua", "西瓜视频", "ixigua.com"),
+    ACFUN("acfun", "AcFun", "acfun.cn"),
+    REDDIT("reddit", "Reddit", "reddit.com", "redd.it"),
+    VIMEO("vimeo", "Vimeo", "vimeo.com"),
+    TWITCH("twitch", "Twitch", "twitch.tv");
 
     public final String id, title;
     private final String[] roots;

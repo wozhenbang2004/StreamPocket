@@ -12,7 +12,7 @@ public final class LinkBatch {
     private LinkBatch() {}
     public static final int MAX_LINKS = 100;
     private static final Pattern LINK = Pattern.compile(
-            "(?i)(?:https?://|(?<![\\w.@/])(?:(?:www|m|mobile|music|v|vm|vt)\\.)?(?:" + VideoPlatform.shareDomainPattern()
+            "(?i)(?:https?://|(?<![\\w.@/])(?:(?:www|m|mobile|music|v|vm|vt|old|np|clips|player|go)\\.)?(?:" + VideoPlatform.shareDomainPattern()
                     + ")/)[^\\s<>\\\"『』「」。，！？；、,;]+?(?=https?://|[\\s<>\\\"『』「」。，！？；、,;]|$)");
     private static final Pattern TWEET = Pattern.compile("/(?:[^/]+/status|i/web/status)/(\\d+)(/(?:video|photo)/\\d+)?(?:/.*)?");
 
@@ -27,7 +27,7 @@ public final class LinkBatch {
             String candidate = match.group();
             if (!candidate.regionMatches(true, 0, "http", 0, 4)) candidate = "https://" + candidate;
             try {
-                String url = CoreRules.normalizeUrl(candidate);
+                String url = CommonVideoLinks.normalizeVideo(candidate);
                 String key = identity(url);
                 if (unique.containsKey(key)) duplicates++;
                 else unique.put(key, url);
@@ -45,6 +45,8 @@ public final class LinkBatch {
     static String identity(String url) {
         try {
             URI uri = new URI(url);
+            String common = CommonVideoLinks.identity(url);
+            if (!common.isEmpty()) return common;
             String youtubeId = YouTubeLinks.videoId(url);
             if (!youtubeId.isEmpty()) return "youtube:video:" + youtubeId;
             String pornhubId = PornhubLinks.identity(url);

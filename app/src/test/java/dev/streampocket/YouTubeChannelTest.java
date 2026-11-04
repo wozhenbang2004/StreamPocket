@@ -42,10 +42,15 @@ public final class YouTubeChannelTest {
                         .put(new JSONObject().put("format_id", "140").put("vcodec", "none").put("acodec", "mp4a")));
         Engine.Media media = Engine.mediaFromMetadata(raw, "https://youtu.be/BaW_jenozKc").get(0);
         assertEquals("YouTube", media.platform); assertEquals("样例频道", media.uploader);
-        assertEquals(3, media.qualities.size()); assertEquals("1080p", media.qualities.get(1).label);
+        assertEquals(4, media.qualities.size()); assertEquals("1080p", media.qualities.get(1).label);
+        assertEquals("720p", media.qualities.get(2).label);
+        assertEquals("compatible-mp4", media.qualities.get(3).id);
+        assertTrue(media.qualities.get(3).compatibleMp4);
         assertTrue(media.qualities.get(1).selector.contains("+ba/"));
         Engine.Media restored = Engine.Media.fromJson(media.toJson());
         assertEquals("YouTube", restored.platform); assertEquals(media.qualities.get(1).selector, restored.qualities.get(1).selector);
+        assertTrue(restored.qualities.get(3).compatibleMp4);
+        assertEquals(media.qualities.get(3).selector, restored.qualities.get(3).selector);
     }
 
     @Test public void failuresKeepTheLinkAndNeverOfferAnUnsupportedLogin() throws Exception {
