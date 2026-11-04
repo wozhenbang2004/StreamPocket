@@ -10,7 +10,7 @@ An open-source Android video downloader, local video player, and lightweight vid
 
 Android 7.0 及以上 · ARM64 · 无广告 · 无需注册拾流账号
 
-**0.5.0 正式版**：新增整队与批量下载管理、观看状态与收藏筛选，以及画中画、播放模式和音轨/字幕选择。[本次更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.5.0) · [发行与验证](docs/RELEASE_STATUS.md)。
+**0.5.1 正式版**：修复自动更新开关的真实触摸、打开应用时的检查、失败后的重试与“稍后”提醒恢复；保留 0.5.0 的队列、视频库与播放升级。[本次更新](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.5.1) · [发行与验证](docs/RELEASE_STATUS.md)。
 
 ## 从一条链接开始
 
@@ -77,6 +77,8 @@ Android 7.0 及以上 · ARM64 · 无广告 · 无需注册拾流账号
 从 [最新版](https://github.com/wozhenbang2004/StreamPocket/releases/latest) 下载 `StreamPocket-arm64-v8a.apk`，在手机上打开安装。
 
 已有拾流时直接覆盖安装，**不用卸载**。之后可在 **设置 → 高级与关于 → 应用更新 → 检查更新** 中升级，保留现有视频、账号、下载记录和草稿。
+
+旧版若没有自动提示，请先手动覆盖安装一次 0.5.1。新版开启“打开应用时检查更新”后，每次从后台重新进入会检查；失败后下次打开可重试，“稍后”不会永久隐藏该版本。
 
 默认保存在手机的 `Download / StreamPocket` 文件夹，可在 **设置 → 保存位置** 中更改，并一键剪切已有下载。使用 YouTube 等平台时，手机网络需要能正常访问原视频。
 

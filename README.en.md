@@ -8,7 +8,7 @@ Save videos from YouTube, X / Twitter, Bilibili, and Douyin, then watch, organiz
 
 Android 7.0+ · ARM64 · No ads · No StreamPocket account required
 
-**0.5.0 is the current release**, adding whole-queue and batch download controls, watch-state and favorite filters, picture-in-picture, playback modes, and audio/subtitle selection. [Release notes](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.5.0) · [Release verification](docs/RELEASE_STATUS.md).
+**0.5.1 is the current release**, fixing real touch interaction on the update switch, foreground update checks, retries after network failure, and postponed reminders. It retains the queue, library, and playback improvements from 0.5.0. [Release notes](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.5.1) · [Release verification](docs/RELEASE_STATUS.md).
 
 ## From a link to your library
 
@@ -73,6 +73,8 @@ Previews use sample content. Some labels may differ from the latest version.
 Download `StreamPocket-arm64-v8a.apk` from the [latest release](https://github.com/wozhenbang2004/StreamPocket/releases/latest), then open it on your Android phone.
 
 If StreamPocket is already installed, install the new APK over it; **do not uninstall first**. You can also use **Settings → Advanced & About → App updates → Check for updates**. Your videos, accounts, download history, and drafts are retained. The current app interface is in Chinese.
+
+If an older version does not notify you, manually install 0.5.1 once. With automatic checking enabled, reopening the app checks for updates; a failed request can retry on the next opening, and “Later” no longer permanently hides that version.
 
 Downloads default to `Download / StreamPocket`. Choose another folder in **Settings → Save location** and move existing downloads there while retaining library records and playback progress. Your phone must be able to reach the original video website.
 
