@@ -14,7 +14,7 @@ public final class DownloadQueueOrder {
         result.sort((left, right) -> {
             int group = Integer.compare(group(left), group(right));
             if (group != 0) return group;
-            boolean history = group(left) == 2;
+            boolean history = group(left) >= 2;
             int time = history ? Long.compare(historyTime(right), historyTime(left))
                     : Long.compare(queueTime(left), queueTime(right));
             if (time != 0) return time;
@@ -35,9 +35,10 @@ public final class DownloadQueueOrder {
         String status = task.optString("status");
         if (status.equals("downloading") || status.equals("merging") || status.equals("saving")
                 || status.equals("cancelling") || status.equals("pausing")) return 0;
-        return status.equals("queued") ? 1 : 2;
+        if (DownloadQueuePolicy.waiting(status, task.optString("pauseOrigin"))) return 1;
+        return status.equals("paused") ? 2 : 3;
     }
-    private static long queueTime(JSONObject task) {
+    static long queueTime(JSONObject task) {
         long queued = task.optLong("queuedAt", 0);
         return queued > 0 ? queued : task.optLong("createdAt", 0);
     }

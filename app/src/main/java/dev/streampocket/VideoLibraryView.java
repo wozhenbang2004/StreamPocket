@@ -54,22 +54,22 @@ public final class VideoLibraryView extends LinearLayout {
     private final List<JSONObject> collections = new ArrayList<>();
     private final VideoAdapter adapter = new VideoAdapter();
     private final GridView grid;
-    private final TextView status, sourceButton, collectionButton, headingTitle, selectionCount, shareSelection, collectSelection, removeSelection;
+    private final TextView status, watchButton, sourceButton, collectionButton, headingTitle, selectionCount, shareSelection, collectSelection, moreSelection;
     private final LinearLayout selectionBar;
     private final View searchToggle, viewToggle;
     private final TextView clearFilters;
     private final Set<String> selectedSources=new LinkedHashSet<>();
     private final EditText search;
     private boolean released, loading, more = true, selectionMode, writing;
-    private boolean listMode;
+    private boolean listMode, favoritesOnly;
     private int gridColumns;
     private String order = "date";
     private final Set<Long> selectedIds = new LinkedHashSet<>();
     private int restoreFirst = -1, restoreTop;
     private android.view.ViewTreeObserver.OnGlobalLayoutListener viewportRestore;
     private int generation;
-    private String source = "", query = "";
-    private long collection;
+    private String source = "", query = "", watchFilter = LibraryWatchState.ALL;
+    private long collection, totalVideos;
     private final Runnable searchChanged = this::applySearch;
     private void applySearch() { query = search.getText().toString(); endSelection(); restoreFirst=-1; load(true); }
 
@@ -102,19 +102,21 @@ public final class VideoLibraryView extends LinearLayout {
 
         HorizontalScrollView filterScroll=new HorizontalScrollView(host); filterScroll.setHorizontalScrollBarEnabled(false);
         LinearLayout filters = new LinearLayout(host); filters.setGravity(Gravity.CENTER_VERTICAL);
+        watchButton=filterChip("全部视频","watch");watchButton.setContentDescription("按观看状态和收藏筛选视频");
         sourceButton = filterChip("全部来源","source"); collectionButton = filterChip("全部合集","collection");
         sourceButton.setContentDescription("按来源筛选视频"); collectionButton.setContentDescription("按合集筛选视频");
         LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(-2, dp(48)); left.rightMargin = dp(8);
-        filters.addView(sourceButton, left); filters.addView(collectionButton, new LinearLayout.LayoutParams(-2, dp(48)));
-        clearFilters=control("清除",false);clearFilters.setBackgroundColor(Color.TRANSPARENT);clearFilters.setTextColor(palette.accent);clearFilters.setVisibility(GONE);clearFilters.setContentDescription("清除视频库筛选条件");clearFilters.setOnClickListener(v->{source="";selectedSources.clear();collection=0;endSelection();restoreFirst=-1;updateCollectionLabel();load(true);});filters.addView(clearFilters,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        filters.addView(watchButton,new LinearLayout.LayoutParams(left));filters.addView(sourceButton, left); filters.addView(collectionButton, new LinearLayout.LayoutParams(-2, dp(48)));
+        clearFilters=control("清除",false);clearFilters.setBackgroundColor(Color.TRANSPARENT);clearFilters.setTextColor(palette.accent);clearFilters.setVisibility(GONE);clearFilters.setContentDescription("清除视频库筛选条件");clearFilters.setOnClickListener(v->{source="";selectedSources.clear();collection=0;watchFilter=LibraryWatchState.ALL;favoritesOnly=false;endSelection();restoreFirst=-1;updateCollectionLabel();load(true);});filters.addView(clearFilters,new LinearLayout.LayoutParams(dp(48),dp(48)));
         filterScroll.addView(filters); addView(filterScroll, new LinearLayout.LayoutParams(-1, dp(48)));
-        sourceButton.setOnClickListener(v -> chooseSource()); collectionButton.setOnClickListener(v -> chooseCollection());
+        watchButton.setOnClickListener(v->chooseWatchFilter());sourceButton.setOnClickListener(v -> chooseSource()); collectionButton.setOnClickListener(v -> chooseCollection());
 
         status = text("正在整理本地视频…", 12, MUTED, false); status.setPadding(0, dp(4), 0, dp(8)); status.setMinHeight(dp(32)); addView(status, new LinearLayout.LayoutParams(-1, -2));
         selectionBar=new LinearLayout(host); selectionBar.setGravity(Gravity.CENTER_VERTICAL); selectionBar.setBackground(shape(palette.accentSoft,false,12)); selectionBar.setPadding(dp(6),0,dp(6),0); selectionBar.setVisibility(GONE);
         TextView close=control("退出",false); close.setBackgroundColor(Color.TRANSPARENT); close.setOnClickListener(v -> endSelection()); selectionBar.addView(close,new LinearLayout.LayoutParams(dp(48),dp(48)));
         selectionCount=text("已选 0 项",12,INK,true); selectionBar.addView(selectionCount,new LinearLayout.LayoutParams(0,dp(48),1));
-        shareSelection=selectionAction("分享",this::shareSelected); collectSelection=selectionAction("合集",this::collectSelected); removeSelection=selectionAction("移除",this::removeSelected);
+        shareSelection=selectionAction("分享",this::shareSelected); collectSelection=selectionAction("合集",this::collectSelected); moreSelection=selectionAction("更多",this::showSelectionMore);
+        moreSelection.setContentDescription("所选视频更多整理操作");
         addView(selectionBar,new LinearLayout.LayoutParams(-1,dp(48)));
 
         grid = new GridView(host); configureColumns(); grid.setVerticalSpacing(dp(18)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
@@ -151,10 +153,11 @@ public final class VideoLibraryView extends LinearLayout {
         int first=grid.getFirstVisiblePosition(); configureColumns(); adapter.notifyDataSetChanged(); grid.setSelection(first);
     }
     private void showLibraryMenu() {
-        String[] actions={"剪辑草稿", "按日期排序", "按来源排序", selectionMode?"全选已加载的视频":"多选整理"};
+        String[] actions={"剪辑草稿", "按日期排序", "按来源排序", selectionMode?"全选已加载的视频":"多选整理", "管理合集"};
         new PocketDialog.Builder(activity).setTitle("视频库").setItems(actions,(dialog,which)->{
             if(which==0)openEditor(0);
             else if(which==1||which==2){endSelection();order=which==2?"source":"date";activity.getSharedPreferences("config",0).edit().putString("library_order",order).apply();load(true);}
+            else if(which==4)showCollectionManager();
             else if(selectionMode){for(JSONObject video:videos)selectedIds.add(video.optLong("id"));updateSelection();adapter.notifyDataSetChanged();}
             else {selectionMode=true;updateSelection();}
         }).show();
@@ -163,11 +166,13 @@ public final class VideoLibraryView extends LinearLayout {
     /** The host can retain browsing state across tab changes and theme recreation. */
     public Bundle saveUiState() {
         Bundle state=new Bundle(); state.putString("query",search.getText().toString()); state.putString("source",source); state.putLong("collection",collection);
+        state.putString("watch_filter",watchFilter);state.putBoolean("favorites_only",favoritesOnly);
         state.putStringArrayList("sources",new ArrayList<>(selectedSources));state.putString("order",order);state.putInt("columns",gridColumns); state.putBoolean("list",listMode); state.putBoolean("search_open",search.getVisibility()==VISIBLE);
         state.putInt("first",grid.getFirstVisiblePosition()); state.putInt("top",grid.getChildCount()>0?grid.getChildAt(0).getTop():0); return state;
     }
     public void restoreUiState(Bundle state) {
         if(state==null||released)return; main.removeCallbacks(searchChanged); query=state.getString("query",""); source=state.getString("source","");selectedSources.clear();if(state.getStringArrayList("sources")!=null)selectedSources.addAll(state.getStringArrayList("sources"));else if(!source.isEmpty())selectedSources.add(source);collection=state.getLong("collection",0);
+        watchFilter=LibraryWatchState.normalizeFilter(state.getString("watch_filter"));favoritesOnly=state.getBoolean("favorites_only",false);
         order="source".equals(state.getString("order"))?"source":"date";gridColumns=state.getInt("columns",gridColumns)==3?3:2; listMode=state.getBoolean("list",listMode); configureColumns();
         search.setText(query); main.removeCallbacks(searchChanged); search.setVisibility(state.getBoolean("search_open")||!query.isEmpty()?VISIBLE:GONE);
         updateCollectionLabel();
@@ -175,7 +180,7 @@ public final class VideoLibraryView extends LinearLayout {
         viewToggle.setContentDescription("选择视频库视图"); ((ImageView)viewToggle).setImageDrawable(new LibraryIcon(listMode?"list":"grid",INK));
     }
 
-    public void refresh() { if (!released && !loading) load(true, true); }
+    public void refresh() { if (!released && !loading && !writing) load(true, true); }
 
     private void load(boolean reset) {
         load(reset, false);
@@ -183,8 +188,12 @@ public final class VideoLibraryView extends LinearLayout {
     private void load(boolean reset, boolean preserveViewport) {
         if (released || (!reset && (loading || !more))) return;
         int token = reset ? ++generation : generation; int offset = reset ? 0 : videos.size();
-        List<String> chosenSources=new ArrayList<>(selectedSources);String chosenSource = source, chosenQuery = query, chosenOrder=order; long chosenCollection = collection;
-        int requestCount = preserveViewport ? Math.max(PAGE, Math.min(100, videos.size())) : PAGE;
+        List<String> chosenSources=new ArrayList<>(selectedSources);String chosenQuery = query, chosenOrder=order; long chosenCollection = collection,knownCount=totalVideos;
+        String chosenWatch=watchFilter;boolean chosenFavorites=favoritesOnly;
+        int cachedCount = preserveViewport ? Math.max(PAGE, videos.size()) : PAGE;
+        // A pending deep restore needs its viewport in the first adapter update;
+        // publishing earlier pages would first establish a viewport at row zero.
+        int requestCount = reset && restoreFirst>=0 ? Math.max(cachedCount,restoreFirst+PAGE) : cachedCount;
         int firstVisible = preserveViewport ? grid.getFirstVisiblePosition() : 0;
         int firstTop = preserveViewport && grid.getChildCount() > 0 ? grid.getChildAt(0).getTop() : 0;
         loading = true; status.setOnClickListener(null);
@@ -192,28 +201,50 @@ public final class VideoLibraryView extends LinearLayout {
         io.execute(() -> {
             try {
                 if (reset) { store.recoverInterruptedExports(); store.syncCompletedDownloads(); }
-                List<JSONObject> page = store.listVideosFromSources(chosenQuery, chosenSources, chosenCollection, requestCount, offset, chosenOrder);
+                // The store caps each query at 100. Refresh the complete cached
+                // range so an unchanged deep viewport can keep its existing rows.
+                List<JSONObject> page = new ArrayList<>();
+                while(page.size()<requestCount){
+                    int chunkSize=Math.min(100,requestCount-page.size());
+                    List<JSONObject> chunk=store.listVideosFromSources(chosenQuery,chosenSources,chosenCollection,chunkSize,offset+page.size(),chosenOrder,chosenWatch,chosenFavorites);
+                    page.addAll(chunk);if(chunk.size()<chunkSize)break;
+                }
+                long count=reset?store.countVideosFromSources(chosenQuery,chosenSources,chosenCollection,chosenWatch,chosenFavorites):knownCount;
                 List<JSONObject> groups = reset ? store.collections() : null;
                 main.post(() -> {
                     if (released || token != generation) return;
                     loading = false;
+                    boolean sameCount=totalVideos==count;totalVideos=count;
                     if (reset) { collections.clear(); collections.addAll(groups); updateCollectionLabel(); }
-                    if (preserveViewport && samePrefix(page, requestCount)) return;
-                    more = page.size() == requestCount;
+                    if (preserveViewport && sameCount && samePrefix(page)) {updateStatus();return;}
                     if (reset) videos.clear();
                     videos.addAll(page); adapter.notifyDataSetChanged();
+                    more=page.size()==requestCount&&videos.size()<totalVideos;
+                    if(reset&&preserveViewport&&restoreFirst<0){restoreFirst=firstVisible;restoreTop=firstTop;}
                     if(videos.isEmpty())restoreFirst=-1;
                     else if(restoreFirst>=0){
                         if(restoreFirst>=videos.size()&&more){load(false);return;}
                         restoreViewport(Math.min(restoreFirst,videos.size()-1),restoreTop);restoreFirst=-1;
                     }else if (reset && preserveViewport) restoreViewport(Math.min(firstVisible,videos.size()-1),firstTop);
                     else if (reset) grid.setSelection(0);
-                    status.setText(videos.isEmpty() ? (query.isEmpty() && selectedSources.isEmpty() && collection == 0 ? "下载完成的视频会出现在这里。" : "没有符合筛选条件的视频") : (more?"已加载 ":"共 ") + videos.size() + " 个视频 · " + ("source".equals(order)?"按来源":"按日期"));
+                    updateStatus();
                 });
             } catch (Exception failure) {
                 main.post(() -> { if (!released && token == generation) { loading = false; more = false; status.setText("视频库读取失败，点击重试"); status.setOnClickListener(v -> { status.setOnClickListener(null); load(true); }); } });
             }
         });
+    }
+    private void updateStatus() {
+        if(!videos.isEmpty()){status.setText("共 "+totalVideos+" 个视频 · "+("source".equals(order)?"按来源":"按日期"));return;}
+        if(!query.isEmpty()||!selectedSources.isEmpty()||collection>0)status.setText("没有符合筛选条件的视频");
+        else if(favoritesOnly)status.setText("还没有符合条件的收藏，可在视频更多操作中收藏。");
+        else if(LibraryWatchState.CONTINUE.equals(watchFilter))status.setText("播放过且未看完的视频会出现在这里。");
+        else if(!LibraryWatchState.ALL.equals(watchFilter))status.setText("没有符合观看状态的视频");
+        else status.setText("下载完成的视频会出现在这里。");
+    }
+    private void reloadAfterWrite() {
+        restoreFirst=grid.getFirstVisiblePosition();restoreTop=grid.getChildCount()>0?grid.getChildAt(0).getTop():0;
+        load(true);
     }
     private void clearViewportRestore() {
         if(viewportRestore!=null&&grid.getViewTreeObserver().isAlive())grid.getViewTreeObserver().removeOnGlobalLayoutListener(viewportRestore);
@@ -237,12 +268,33 @@ public final class VideoLibraryView extends LinearLayout {
         };
         grid.getViewTreeObserver().addOnGlobalLayoutListener(viewportRestore);
     }
-    private boolean samePrefix(List<JSONObject> page, int requested) {
-        if (page.isEmpty() || videos.size() < page.size() || (videos.size() > page.size() && page.size() < requested)) return false;
+    private boolean samePrefix(List<JSONObject> page) {
+        // A capped refresh cannot prove that the unqueried suffix is unchanged:
+        // playback and favorite updates may leave the count and first 100 intact.
+        if (page.isEmpty() || videos.size() != page.size()) return false;
         for (int i = 0; i < page.size(); i++) if (!videos.get(i).toString().equals(page.get(i).toString())) return false;
         return true;
     }
 
+    private void chooseWatchFilter() {
+        String[] values={LibraryWatchState.ALL,LibraryWatchState.CONTINUE,LibraryWatchState.UNWATCHED,LibraryWatchState.WATCHED};
+        int selected=0;for(int i=0;i<values.length;i++)if(values[i].equals(watchFilter))selected=i;
+        new PocketDialog.Builder(activity).setTitle("观看与收藏")
+                .setMessage(favoritesOnly?"当前只看收藏，可同时选择观看状态。":"选择观看状态，也可以只看收藏。")
+                .setSingleChoiceItems(new String[]{"全部视频","继续观看","未看","已看完"},selected,(dialog,which)->{
+                    watchFilter=values[which];endSelection();restoreFirst=-1;updateCollectionLabel();dialog.dismiss();load(true);
+                }).setNeutralButton(favoritesOnly?"取消收藏筛选":"只看收藏",(dialog,which)->{
+                    favoritesOnly=!favoritesOnly;endSelection();restoreFirst=-1;updateCollectionLabel();load(true);
+                }).setNegativeButton("返回",null).show();
+    }
+    private static String watchLabel(String filter) {
+        switch(LibraryWatchState.normalizeFilter(filter)){
+            case LibraryWatchState.CONTINUE:return "继续观看";
+            case LibraryWatchState.UNWATCHED:return "未看";
+            case LibraryWatchState.WATCHED:return "已看完";
+            default:return "全部视频";
+        }
+    }
     private void chooseSource() {
         String[] labels={"X","哔哩哔哩","抖音","YouTube","小红书","快手","TikTok","Instagram","Facebook","Pinterest","Pornhub","小黑盒","其他平台","我的导出"},values={"x","bilibili","douyin","youtube","xiaohongshu","kuaishou","tiktok","instagram","facebook","pinterest","pornhub","heybox","other","export"};boolean[] checked=new boolean[values.length];
         for(int n=0;n<values.length;n++)checked[n]=selectedSources.contains(values[n]);
@@ -253,10 +305,12 @@ public final class VideoLibraryView extends LinearLayout {
     private void chooseCollection() {
         String[] labels = new String[collections.size() + 1]; labels[0] = "全部视频"; int selected = 0;
         for (int i = 0; i < collections.size(); i++) { JSONObject group = collections.get(i); labels[i + 1] = group.optString("name") + " · " + group.optLong("count"); if (group.optLong("id") == collection) selected = i + 1; }
-        new PocketDialog.Builder(activity).setTitle("我的合集").setSingleChoiceItems(labels, selected, (dialog, which) -> {
+        PocketDialog.Builder chooser=new PocketDialog.Builder(activity).setTitle("我的合集").setSingleChoiceItems(labels, selected, (dialog, which) -> {
             endSelection(); restoreFirst=-1; collection = which == 0 ? 0 : collections.get(which - 1).optLong("id");
             updateCollectionLabel(); dialog.dismiss(); load(true);
-        }).setPositiveButton("新建合集", (dialog, which) -> createCollection(null)).setNegativeButton("取消", null).show();
+        }).setPositiveButton("新建合集", (dialog, which) -> createCollection(null)).setNegativeButton("取消", null);
+        if(!collections.isEmpty())chooser.setNeutralButton("管理合集",(dialog,which)->showCollectionManager());
+        chooser.show();
     }
 
     private void activateVideo(JSONObject video,View cell) {
@@ -272,7 +326,8 @@ public final class VideoLibraryView extends LinearLayout {
         try {
             // The player re-reads this stable ID and its current local URI/access.
             // A stale catalogue 'missing' snapshot must not block a restored file.
-            Intent intent=new Intent(activity,PlayerActivity.class).putExtra("video_id",id).putExtra("library_query",query).putExtra("library_collection",collection).putExtra("library_order",order).putStringArrayListExtra("library_sources",new ArrayList<>(selectedSources));
+            Intent intent=new Intent(activity,PlayerActivity.class).putExtra("video_id",id).putExtra("library_query",query).putExtra("library_collection",collection).putExtra("library_order",order).putStringArrayListExtra("library_sources",new ArrayList<>(selectedSources))
+                    .putExtra("library_watch_filter",watchFilter).putExtra("library_favorites_only",favoritesOnly);
             // Match the download entry. A window-owned shared-element snapshot
             // must never sit above the independent video surface.
             activity.startActivity(intent);
@@ -285,13 +340,15 @@ public final class VideoLibraryView extends LinearLayout {
     }
 
     private void showActions(JSONObject video) {
-        String[] actions = {"播放", "添加到剪辑", "重命名文件", "管理所属合集", "分享视频", "从视频库移除"};
+        boolean favorite=video.optBoolean("favorite");
+        String[] actions = {"播放", favorite?"取消收藏":"收藏视频", "添加到剪辑", "重命名文件", "管理所属合集", "分享视频", "从视频库移除"};
         new PocketDialog.Builder(activity).setTitle(video.optString("title", "视频")).setItems(actions, (dialog, which) -> {
             if (which == 0) openPlayer(video);
-            else if (which == 1) { if (video.optBoolean("missing")) message("原视频无法读取，请先恢复文件。"); else openEditor(video.optLong("id")); }
-            else if (which == 2) rename(video);
-            else if (which == 3) manageCollections(video);
-            else if (which == 4) share(video);
+            else if(which==1)runWrite(()->store.setFavorite(video.optLong("id"),!favorite),favorite?"已取消收藏":"已收藏");
+            else if (which == 2) { if (video.optBoolean("missing")) message("原视频无法读取，请先恢复文件。"); else openEditor(video.optLong("id")); }
+            else if (which == 3) rename(video);
+            else if (which == 4) manageCollections(video);
+            else if (which == 5) share(video);
             else new PocketDialog.Builder(activity).setTitle("从视频库移除？").setMessage("只移除库记录、精彩标记与合集归属。手机上的视频文件和已有剪辑草稿会保留。")
                     .setNegativeButton("取消", null).setPositiveButton("移除", (confirm, action) -> runWrite(() -> store.removeVideoRecord(video.optLong("id")), "已从视频库移除")).show();
         }).show();
@@ -360,16 +417,57 @@ public final class VideoLibraryView extends LinearLayout {
             dialog.dismiss(); runWrite(() -> { long id = store.createCollection(name); if (video != null) store.setCollection(video.optLong("id"), id, true); }, "合集已创建");
         })); dialog.show();
     }
-    private void runWrite(Runnable action, String success) {
+    private void showCollectionManager() {
+        if(released)return;
+        io.execute(()->{try{
+            List<JSONObject> groups=store.collections();
+            main.post(()->{
+                if(released)return;
+                if(groups.isEmpty()){createCollection(null);return;}
+                String[] names=new String[groups.size()];for(int i=0;i<groups.size();i++)names[i]=groups.get(i).optString("name")+" · "+groups.get(i).optLong("count");
+                new PocketDialog.Builder(activity).setTitle("管理合集").setItems(names,(dialog,which)->{
+                    JSONObject group=groups.get(which);
+                    new PocketDialog.Builder(activity).setTitle(group.optString("name")).setItems(new String[]{"重命名合集","删除合集"},(options,action)->{
+                        if(action==0)renameCollection(group);else deleteCollection(group);
+                    }).setNegativeButton("返回",null).show();
+                }).setPositiveButton("新建合集",(dialog,which)->createCollection(null)).setNegativeButton("返回",null).show();
+            });
+        }catch(Exception failure){main.post(()->message("无法读取合集，请重试。"));}});
+    }
+    private void renameCollection(JSONObject group) {
+        EditText input=new PocketEditText(activity);input.setSingleLine(true);input.setText(group.optString("name"));input.setSelection(input.length());input.setHint("合集名称");input.setContentDescription("新的合集名称");input.setPadding(dp(20),dp(12),dp(20),dp(12));
+        PocketDialog dialog=new PocketDialog.Builder(activity).setTitle("重命名合集").setView(input).setPositiveButton("保存",null).setNegativeButton("取消",null).create();
+        dialog.setOnShowListener(ignored->dialog.getButton(PocketDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            if(released){dialog.dismiss();return;}
+            String name=input.getText().toString().trim();if(name.isEmpty()||name.length()>80){input.setError("合集名称需为 1–80 个字符");return;}
+            input.setError(null);input.setEnabled(false);dialog.setCancelable(false);dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(false);dialog.getButton(PocketDialog.BUTTON_NEGATIVE).setEnabled(false);
+            io.execute(()->{try{
+                store.renameCollection(group.optLong("id"),name);
+                main.post(()->{dialog.dismiss();if(!released){message("合集已重命名");reloadAfterWrite();}});
+            }catch(Exception failure){main.post(()->{if(released||!dialog.isShowing())return;input.setEnabled(true);input.setError(failure.getMessage()==null?"保存失败，请重试。":failure.getMessage());dialog.setCancelable(true);dialog.getButton(PocketDialog.BUTTON_POSITIVE).setEnabled(true);dialog.getButton(PocketDialog.BUTTON_NEGATIVE).setEnabled(true);});}});
+        }));dialog.show();
+    }
+    private void deleteCollection(JSONObject group) {
+        long id=group.optLong("id");
+        new PocketDialog.Builder(activity).setTitle("删除合集？")
+                .setMessage("删除「"+group.optString("name")+"」后，其中的 "+group.optLong("count")+" 个视频仍保留在视频库，观看进度、精彩标记和剪辑草稿不变。")
+                .setNegativeButton("取消",null).setPositiveButton("删除合集",(dialog,which)->runWrite(()->store.deleteCollection(id),"合集已删除，视频保留",()->{
+                    if(collection==id)collection=0;endSelection();updateCollectionLabel();
+                })).show();
+    }
+    private void runWrite(Runnable action, String success) {runWrite(action,success,null);}
+    private void runWrite(Runnable action, String success,Runnable after) {
         if (released) return;
-        io.execute(() -> { try { action.run(); main.post(() -> { if (!released) { message(success); load(true); } }); } catch (Exception failure) { main.post(() -> message("保存失败，请重试。")); } });
+        io.execute(() -> { try { action.run(); main.post(() -> { if (!released) { if(after!=null)after.run();message(success); reloadAfterWrite(); } }); } catch (Exception failure) { main.post(() -> message("保存失败，请重试。")); } });
     }
 
     private void updateCollectionLabel() {
         String name="全部";
         for(JSONObject group:collections)if(group.optLong("id")==collection){name=group.optString("name");break;}
         collectionButton.setText(collection==0?"全部合集":name);
-        sourceButton.setText(selectedSources.isEmpty()?"全部来源":selectedSources.size()==1?sourceLabel(selectedSources.iterator().next()):selectedSources.size()+" 个来源");clearFilters.setVisibility(selectedSources.isEmpty()&&collection==0?GONE:VISIBLE);
+        watchButton.setText(watchLabel(watchFilter)+(favoritesOnly?" · 收藏":""));
+        watchButton.setTextColor(LibraryWatchState.ALL.equals(watchFilter)&&!favoritesOnly?MUTED:palette.accent);
+        sourceButton.setText(selectedSources.isEmpty()?"全部来源":selectedSources.size()==1?sourceLabel(selectedSources.iterator().next()):selectedSources.size()+" 个来源");clearFilters.setVisibility(selectedSources.isEmpty()&&collection==0&&LibraryWatchState.ALL.equals(watchFilter)&&!favoritesOnly?GONE:VISIBLE);
         sourceButton.setTextColor(selectedSources.isEmpty()?INK:palette.accent); collectionButton.setTextColor(collection==0?MUTED:palette.accent);
     }
     private TextView selectionAction(String label,Runnable action) {
@@ -385,7 +483,7 @@ public final class VideoLibraryView extends LinearLayout {
     private void updateSelection() {
         headingTitle.setText(selectionMode?"整理视频":"视频库");selectionBar.setVisibility(selectionMode?VISIBLE:GONE);
         selectionCount.setText("已选 "+selectedIds.size()+" 项");boolean enabled=!writing&&!selectedIds.isEmpty();
-        for(TextView button:new TextView[]{shareSelection,collectSelection,removeSelection})if(button!=null){button.setEnabled(enabled);button.setAlpha(enabled?1f:.38f);}
+        for(TextView button:new TextView[]{shareSelection,collectSelection,moreSelection})if(button!=null){button.setEnabled(enabled);button.setAlpha(enabled?1f:.38f);}
     }
     private List<JSONObject> selectedVideos() {
         List<JSONObject> result=new ArrayList<>();for(JSONObject video:videos)if(selectedIds.contains(video.optLong("id")))result.add(video);return result;
@@ -425,10 +523,42 @@ public final class VideoLibraryView extends LinearLayout {
                 .setMessage("只移除所选库记录、精彩标记和合集归属。手机上的原视频文件、下载记录与已有剪辑草稿会保留。")
                 .setNegativeButton("取消",null).setPositiveButton("移除记录",(dialog,which)->writeSelection(()->store.removeVideoRecords(ids),"已移除库记录，原视频保留")).show();
     }
-    private void writeSelection(Runnable action,String success) {
+    private void showSelectionMore() {
+        if(selectedIds.isEmpty()||writing)return;
+        List<Long> ids=new ArrayList<>(selectedIds);List<String> labels=new ArrayList<>();List<Runnable> actions=new ArrayList<>();
+        labels.add("收藏所选视频");actions.add(()->writeSelection(()->store.setFavoriteForVideos(ids,true),"所选视频已收藏"));
+        labels.add("取消所选视频收藏");actions.add(()->writeSelection(()->store.setFavoriteForVideos(ids,false),"已取消所选视频收藏"));
+        long selectedCollection=collection;
+        if(selectedCollection>0){labels.add("从当前合集移除");actions.add(()->removeSelectedFromCollection(ids,selectedCollection));}
+        labels.add("从视频库移除");actions.add(this::removeSelected);
+        new PocketDialog.Builder(activity).setTitle("整理 "+ids.size()+" 个视频").setItems(labels.toArray(new String[0]),(dialog,which)->actions.get(which).run()).setNegativeButton("返回",null).show();
+    }
+    private void removeSelectedFromCollection(List<Long> ids,long collectionId) {
+        java.util.concurrent.atomic.AtomicReference<List<Long>> removed=new java.util.concurrent.atomic.AtomicReference<>(java.util.Collections.emptyList());
+        new PocketDialog.Builder(activity).setTitle("从合集移除 "+ids.size()+" 个视频？")
+                .setMessage("只移除当前合集中的归属，视频、观看进度、精彩标记和其他合集不变。")
+                .setNegativeButton("取消",null).setPositiveButton("移出合集",(dialog,which)->writeSelection(
+                        ()->removed.set(store.removeVideosFromCollection(ids,collectionId)),"已从合集移除，视频保留",
+                        ()->restoreCollectionMembership(removed.get(),collectionId))).show();
+    }
+    private void restoreCollectionMembership(List<Long> ids,long collectionId) {
+        if(ids.isEmpty())return;
+        // An undo notice can outlive the library tab. Use a fresh handle rather
+        // than an already closed View-owned database in that case.
+        Runnable restore=()->{try(LibraryStore fresh=new LibraryStore(activity)){
+            fresh.setCollectionForVideos(ids,collectionId);
+            activity.runOnUiThread(()->{if(activity.isFinishing()||activity.isDestroyed())return;PocketNotice.show(activity,"已撤销移出合集");if(!released)reloadAfterWrite();});
+        }catch(Exception failure){activity.runOnUiThread(()->PocketNotice.show(activity,"未能撤销，请确认合集和视频仍在库中。"));}};
+        if(released)new Thread(restore,"library-undo").start();else io.execute(restore);
+    }
+    private void writeSelection(Runnable action,String success) {writeSelection(action,success,null);}
+    private void writeSelection(Runnable action,String success,Runnable undo) {
         if(released||writing)return;writing=true;updateSelection();
         io.execute(()->{try{
-            action.run();main.post(()->{writing=false;if(!released){endSelection();message(success);load(true,true);}});
+            action.run();
+            // A committed action belongs to the still-live Activity. Its undo
+            // must survive both leaving this tab and clearing the View's Handler.
+            activity.runOnUiThread(()->{writing=false;if(activity.isFinishing()||activity.isDestroyed())return;PocketNotice.show(activity,success,undo);if(!released){endSelection();reloadAfterWrite();}});
         }catch(Exception failure){main.post(()->{writing=false;if(!released){updateSelection();message("保存失败，原文件未改动，请重试。");}});}});
     }
 
@@ -442,7 +572,7 @@ public final class VideoLibraryView extends LinearLayout {
     private TextView text(String value, int size, int color, boolean bold) {
         TextView v = new TextView(activity); v.setText(value); v.setTextSize(size); v.setTextColor(color); v.setGravity(Gravity.CENTER_VERTICAL); if (bold) v.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return v;
     }
-    private TextView filterChip(String value,String icon){TextView v=control(value,true);v.setTextSize(12);v.setPadding(dp(12),0,dp(10),0);v.setBackground(new android.graphics.drawable.InsetDrawable(shape(palette.surface,true,18),0,dp(7),0,dp(7)));v.setPadding(dp(12),0,dp(10),0);PocketIcon left=new PocketIcon(icon,MUTED),down=new PocketIcon("down",MUTED);left.setBounds(0,0,dp(16),dp(16));down.setBounds(0,0,dp(13),dp(13));v.setCompoundDrawables(left,null,down,null);v.setCompoundDrawablePadding(dp(6));return v;}
+    private TextView filterChip(String value,String icon){TextView v=control(value,true);v.setTextSize(12);v.setPadding(dp(12),0,dp(10),0);v.setBackground(new android.graphics.drawable.InsetDrawable(shape(palette.surface,true,18),0,dp(7),0,dp(7)));v.setPadding(dp(12),0,dp(10),0);Drawable left="watch".equals(icon)?new LibraryIcon("watch",MUTED):new PocketIcon(icon,MUTED),down=new PocketIcon("down",MUTED);left.setBounds(0,0,dp(16),dp(16));down.setBounds(0,0,dp(13),dp(13));v.setCompoundDrawables(left,null,down,null);v.setCompoundDrawablePadding(dp(6));return v;}
     private TextView control(String value, boolean border) {
         TextView v = text(value, 14, INK, false); v.setGravity(Gravity.CENTER); v.setPadding(dp(8), 0, dp(8), 0); v.setSingleLine(true); v.setEllipsize(TextUtils.TruncateAt.END); v.setBackground(shape(palette.control, border, 16)); UiTheme.press(v); return v;
     }
@@ -501,8 +631,9 @@ public final class VideoLibraryView extends LinearLayout {
             int resolution=Math.min(video.optInt("width"),video.optInt("height"));
             holder.meta.setText(sourceLabel(video.optString("source"))+(resolution>0?" · "+resolution+"P":"")+" · "+(video.optLong("bytes")>0?MediaSize.format(video.optLong("bytes")):"大小待获取"));
             long at=Math.max(0,video.optLong("playbackMs")),total=Math.max(0,video.optLong("durationMs"));boolean missing=video.optBoolean("missing");
-            boolean watched=total>0&&at>=total-500,resume=at>0&&!watched;
-            holder.context.setText(missing?"文件不可用":watched?"已看完":resume?"续播 "+duration(at):"");holder.context.setVisibility(missing||watched||resume?VISIBLE:GONE);
+            boolean watched=LibraryWatchState.isWatched(at,total),resume=LibraryWatchState.isContinuing(at,total),favorite=video.optBoolean("favorite");
+            String context=missing?"文件不可用":watched?"已看完":resume?"续播 "+duration(at):"";
+            holder.context.setText((favorite?"收藏"+(context.isEmpty()?"":" · "):"")+context);holder.context.setVisibility(missing||watched||resume||favorite?VISIBLE:GONE);
             holder.progress.setVisibility(!missing&&at>0&&total>0?VISIBLE:GONE);
             holder.progress.setProgress(total>0?(int)Math.min(1000,at*1000d/total):0);
             boolean selected=selectedIds.contains(id);holder.checked.setVisibility(selectionMode?VISIBLE:GONE);holder.checked.setText(selected?"✓":"");holder.checked.setTextColor(palette.dark&&selected?palette.bg:Color.WHITE);holder.checked.setBackground(shape(selected?palette.accent:0x99242a2b,false,12));
@@ -528,6 +659,7 @@ public final class VideoLibraryView extends LinearLayout {
         @Override public void draw(Canvas canvas){int saved=canvas.save();canvas.translate(getBounds().left,getBounds().top);canvas.scale(getBounds().width()/24f,getBounds().height()/24f);
             if(type.equals("play")){paint.setStyle(Paint.Style.FILL);android.graphics.Path triangle=new android.graphics.Path();triangle.moveTo(8,4);triangle.lineTo(21,12);triangle.lineTo(8,20);triangle.close();canvas.drawPath(triangle,paint);paint.setStyle(Paint.Style.STROKE);}
             else if(type.equals("search")){canvas.drawCircle(10,10,6.5f,paint);canvas.drawLine(15,15,21,21,paint);}
+            else if(type.equals("watch")){canvas.drawCircle(12,12,8,paint);canvas.drawLine(12,7,12,12,paint);canvas.drawLine(12,12,16,14,paint);}
             else if(type.equals("list")){for(int i=0;i<3;i++){float y=5+i*7;canvas.drawRoundRect(3,y,7,y+3,1,1,paint);canvas.drawLine(11,y+1.5f,21,y+1.5f,paint);}}
             else if(type.equals("sort")){canvas.drawLine(4,5,20,5,paint);canvas.drawLine(4,12,15,12,paint);canvas.drawLine(4,19,10,19,paint);}
             else if(type.equals("grid")){for(int y=0;y<2;y++)for(int x=0;x<2;x++)canvas.drawRoundRect(3+x*11,3+y*11,10+x*11,10+y*11,1.5f,1.5f,paint);}

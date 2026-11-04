@@ -16,11 +16,15 @@ public final class TaskStore {
     public static synchronized void init(Context context) {
         if (initialized) return;
         JSONArray tasks = read(context);
+        boolean held = context.getSharedPreferences("tasks", Context.MODE_PRIVATE).getBoolean("queuePaused", false);
         for (int i = 0; i < tasks.length(); i++) {
             JSONObject task = tasks.optJSONObject(i); if (task == null) continue;
             String status = task.optString("status");
             if (status.equals("completed")) try { task.put("publicationBusy", false); } catch (Exception ignored) {}
-            if (status.equals("pausing") && task.optBoolean("pauseRequested")) {
+            if (held && status.equals("queued")) {
+                try { stopped(task, "paused", "队列已暂停，继续队列后开始"); task.put("pauseOrigin", DownloadQueuePolicy.QUEUE); }
+                catch (Exception ignored) {}
+            } else if (status.equals("pausing") && task.optBoolean("pauseRequested")) {
                 try { stopped(task, "paused", "已暂停，点击继续可复用已下载数据"); } catch (Exception ignored) {}
             } else if (status.equals("queued") || status.equals("downloading") || status.equals("merging")
                     || status.equals("saving") || status.equals("cancelling") || status.equals("pausing")) {
@@ -73,6 +77,40 @@ public final class TaskStore {
 
     /** A batch gets one disk commit and monotonically increasing worker acceptance positions. */
     static synchronized List<String> markQueuedBatch(Context context, List<String> ids) {
+        return markQueuedBatch(context, ids, DownloadQueuePolicy.Admission.ANY, false);
+    }
+
+    static synchronized List<String> markQueuedBatch(Context context, List<String> ids, DownloadQueuePolicy.Admission admission) {
+        return markQueuedBatch(context, ids, admission, false);
+    }
+
+    public static synchronized boolean isQueuePaused(Context context) {
+        init(context);
+        return context.getSharedPreferences("tasks", Context.MODE_PRIVATE).getBoolean("queuePaused", false);
+    }
+
+    static boolean heldByQueue(JSONObject task) {
+        return task != null && DownloadQueuePolicy.held(task.optString("status"), task.optString("pauseOrigin"));
+    }
+
+    /** The gate and all resumed records are committed together. A live stop is never a resume. */
+    static synchronized List<String> resumeQueue(Context context, String activeId) {
+        init(context);
+        if (!isQueuePaused(context)) return java.util.Collections.emptyList();
+        List<JSONObject> tasks = all(context);
+        for (JSONObject task : tasks) {
+            if (DownloadQueuePolicy.stoppingQueue(task.optString("status"), task.optString("pauseOrigin"))
+                    || (task.optString("id").equals(activeId) && heldByQueue(task)))
+                return java.util.Collections.emptyList();
+        }
+        List<String> ids = new ArrayList<>();
+        tasks.sort((left, right) -> Long.compare(DownloadQueueOrder.queueTime(left), DownloadQueueOrder.queueTime(right)));
+        for (JSONObject task : tasks) if (heldByQueue(task)) ids.add(task.optString("id"));
+        return markQueuedBatch(context, ids, DownloadQueuePolicy.Admission.RESUME_QUEUE, true);
+    }
+
+    private static List<String> markQueuedBatch(Context context, List<String> ids,
+            DownloadQueuePolicy.Admission admission, boolean releaseQueue) {
         init(context);
         JSONArray tasks = read(context); List<JSONObject> values = new ArrayList<>();
         java.util.Map<String, JSONObject> byId = new java.util.HashMap<>();
@@ -81,13 +119,14 @@ public final class TaskStore {
             values.add(task); byId.put(task.optString("id"), task);
         }
         android.content.SharedPreferences preferences = context.getSharedPreferences("tasks", Context.MODE_PRIVATE);
+        boolean held = !releaseQueue && preferences.getBoolean("queuePaused", false);
         List<String> acceptedIds = new ArrayList<>();
         try {
             long accepted = DownloadQueueOrder.nextQueuedAt(values, System.currentTimeMillis(), preferences.getLong("lastQueuedAt", 0));
             long last = accepted;
             for (String id : new java.util.LinkedHashSet<>(ids)) {
                 JSONObject selected = byId.get(id);
-                if (!canEnqueue(selected)) continue;
+                if (selected == null || !DownloadQueuePolicy.accepts(selected.optString("status"), selected.optString("pauseOrigin"), admission)) continue;
                 boolean resume = selected.optString("status").equals("paused");
                 String previousStatus = selected.optString("status");
                 if (java.util.Arrays.asList("failed","interrupted","cancelled").contains(previousStatus)
@@ -96,17 +135,23 @@ public final class TaskStore {
                     // An explicit retry starts a new unpublished attempt. Paused work keeps its original target.
                     selected.remove("destinationTree");selected.remove("savedLocation");
                 }
-                selected.put("queuedAt", accepted).put("status", "queued").put("phase", "queued").put("stageLabel", "等待下载")
-                        .put("stageProgress", -1).put("detail", resume ? "等待继续下载，保留已下载数据" : "等待下载")
-                        .put("userError", "").put("log", "").put("pauseRequested", false)
+                selected.put("queuedAt", accepted).put("status", held ? "paused" : "queued").put("phase", "queued")
+                        .put("stageLabel", held ? "等待继续队列" : "等待下载")
+                        .put("stageProgress", -1).put("detail", held ? "队列已暂停，继续队列后开始" : resume ? "等待继续下载，保留已下载数据" : "等待下载")
+                        .put("userError", "").put("log", "").put("pauseRequested", held)
                         .put("speedBytesPerSecond", -1).put("etaSeconds", -1).put("activeConnections", -1).put("transferComplete", false);
+                if (held) selected.put("pauseOrigin", DownloadQueuePolicy.QUEUE); else selected.remove("pauseOrigin");
                 if (!resume) selected.put("progress", -1).put("downloadedBytes", 0).put("totalBytes", -1)
                         .put("completedStreams", 0).put("totalStreams", 0).put("progressEstimated", false)
                         .put("totalBytesEstimated", false).put("downloadedBytesEstimated", false);
                 acceptedIds.add(id); last = accepted; accepted = Math.addExact(accepted, 1);
             }
-            if (!acceptedIds.isEmpty() && !preferences.edit().putString("items", tasks.toString()).putLong("lastQueuedAt", last).commit())
-                return java.util.Collections.emptyList();
+            if (!acceptedIds.isEmpty() || releaseQueue) {
+                android.content.SharedPreferences.Editor edit = preferences.edit().putString("items", tasks.toString());
+                if (!acceptedIds.isEmpty()) edit.putLong("lastQueuedAt", last);
+                if (releaseQueue) edit.putBoolean("queuePaused", false);
+                if (!edit.commit()) return java.util.Collections.emptyList();
+            }
             return acceptedIds;
         } catch (Exception invalid) { return java.util.Collections.emptyList(); }
     }
@@ -118,22 +163,109 @@ public final class TaskStore {
                 || status.equals("cancelled") || status.equals("interrupted");
     }
 
-    /** Persist the user's intent before signalling a native process to stop. */
-    static synchronized boolean markPauseRequested(Context context, String id, boolean processOwned) {
+    /** Persist before signalling. A manual pause also overrides a previous queue hold. */
+    static synchronized List<String> pauseBatch(Context context, List<String> ids, String activeId) {
+        List<String> accepted = new ArrayList<>();
+        return pause(context, ids, activeId, false, accepted) ? accepted : java.util.Collections.emptyList();
+    }
+
+    static synchronized boolean pauseQueue(Context context, String activeId, List<String> waitingIds) {
+        List<String> ids = new ArrayList<>(waitingIds);
+        if (activeId != null) ids.add(activeId);
+        return pause(context, ids, activeId, true, new ArrayList<>());
+    }
+
+    private static boolean pause(Context context, List<String> ids, String activeId, boolean wholeQueue, List<String> accepted) {
+        init(context);
+        JSONArray tasks = read(context);
+        java.util.Set<String> selected = new java.util.HashSet<>(ids);
+        for (int index = 0; index < tasks.length(); index++) {
+            JSONObject task = tasks.optJSONObject(index);
+            if (task == null || !selected.contains(task.optString("id"))) continue;
+            boolean owned = task.optString("id").equals(activeId);
+            boolean manualHold = !wholeQueue && heldByQueue(task);
+            if (!manualHold && (!DownloadService.canPause(task) || (!owned && !"queued".equals(task.optString("status"))))) continue;
+            try {
+                boolean running = owned && !manualHold;
+                stopped(task, running ? "pausing" : "paused", running
+                        ? "正在暂停，等待下载进程退出…" : wholeQueue ? "队列已暂停，继续队列后开始" : "已暂停，点击继续可复用已下载数据");
+                task.put("pauseRequested", true).put("pauseOrigin", wholeQueue ? DownloadQueuePolicy.QUEUE : DownloadQueuePolicy.MANUAL);
+                accepted.add(task.optString("id"));
+            } catch (Exception invalid) { return false; }
+        }
+        android.content.SharedPreferences.Editor edit = context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", tasks.toString());
+        if (wholeQueue) edit.putBoolean("queuePaused", true);
+        return edit.commit();
+    }
+
+    /** Reorder only waiting work, in one commit. The service applies the returned order under its lock. */
+    static synchronized List<String> moveWaiting(Context context, String id, boolean next, List<String> waitingIds) {
+        init(context);
+        JSONArray tasks = read(context); List<JSONObject> waiting = new ArrayList<>(), all = new ArrayList<>();
+        for (int n = 0; n < tasks.length(); n++) {
+            JSONObject task = tasks.optJSONObject(n); if (task == null) continue;
+            all.add(task);
+            if (heldByQueue(task) || ("queued".equals(task.optString("status")) && waitingIds.contains(task.optString("id")))) waiting.add(task);
+        }
+        waiting.sort((left, right) -> Long.compare(DownloadQueueOrder.queueTime(left), DownloadQueueOrder.queueTime(right)));
+        List<String> order = new ArrayList<>(); java.util.Map<String, JSONObject> byId = new java.util.HashMap<>();
+        for (JSONObject task : waiting) { order.add(task.optString("id")); byId.put(task.optString("id"), task); }
+        if (!order.contains(id)) return java.util.Collections.emptyList();
+        List<String> reordered = DownloadQueuePolicy.move(order, id, next);
+        if (reordered.equals(order)) return order;
+        android.content.SharedPreferences preferences = context.getSharedPreferences("tasks", Context.MODE_PRIVATE);
+        try {
+            long position = DownloadQueueOrder.nextQueuedAt(all, System.currentTimeMillis(), preferences.getLong("lastQueuedAt", 0));
+            long last = position;
+            for (String item : reordered) { byId.get(item).put("queuedAt", position); last = position; position = Math.addExact(position, 1); }
+            return preferences.edit().putString("items", tasks.toString()).putLong("lastQueuedAt", last).commit()
+                    ? reordered : java.util.Collections.emptyList();
+        } catch (Exception invalid) { return java.util.Collections.emptyList(); }
+    }
+
+    /** Cancel is durable before the service signals the process, but is not yet retryable. */
+    static synchronized boolean markCancelRequested(Context context, String id) {
         init(context);
         JSONArray tasks = read(context);
         for (int index = 0; index < tasks.length(); index++) {
             JSONObject task = tasks.optJSONObject(index);
-            if (task == null || !task.optString("id").equals(id)) continue;
-            if (!DownloadService.canPause(task)) return false;
+            if (task == null || !task.optString("id").equals(id) || !canRequestStop(task.optString("status"))) continue;
             try {
-                stopped(task, processOwned ? "pausing" : "paused", processOwned
-                        ? "正在暂停，等待下载进程退出…" : "已暂停，点击继续可复用已下载数据");
-                task.put("pauseRequested", true);
+                stopped(task, "cancelling", "正在取消，等待下载进程退出…");
+                task.put("stageLabel", "正在取消");
                 return context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", tasks.toString()).commit();
             } catch (Exception invalid) { return false; }
         }
         return false;
+    }
+
+    /** A stopping service releases waiting work, while its active process retains ownership. */
+    static synchronized boolean markServiceStopping(Context context, String activeId, List<String> waitingIds, String detail) {
+        init(context);
+        JSONArray tasks = read(context);
+        try {
+            for (int index = 0; index < tasks.length(); index++) {
+                JSONObject task = tasks.optJSONObject(index);
+                if (task == null || "completed".equals(task.optString("status"))) continue;
+                String id = task.optString("id");
+                String status = task.optString("status");
+                if (id.equals(activeId) && canRequestStop(status)) {
+                    // Execution may have finished while the service still holds its bookkeeping ID.
+                    // Never reopen a terminal task after its final cleanup has already returned.
+                    boolean paused = task.optBoolean("pauseRequested");
+                    stopped(task, paused ? "pausing" : "cancelling", detail + "；正在等待下载进程退出");
+                    task.put("stageLabel", paused ? "正在暂停" : "正在停止");
+                } else if (waitingIds.contains(id) && "queued".equals(task.optString("status"))) {
+                    stopped(task, "interrupted", detail);
+                }
+            }
+            return context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", tasks.toString()).commit();
+        } catch (Exception invalid) { return false; }
+    }
+
+    private static boolean canRequestStop(String status) {
+        return "queued".equals(status) || "downloading".equals(status) || "merging".equals(status)
+                || "saving".equals(status) || "pausing".equals(status) || "cancelling".equals(status);
     }
 
     static synchronized void markStopped(Context context, String id, String status, String detail) {
@@ -152,6 +284,7 @@ public final class TaskStore {
                         : status.equals("paused") ? "已暂停" : status.equals("cancelled") ? "已取消" : "已中断")
                 .put("detail", detail).put("userError", "").put("speedBytesPerSecond", -1).put("etaSeconds", -1)
                 .put("activeConnections", -1).put("pauseRequested", status.equals("paused") || status.equals("pausing"));
+        if (!status.equals("paused") && !status.equals("pausing")) task.remove("pauseOrigin");
     }
 
     public static synchronized JSONObject get(Context context, String id) {
@@ -239,6 +372,11 @@ public final class TaskStore {
 
     /** Final removal after an undo delay; an accepted resume always wins. */
     public static synchronized boolean removeIfInactive(Context context, String id) {
+        return removeIfInactive(context, id, -1);
+    }
+
+    /** An explicit resume into a held queue also supersedes an older removal request. */
+    static synchronized boolean removeIfInactive(Context context, String id, long expectedQueuedAt) {
         init(context);
         JSONArray tasks = read(context), retained = new JSONArray();
         boolean found = false;
@@ -247,6 +385,7 @@ public final class TaskStore {
             if (task == null) continue;
             if (task.optString("id").equals(id)) {
                 String status = task.optString("status");
+                if (task.optBoolean("publicationBusy") || (expectedQueuedAt >= 0 && task.optLong("queuedAt", 0) != expectedQueuedAt)) return false;
                 if (status.equals("queued") || status.equals("downloading") || status.equals("merging")
                         || status.equals("saving") || status.equals("cancelling") || status.equals("pausing")) return false;
                 found = true;

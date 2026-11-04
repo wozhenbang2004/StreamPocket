@@ -40,6 +40,10 @@ public final class MainActivity extends Activity {
     private final Map<String,JSONObject> pendingRemoval=new LinkedHashMap<>();
     private Bundle libraryState;
     private String queueFilter="all";
+    private boolean queueSelecting;
+    private final Set<String> queueSelection=new LinkedHashSet<>();
+    private String pendingQueueAction;
+    private final ArrayList<String> pendingQueueIds=new ArrayList<>();
     private PocketTabs queueTabs;
     private final Runnable commitRemovals=()->commitPendingRemovals(true);
     private static final int COOKIE_REQUEST=51, NOTIFY_REQUEST=52, STORAGE_REQUEST=53, LOGIN_REQUEST=54, DIRECTORY_REQUEST=55, MOVE_STORAGE_REQUEST=56;
@@ -68,7 +72,6 @@ public final class MainActivity extends Activity {
     private String cookieImportPlatform;
     private String loginRecoveryId, loginRecoveryType;
     private volatile int parseGeneration=0;
-    private String pendingRetryId;
     private final Runnable poll=new Runnable() {
         @Override public void run() {
             AppUpdates.get(MainActivity.this).refresh();
@@ -90,6 +93,9 @@ public final class MainActivity extends Activity {
             linkEditorExpanded=state.getBoolean("link_editor_expanded",false);
             lastInspectionMessage=state.getString("inspection_message","");lastInspectionDetails=state.getString("inspection_details","");
             libraryState=state.getBundle("library_state");queueFilter=state.getString("queue_filter","all");
+            queueSelecting=state.getBoolean("queue_selecting",false);
+            ArrayList<String> selectedTasks=state.getStringArrayList("queue_selection");if(selectedTasks!=null)queueSelection.addAll(selectedTasks);
+            pendingQueueAction=state.getString("pending_queue_action");ArrayList<String> waitingCommand=state.getStringArrayList("pending_queue_ids");if(waitingCommand!=null)pendingQueueIds.addAll(waitingCommand);
             try{JSONObject selections=new JSONObject(state.getString("quality_selection","{}"));Iterator<String> keys=selections.keys();while(keys.hasNext()){String key=keys.next();qualitySelections.put(key,selections.optInt(key));}}catch(Exception ignored){}
             if(inspectedMedia.isEmpty())try{org.json.JSONArray saved=new org.json.JSONArray(state.getString("inspection_media","[]"));for(int n=0;n<saved.length();n++)inspectedMedia.add(Engine.Media.fromJson(saved.getJSONObject(n)));}catch(Exception ignored){}
         }
@@ -129,6 +135,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showTab(String destination) {
+        if(!"queue".equals(destination)){queueSelecting=false;queueSelection.clear();}
         if(input!=null)draft=input.getText().toString();
         if(libraryView!=null){libraryState=libraryView.saveUiState();libraryView.release();libraryView=null;}
         if(openSwipeRow!=null)openSwipeRow.close(false);openSwipeRow=null;queueTouchActive=false;
@@ -459,7 +466,7 @@ public final class MainActivity extends Activity {
     private void enqueueBatch(List<Engine.Media> media) {
         if(media.isEmpty())return;
         if(needsStoragePermission()){
-            pendingBatch.clear();pendingBatch.addAll(media);requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},STORAGE_REQUEST);return;
+            pendingQueueAction=null;pendingQueueIds.clear();pendingBatch.clear();pendingBatch.addAll(media);requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},STORAGE_REQUEST);return;
         }
         try {
             List<Engine.Quality> qualities=new ArrayList<>();
@@ -477,48 +484,68 @@ public final class MainActivity extends Activity {
     }
 
     private void startTask(String id) {
-        if(needsStoragePermission(TaskStore.get(this,id))){
-            pendingRetryId=id;requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},STORAGE_REQUEST);return;
+        requestQueueCommand(DownloadService.ENQUEUE,Collections.singletonList(id));
+    }
+
+    private void requestQueueCommand(String action,List<String> ids) {
+        if(DownloadService.RESUME_QUEUE.equals(action)&&!pendingRemoval.isEmpty()){
+            // A global resume must not start rows the user has just removed from view.
+            main.removeCallbacks(commitRemovals);commitPendingRemovals(false);hideNotice();
+            ids=new ArrayList<>();for(JSONObject task:TaskStore.all(this))if(TaskStore.heldByQueue(task))ids.add(task.optString("id"));
         }
+        boolean starts=DownloadService.ENQUEUE.equals(action)||DownloadService.RESUME.equals(action)
+                ||DownloadService.RETRY_FAILED.equals(action)||DownloadService.RESUME_QUEUE.equals(action);
+        if(starts)for(String id:ids){JSONObject task=TaskStore.get(this,id);if(task!=null&&needsStoragePermission(task)){
+            pendingBatch.clear();pendingQueueAction=action;pendingQueueIds.clear();pendingQueueIds.addAll(ids);
+            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},STORAGE_REQUEST);return;
+        }}
         try {
-            Intent i=new Intent(this,DownloadService.class).setAction(DownloadService.ENQUEUE).putExtra("id",id);
-            if(Build.VERSION.SDK_INT>=26)startForegroundService(i);else startService(i);
-            showTab("queue");
-            if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
+            Intent i=new Intent(this,DownloadService.class).setAction(action);
+            if(ids.size()==1)i.putExtra("id",ids.get(0));else if(!ids.isEmpty())i.putStringArrayListExtra("ids",new ArrayList<>(ids));
+            if(starts&&Build.VERSION.SDK_INT>=26)startForegroundService(i);else startService(i);
+            queueSelecting=false;queueSelection.clear();if("queue".equals(tab))refreshQueue(true);else showTab("queue");
+            if(starts&&TaskStore.isQueuePaused(this)&&!DownloadService.RESUME_QUEUE.equals(action))toast("队列已暂停，继续队列后开始");
+            if(starts&&Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},NOTIFY_REQUEST);
         } catch(Exception e){
-            try{TaskStore.update(this,id,new JSONObject().put("status","failed").put("detail","未能启动下载服务").put("userError",friendly(e)));}catch(Exception ignored){}
-            showMessage("暂时无法开始",friendly(e));
+            showMessage("暂时无法操作队列",friendly(e));
         }
     }
 
     private void refreshQueue(boolean force) {
         if(!force&&(queueTouchActive||(openSwipeRow!=null&&openSwipeRow.isRevealed())))return;
         if(force&&openSwipeRow!=null){openSwipeRow.close(false);openSwipeRow=null;queueTouchActive=false;}
-        List<JSONObject> tasks=DownloadQueueOrder.sorted(TaskStore.all(this));String signature=tasks.toString()+queueFilter+pendingRemoval.keySet();
+        List<JSONObject> tasks=DownloadQueueOrder.sorted(TaskStore.all(this));boolean held=TaskStore.isQueuePaused(this);
+        Set<String> liveIds=new HashSet<>();for(JSONObject task:tasks)if(!pendingRemoval.containsKey(task.optString("id")))liveIds.add(task.optString("id"));queueSelection.retainAll(liveIds);
+        String signature=tasks.toString()+queueFilter+pendingRemoval.keySet()+held+queueSelecting+queueSelection;
         if(!force&&signature.equals(lastQueueSignature))return;lastQueueSignature=signature;
         int previousScroll=body.getChildCount()>0&&body.getChildAt(0) instanceof ScrollView?((ScrollView)body.getChildAt(0)).getScrollY():0;
-        clearArtwork(body);body.removeAllViews();LinearLayout c=scrollContent();LinearLayout heading=row();heading.addView(text("下载",22,INK,true),new LinearLayout.LayoutParams(0,-2,1));heading.addView(text("本机任务",12,MUTED,false));c.addView(heading);
+        clearArtwork(body);body.removeAllViews();LinearLayout c=scrollContent();LinearLayout heading=row();heading.addView(text("下载",22,INK,true),new LinearLayout.LayoutParams(0,-2,1));
+        if(!tasks.isEmpty()){Button manage=quietButton(queueSelecting?"完成":"选择");manage.setContentDescription(queueSelecting?"退出任务选择":"选择多个下载任务");manage.setOnClickListener(v->{queueSelecting=!queueSelecting;queueSelection.clear();refreshQueue(true);});heading.addView(manage,new LinearLayout.LayoutParams(dp(64),dp(48)));}else heading.addView(text("本机任务",12,MUTED,false));c.addView(heading);
+        renderQueueControls(c,tasks,held);
         String[] labels={"全部","进行中","已完成","失败"},keys={"all","active","completed","failed"};int selected=0;for(int n=0;n<keys.length;n++)if(keys[n].equals(queueFilter))selected=n;
-        if(queueTabs==null)queueTabs=new PocketTabs(this,labels,selected,index->{queueFilter=keys[index];refreshQueue(true);});
+        if(queueTabs==null)queueTabs=new PocketTabs(this,labels,selected,index->{queueFilter=keys[index];queueSelection.clear();refreshQueue(true);});
         if(queueTabs.getParent() instanceof ViewGroup)((ViewGroup)queueTabs.getParent()).removeView(queueTabs);queueTabs.selection(selected);add(c,queueTabs,14,16);
-        int queuePosition=0,shown=0;
+        Map<String,Integer> groupCounts=new HashMap<>();for(JSONObject task:tasks)if(!pendingRemoval.containsKey(task.optString("id"))&&matchesFilter(task.optString("status"))){String group=queueGroup(task,held);groupCounts.put(group,groupCounts.getOrDefault(group,0)+1);}
+        int queuePosition=0,shown=0;String previousGroup="";
         for(JSONObject task:tasks){
-            String status=task.optString("status"),id=task.optString("id");if("queued".equals(status))queuePosition++;
+            String status=task.optString("status"),id=task.optString("id");boolean waiting=DownloadQueuePolicy.waiting(status,task.optString("pauseOrigin"));if(waiting)queuePosition++;
             if(pendingRemoval.containsKey(id)||!matchesFilter(status))continue;shown++;
+            String group=queueGroup(task,held);if(("all".equals(queueFilter)||"active".equals(queueFilter))&&!group.equals(previousGroup)){add(c,text(group+" · "+groupCounts.get(group)+" 项",12,MUTED,true),shown==1?0:12,8);previousGroup=group;}
             boolean active=isActive(status),pauseable=DownloadService.canPause(task);
-            LinearLayout item=row();item.setGravity(Gravity.TOP);item.setPadding(dp(12),dp(12),dp(4),dp(12));item.setBackground(shape(SURFACE,12,0));
+            LinearLayout item=row();item.setGravity(Gravity.TOP);item.setPadding(dp(12),dp(12),dp(4),dp(12));item.setBackground(shape(queueSelection.contains(id)?palette.accentSoft:SURFACE,12,0));
+            if(queueSelecting){CheckBox choice=new CheckBox(this);choice.setButtonTintList(android.content.res.ColorStateList.valueOf(ACCENT));choice.setChecked(queueSelection.contains(id));choice.setContentDescription("选择任务："+task.optString("title"));choice.setOnCheckedChangeListener((v,checked)->toggleQueueSelection(id));item.addView(choice,new LinearLayout.LayoutParams(dp(40),dp(48)));}
             JSONObject media=task.optJSONObject("media");String poster=media==null?"":media.optString("thumbnail");if(poster.isEmpty()&&"completed".equals(status))poster=task.optString("uri");
             FrameLayout thumbnail=new FrameLayout(this);thumbnail.setBackground(shape(palette.control,10,0));thumbnail.setClipToOutline(true);
             ImageView cover=cover(poster,id,64,64);thumbnail.addView(cover,new FrameLayout.LayoutParams(-1,-1));
-            String primary="completed".equals(status)?(task.optString("mime").equals("application/zip")?"打开":"播放"):"paused".equals(status)?"继续":"pausing".equals(status)?"暂停中":"cancelling".equals(status)?"取消中":active?(pauseable?"暂停":"处理中"):"重试";
+            String primary="completed".equals(status)?(task.optString("mime").equals("application/zip")?"打开":"播放"):"paused".equals(status)?(held?"排队":"继续"):"pausing".equals(status)?"暂停中":"cancelling".equals(status)?"取消中":active?(pauseable?"暂停":"处理中"):"重试";
             Button action=quietButton(primary);action.setTextColor(Color.WHITE);action.setTextSize(12);action.setPadding(0,0,0,0);action.setMinWidth(0);action.setBackground(new android.graphics.drawable.InsetDrawable(shape(0xB3171A1C,18,0),dp(6)));
-            action.setEnabled((!active||pauseable)&&!"pausing".equals(status)&&!"cancelling".equals(status));action.setContentDescription(primary+"："+task.optString("title"));action.setVisibility(action.isEnabled()?View.VISIBLE:View.GONE);
+            action.setEnabled((!active||pauseable)&&!"pausing".equals(status)&&!"cancelling".equals(status)&&!TaskStore.heldByQueue(task));action.setContentDescription(primary+"："+task.optString("title"));action.setVisibility(action.isEnabled()&&!queueSelecting?View.VISIBLE:View.GONE);
             action.setOnClickListener(v->performTaskPrimary(id));thumbnail.addView(action,new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.CENTER));item.addView(thumbnail,new LinearLayout.LayoutParams(dp(64),dp(64)));
             LinearLayout content=column();LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(0,-2,1);cp.leftMargin=dp(12);item.addView(content,cp);
             TextView name=text(task.optString("title","视频"),14,INK,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);content.addView(name);
             double progress=task.optDouble("progress",-1);boolean known=(media==null||!media.optBoolean("album"))&&"downloading".equals(status)&&!task.optString("phase").isEmpty()&&!task.optBoolean("transferComplete")&&progress>=0&&progress<100;
-            String state="queued".equals(status)?"等待下载 · 第 "+queuePosition+" 位":taskPhaseTitle(task);
+            String state=waiting?(held?"等待继续":"等待下载")+" · 第 "+queuePosition+" 位":taskPhaseTitle(task);
             LinearLayout stage=row();TextView stateLabel=text(state,12,"completed".equals(status)?ACCENT:MUTED,false);stage.addView(stateLabel,new LinearLayout.LayoutParams(0,-2,1));
             String prefix=task.optBoolean("progressEstimated")?"整体约 ":"整体 ";String percent="completed".equals(status)?"100%":known?prefix+(int)progress+"%":"";
             if(!percent.isEmpty())stage.addView(text(percent,12,MUTED,false));add(content,stage,6,0);
@@ -528,11 +555,12 @@ public final class MainActivity extends Activity {
             }
             String error=taskDisplayError(task),summary=error.isEmpty()?("completed".equals(status)?task.optString("attachmentNote"):taskCompactDetail(task,known)):error;
             if(!summary.isEmpty()){TextView detail=text(summary,12,error.isEmpty()?MUTED:palette.danger,false);detail.setMaxLines(2);detail.setEllipsize(android.text.TextUtils.TruncateAt.END);add(content,detail,5,0);}
-            if("failed".equals(status)&&canOfferLogin(task.optString("url"),task.optString("log",task.optString("userError")))){Button recover=quietButton(accountRecoveryLabel(task.optString("url")));recover.setTextSize(12);recover.setTextColor(ACCENT);recover.setOnClickListener(v->showLoginRecovery("download",id,task.optString("url")));content.addView(recover,new LinearLayout.LayoutParams(-2,dp(40)));}
-            Button more=quietButton("");PocketIcon menuIcon=new PocketIcon("more",INK);menuIcon.setBounds(0,0,dp(24),dp(24));more.setCompoundDrawables(menuIcon,null,null,null);more.setContentDescription("任务更多操作："+task.optString("title"));more.setPadding(0,0,0,0);more.setMinWidth(0);more.setOnClickListener(v->showTaskActions(v,task));item.addView(more,new LinearLayout.LayoutParams(dp(48),dp(48)));
-            item.setContentDescription(task.optString("title")+("completed".equals(status)?"，点按播放，更多查看任务详情":"，点按查看进度及详情"));
-            item.setOnClickListener(v->{JSONObject current=TaskStore.get(this,id);if(current!=null){if("completed".equals(current.optString("status")))openFile(current,false);else showTask(current);}});item.setOnLongClickListener(v->{showTaskActions(v,task);return true;});
-            if(pauseable||"paused".equals(status)){
+            if(!queueSelecting&&"failed".equals(status)&&canOfferLogin(task.optString("url"),task.optString("log",task.optString("userError")))){Button recover=quietButton(accountRecoveryLabel(task.optString("url")));recover.setTextSize(12);recover.setTextColor(ACCENT);recover.setOnClickListener(v->showLoginRecovery("download",id,task.optString("url")));content.addView(recover,new LinearLayout.LayoutParams(-2,dp(40)));}
+            if(!queueSelecting){Button more=quietButton("");PocketIcon menuIcon=new PocketIcon("more",INK);menuIcon.setBounds(0,0,dp(24),dp(24));more.setCompoundDrawables(menuIcon,null,null,null);more.setContentDescription("任务更多操作："+task.optString("title"));more.setPadding(0,0,0,0);more.setMinWidth(0);more.setOnClickListener(v->showTaskActions(v,task));item.addView(more,new LinearLayout.LayoutParams(dp(48),dp(48)));}
+            item.setContentDescription(task.optString("title")+(queueSelecting?(queueSelection.contains(id)?"，已选中":"，未选中"):"completed".equals(status)?"，点按播放，更多查看任务详情":"，点按查看进度及详情"));
+            item.setOnClickListener(v->{if(queueSelecting){toggleQueueSelection(id);return;}JSONObject current=TaskStore.get(this,id);if(current!=null){if("completed".equals(current.optString("status")))openFile(current,false);else showTask(current);}});
+            item.setOnLongClickListener(v->{queueSelecting=true;queueSelection.add(id);refreshQueue(true);return true;});
+            if(!queueSelecting&&!TaskStore.heldByQueue(task)&&(pauseable||"paused".equals(status))){
                 final String expected="paused".equals(status)?"paused":"pauseable";
                 Button swipe=button("paused".equals(status)?"继续":"暂停",false);swipe.setTextColor(ACCENT);swipe.setBackground(shape(palette.accentSoft,12,0));swipe.setContentDescription("侧滑"+swipe.getText()+"："+task.optString("title"));
                 SwipeActionRow wrapper=new SwipeActionRow(this,item,swipe);wrapper.setInteractionListener(touching->{queueTouchActive=touching;if(touching&&openSwipeRow!=wrapper){if(openSwipeRow!=null)openSwipeRow.close(false);openSwipeRow=wrapper;}});
@@ -543,10 +571,66 @@ public final class MainActivity extends Activity {
         ScrollView scroll=(ScrollView)c.getParent();scroll.post(()->scroll.scrollTo(0,previousScroll));
     }
 
+    private void renderQueueControls(LinearLayout content,List<JSONObject> tasks,boolean held){
+        int running=0,waiting=0,paused=0,failed=0;boolean stopping=false;
+        for(JSONObject task:tasks){if(pendingRemoval.containsKey(task.optString("id")))continue;String status=task.optString("status");
+            if(DownloadQueuePolicy.waiting(status,task.optString("pauseOrigin")))waiting++;
+            else if(isActive(status))running++;else if("paused".equals(status))paused++;
+            if("failed".equals(status)||"interrupted".equals(status))failed++;
+            stopping|=DownloadQueuePolicy.stoppingQueue(status,task.optString("pauseOrigin"));
+        }
+        List<String> parts=new ArrayList<>();if(running>0)parts.add(running+" 项进行中");if(waiting>0)parts.add(waiting+" 项等待");if(paused>0)parts.add(paused+" 项单独暂停");if(failed>0)parts.add(failed+" 项可重试");
+        if(queueSelecting){
+            LinearLayout choices=row();choices.addView(text("已选 "+queueSelection.size()+" 项",13,INK,true),new LinearLayout.LayoutParams(0,-2,1));
+            List<String> visible=new ArrayList<>();for(JSONObject task:tasks)if(matchesFilter(task.optString("status"))&&!pendingRemoval.containsKey(task.optString("id")))visible.add(task.optString("id"));
+            boolean all=!visible.isEmpty()&&queueSelection.containsAll(visible);Button select=quietButton(all?"清空":"全选");select.setOnClickListener(v->{if(all)queueSelection.removeAll(visible);else queueSelection.addAll(visible);refreshQueue(true);});choices.addView(select,new LinearLayout.LayoutParams(dp(64),dp(48)));
+            Button actions=button("操作",true);actions.setEnabled(!queueSelection.isEmpty());actions.setOnClickListener(v->showQueueSelectionActions(v));choices.addView(actions,new LinearLayout.LayoutParams(dp(76),dp(48)));add(content,choices,6,0);
+            return;
+        }
+        if(!parts.isEmpty()||held){
+            LinearLayout controls=row();TextView summary=text(held?"队列已暂停":android.text.TextUtils.join(" · ",parts),13,held?INK:MUTED,held);summary.setMaxLines(2);controls.addView(summary,new LinearLayout.LayoutParams(0,-2,1));
+            if(held||running>0||waiting>0){Button control=button(held?(stopping?"暂停中…":"继续队列"):"暂停队列",held);control.setEnabled(!stopping);control.setContentDescription(held?"继续队列；单独暂停的任务保持暂停":"暂停整个下载队列");
+                control.setOnClickListener(v->{List<String> resume=new ArrayList<>();if(held)for(JSONObject task:TaskStore.all(this))if(TaskStore.heldByQueue(task))resume.add(task.optString("id"));requestQueueCommand(held?DownloadService.RESUME_QUEUE:DownloadService.PAUSE_QUEUE,resume);});
+                LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(108),dp(48));p.leftMargin=dp(10);controls.addView(control,p);}
+            add(content,controls,6,0);
+            if(held)add(content,text(stopping?"当前任务停止后可继续；已下载的数据保留":running>0?"本项处理完成后暂停后续任务":"新加入的任务也会等待；单独暂停项需手动继续",12,MUTED,false),3,0);
+        }
+        if("failed".equals(queueFilter)&&failed>1){Button retry=quietButton("重试失败与中断 · "+failed+" 项");retry.setTextColor(ACCENT);retry.setOnClickListener(v->requestQueueCommand(DownloadService.RETRY_FAILED,eligibleQueueIds(DownloadService.RETRY_FAILED,null)));add(content,retry,4,0);}
+    }
+
+    private static String queueGroup(JSONObject task,boolean held){
+        String status=task.optString("status");if(DownloadQueuePolicy.waiting(status,task.optString("pauseOrigin")))return held?"等待继续":"等待下载";
+        if(isActive(status))return "进行中";if("paused".equals(status))return "单独暂停";return "最近记录";
+    }
+    private void toggleQueueSelection(String id){if(!queueSelection.remove(id))queueSelection.add(id);refreshQueue(true);}
+    private List<String> eligibleQueueIds(String action,Set<String> selected){
+        List<JSONObject> tasks=TaskStore.all(this);tasks.sort((left,right)->Long.compare(DownloadQueueOrder.queueTime(left),DownloadQueueOrder.queueTime(right)));List<String> ids=new ArrayList<>();
+        for(JSONObject task:tasks){String id=task.optString("id"),status=task.optString("status");if(pendingRemoval.containsKey(id)||(selected!=null&&!selected.contains(id)))continue;
+            boolean allowed=DownloadService.PAUSE.equals(action)?DownloadService.canPause(task)||TaskStore.heldByQueue(task)
+                    :DownloadService.RESUME.equals(action)?DownloadQueuePolicy.accepts(status,task.optString("pauseOrigin"),DownloadQueuePolicy.Admission.RESUME)
+                    :DownloadService.RETRY_FAILED.equals(action)?DownloadQueuePolicy.accepts(status,task.optString("pauseOrigin"),DownloadQueuePolicy.Admission.RETRY_FAILED)
+                    :"remove".equals(action)&&!isActive(status)&&!task.optBoolean("publicationBusy");
+            if(allowed)ids.add(id);
+        }return ids;
+    }
+    private void showQueueSelectionActions(View anchor){
+        PocketMenu menu=new PocketMenu(this,anchor);String[] actions={DownloadService.PAUSE,DownloadService.RESUME,DownloadService.RETRY_FAILED,"remove"};
+        String[] labels={"暂停","继续","重试失败与中断","移除记录"};int offered=0;
+        for(int n=0;n<actions.length;n++){final String action=actions[n];int count=eligibleQueueIds(action,queueSelection).size();if(count==0)continue;
+            offered++;
+            menu.getMenu().add(labels[n]+" · "+count+" 项").setOnMenuItemClickListener(item->{List<String> ids=eligibleQueueIds(action,new LinkedHashSet<>(queueSelection));
+                if(ids.isEmpty()){toast("任务状态已变化，列表已更新");refreshQueue(true);return true;}
+                if("remove".equals(action))removeTasksWithUndo(ids);else requestQueueCommand(action,ids);return true;});
+        }
+        if(offered==0){toast("所选任务正在处理，请稍候");return;}
+        menu.setOnDismissListener(d->taskMenuOpen=false);taskMenuOpen=true;menu.show();
+    }
+
     private void performTaskPrimary(String id){
         JSONObject task=TaskStore.get(this,id);if(task==null)return;String status=task.optString("status");
         if("completed".equals(status))openFile(task,false);
-        else if(DownloadService.canPause(task))startService(new Intent(this,DownloadService.class).setAction(DownloadService.PAUSE).putExtra("id",id));
+        else if(TaskStore.heldByQueue(task))toast("队列已暂停，继续队列后开始");
+        else if(DownloadService.canPause(task))requestQueueCommand(DownloadService.PAUSE,Collections.singletonList(id));
         else if(!isActive(status))startTask(id);
         else toast("任务状态已变化，请稍候");
     }
@@ -579,26 +663,36 @@ public final class MainActivity extends Activity {
         JSONObject latest=TaskStore.get(this,task.optString("id"));if(latest==null)return;task=latest;final JSONObject current=task;
         PocketMenu menu=new PocketMenu(this,anchor);menu.getMenu().add("详情").setOnMenuItemClickListener(i->{JSONObject fresh=TaskStore.get(this,current.optString("id"));if(fresh!=null)showTask(fresh);return true;});
         String status=task.optString("status"),id=task.optString("id");
+        if(DownloadQueuePolicy.waiting(status,task.optString("pauseOrigin"))){
+            menu.getMenu().add("下一项下载").setOnMenuItemClickListener(i->{requestQueueCommand(DownloadService.MOVE_NEXT,Collections.singletonList(id));return true;});
+            menu.getMenu().add("移到队尾").setOnMenuItemClickListener(i->{requestQueueCommand(DownloadService.MOVE_LAST,Collections.singletonList(id));return true;});
+        }
+        if(TaskStore.heldByQueue(task))menu.getMenu().add("单独暂停此项").setOnMenuItemClickListener(i->{requestQueueCommand(DownloadService.PAUSE,Collections.singletonList(id));return true;});
         if(task.optJSONArray("attachments")!=null&&task.optJSONArray("attachments").length()>0)menu.getMenu().add("字幕与封面").setOnMenuItemClickListener(i->{showSavedAttachments(current);return true;});
         if("failed".equals(status)&&canOfferLogin(task.optString("url"),task.optString("log",task.optString("userError"))))
             menu.getMenu().add(accountRecoveryLabel(task.optString("url"))).setOnMenuItemClickListener(i->{showLoginRecovery("download",id,current.optString("url"));return true;});
         if("completed".equals(status))menu.getMenu().add(current.optString("mime").startsWith("audio/")?"分享音频":current.optString("mime").startsWith("video/")?"分享视频":"分享文件").setOnMenuItemClickListener(i->{openFile(current,true);return true;});
         if(isActive(status)&&!"cancelling".equals(status)&&!"pausing".equals(status))menu.getMenu().add("取消任务").setOnMenuItemClickListener(i->{startService(new Intent(this,DownloadService.class).setAction("dev.streampocket.CANCEL").putExtra("id",id));return true;});
-        if(!isActive(status))menu.getMenu().add("移除记录").setOnMenuItemClickListener(i->{removeTaskWithUndo(current);return true;});menu.setOnDismissListener(d->taskMenuOpen=false);taskMenuOpen=true;menu.show();
+        if(!isActive(status)&&!task.optBoolean("publicationBusy"))menu.getMenu().add("移除记录").setOnMenuItemClickListener(i->{removeTaskWithUndo(current);return true;});menu.setOnDismissListener(d->taskMenuOpen=false);taskMenuOpen=true;menu.show();
     }
 
     private void removeTaskWithUndo(JSONObject task){
-        JSONObject current=TaskStore.get(this,task.optString("id"));
-        if(current==null||isActive(current.optString("status"))){if(current!=null)toast("任务已重新开始，记录已保留");if("queue".equals(tab))refreshQueue(true);return;}
-        pendingRemoval.put(task.optString("id"),task);main.removeCallbacks(commitRemovals);main.postDelayed(commitRemovals,5000);
+        removeTasksWithUndo(Collections.singletonList(task.optString("id")));
+    }
+    private void removeTasksWithUndo(List<String> ids){
+        int added=0;for(String id:ids){JSONObject current=TaskStore.get(this,id);if(current==null||isActive(current.optString("status"))||current.optBoolean("publicationBusy"))continue;
+            pendingRemoval.put(id,current);added++;}
+        if(added==0){toast("任务状态已变化，记录已保留");if("queue".equals(tab))refreshQueue(true);return;}
+        queueSelecting=false;queueSelection.clear();main.removeCallbacks(commitRemovals);main.postDelayed(commitRemovals,5000);
         refreshQueue(true);notice.removeAllViews();notice.setPadding(dp(16),dp(4),dp(16),dp(4));notice.setBackgroundColor(palette.control);
-        LinearLayout row=row();row.addView(text("5秒后移除记录，文件保留",12,INK,false),new LinearLayout.LayoutParams(0,-2,1));Button undo=quietButton("撤销");undo.setTextColor(ACCENT);undo.setOnClickListener(v->{main.removeCallbacks(commitRemovals);pendingRemoval.clear();hideNotice();refreshQueue(true);});row.addView(undo,new LinearLayout.LayoutParams(dp(64),dp(48)));notice.addView(row);notice.setVisibility(View.VISIBLE);
+        LinearLayout row=row();row.addView(text(pendingRemoval.size()==1?"5秒后移除记录，文件保留":"5秒后移除 "+pendingRemoval.size()+" 条记录，文件保留",12,INK,false),new LinearLayout.LayoutParams(0,-2,1));Button undo=quietButton("撤销");undo.setTextColor(ACCENT);undo.setOnClickListener(v->{main.removeCallbacks(commitRemovals);pendingRemoval.clear();hideNotice();refreshQueue(true);});row.addView(undo,new LinearLayout.LayoutParams(dp(64),dp(48)));notice.addView(row);notice.setVisibility(View.VISIBLE);
     }
     private void commitPendingRemovals(boolean refresh){
         boolean retained=false;
         for(String id:new ArrayList<>(pendingRemoval.keySet())){
             // A second activity may have resumed this task during the undo interval.
-            if(!TaskStore.removeIfInactive(this,id)&&TaskStore.get(this,id)!=null)retained=true;
+            JSONObject previous=pendingRemoval.get(id);
+            if(!TaskStore.removeIfInactive(this,id,previous.optLong("queuedAt",0))&&TaskStore.get(this,id)!=null)retained=true;
         }
         pendingRemoval.clear();
         if(refresh&&!isDestroyed()){
@@ -1180,9 +1274,10 @@ public final class MainActivity extends Activity {
         super.onRequestPermissionsResult(request,permissions,results);
         if(request==MOVE_STORAGE_REQUEST){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)moveDownloadedFiles();else showMessage("没有移动文件","请允许保存文件所需的存储权限，原文件保持不变。");return;}
         if(request==STORAGE_REQUEST) {
-            if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){if(pendingRetryId!=null)startTask(pendingRetryId);else if(!pendingBatch.isEmpty()){List<Engine.Media> batch=new ArrayList<>(pendingBatch);pendingBatch.clear();enqueueBatch(batch);}}
+            String action=pendingQueueAction;List<String> ids=new ArrayList<>(pendingQueueIds);pendingQueueAction=null;pendingQueueIds.clear();
+            if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){if(action!=null)requestQueueCommand(action,ids);else if(!pendingBatch.isEmpty()){List<Engine.Media> batch=new ArrayList<>(pendingBatch);pendingBatch.clear();enqueueBatch(batch);}}
             else showMessage("没有开始下载","Android 7–9 需要存储权限才能把视频保存到公共下载目录。链接已保留。");
-            pendingBatch.clear();pendingRetryId=null;
+            pendingBatch.clear();
         }
     }
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);readShare(intent);}
@@ -1206,6 +1301,8 @@ public final class MainActivity extends Activity {
     @Override protected void onResume(){super.onResume();foreground=true;clipboardCheckPending=true;main.post(checkClipboard);AppUpdates.get(this).listen(appUpdateListener);main.postDelayed(appUpdateCheck,1500);main.removeCallbacks(poll);main.post(poll);if(libraryView!=null)libraryView.refresh();}
     @Override protected void onPause(){foreground=false;main.removeCallbacks(checkClipboard);hideClipboardOffer();AppUpdates.get(this).unlisten(appUpdateListener);main.removeCallbacks(appUpdateCheck);if(openSwipeRow!=null)openSwipeRow.close(false);queueTouchActive=false;super.onPause();main.removeCallbacks(poll);if(input!=null)draft=input.getText().toString();getPreferences(0).edit().putString("draft",draft).apply();persistInspectionInbox();}
     @Override protected void onSaveInstanceState(Bundle state){
+        state.putBoolean("queue_selecting",queueSelecting);state.putStringArrayList("queue_selection",new ArrayList<>(queueSelection));
+        state.putString("pending_queue_action",pendingQueueAction);state.putStringArrayList("pending_queue_ids",new ArrayList<>(pendingQueueIds));
         state.putString("cookie_import_platform",cookieImportPlatform);
         state.putString("login_recovery_id",loginRecoveryId);state.putString("login_recovery_type",loginRecoveryType);
         super.onSaveInstanceState(state);state.putBoolean("link_editor_expanded",linkEditorExpanded);state.putString("inspection_message",lastInspectionMessage);state.putString("inspection_details",lastInspectionDetails);state.putString("draft",input!=null?input.getText().toString():draft);state.putString("tab",tab);state.putString("queue_filter",queueFilter);state.putString("quality_selection",new JSONObject(qualitySelections).toString());
@@ -1214,7 +1311,9 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onDestroy(){super.onDestroy();foreground=false;fileMoveCancelled.set(true);fileIo.shutdownNow();if(clipboardReview!=null)clipboardReview.dismiss();main.removeCallbacks(checkClipboard);main.removeCallbacks(previewLinks);main.removeCallbacks(poll);main.removeCallbacks(commitRemovals);if(!isChangingConfigurations())commitPendingRemovals(false);pendingRemoval.clear();if(libraryView!=null)libraryView.release();if(artwork!=null)artwork.release();++parseGeneration;engine.cancelInspect();if(collectionEngine!=null)collectionEngine.cancelInspect();io.shutdownNow();}
 
-    private static boolean isActive(String s){return Arrays.asList("queued","downloading","merging","saving","cancelling","pausing").contains(s);}
+    @Override public void onBackPressed(){if("queue".equals(tab)&&queueSelecting){queueSelecting=false;queueSelection.clear();refreshQueue(true);return;}super.onBackPressed();}
+
+    private static boolean isActive(String s){return DownloadQueuePolicy.active(s);}
     private static String statusName(String s){switch(s){case"queued":return"等待下载";case"downloading":return"正在下载";case"merging":return"正在合并音视频";case"saving":return"正在保存到手机";case"completed":return"已保存";case"cancelling":return"正在取消";case"cancelled":return"已取消";case"pausing":return"正在暂停";case"paused":return"已暂停，断点保留";case"interrupted":return"上次下载中断，可重试";default:return"下载失败";}}
     private String friendly(Exception e){String m=e.getMessage();return e instanceof IllegalArgumentException&&m!=null&&!m.trim().isEmpty()?Engine.cleanLog(m):CoreRules.userMessage(e);}
     private void action(LinearLayout row,String label,Runnable click){Button b=quietButton(label);b.setMinWidth(0);b.setPadding(dp(10),0,dp(10),0);b.setTextSize(12);b.setOnClickListener(v->click.run());row.addView(b,new LinearLayout.LayoutParams(-2,dp(44)));}

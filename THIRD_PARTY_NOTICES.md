@@ -18,7 +18,7 @@ The complete resolved Java/Kotlin runtime set is listed in [RUNTIME_DEPENDENCIES
 | Family | Version(s) | Declared license / source |
 | --- | --- | --- |
 | youtubedl-android library/common/ffmpeg/aria2c wrappers | 0.18.1 | GPL v3; [fixed upstream tree](https://github.com/yausername/youtubedl-android/tree/d725d5c9a18c3a99a13ee0308bf78275dc310760). Native contents require separate review. |
-| AndroidX Media3 | 1.9.4 | Apache 2.0; [source](https://github.com/androidx/media/tree/1.9.4) |
+| AndroidX Media3 | 1.11.1 | Apache 2.0; [source](https://github.com/androidx/media/tree/1.11.1) |
 | AndroidX Webkit and other AndroidX modules | Webkit 1.12.1; others in inventory | Apache 2.0; [AndroidX](https://android.googlesource.com/platform/frameworks/support/) |
 | Kotlin / kotlinx-coroutines | stdlib 2.0.20; jdk7/jdk8 adapters 1.8.0; coroutines 1.9.0 | Apache 2.0; [Kotlin](https://github.com/JetBrains/kotlin), [coroutines](https://github.com/Kotlin/kotlinx.coroutines) |
 | Guava and Google annotations/helpers | Guava 33.3.1-android; others in inventory | Apache 2.0 per POM; [Guava](https://github.com/google/guava) |
@@ -28,7 +28,7 @@ The complete resolved Java/Kotlin runtime set is listed in [RUNTIME_DEPENDENCIES
 | Checker Framework annotations | checker-qual 3.43.0 | MIT per POM; [source](https://github.com/typetools/checker-framework) |
 | JetBrains annotations | 23.0.0 | Apache 2.0 |
 
-Build/test-only dependencies include Gradle 8.9 (Apache 2.0), Android Gradle Plugin 8.7.3, JUnit 4.13.2 (EPL 1.0), JSON-java 20240303 (public domain) and Robolectric 4.16.1 (Apache 2.0). They are not an assertion about APK runtime coverage.
+Build/test-only dependencies include Gradle 8.14.6 (Apache 2.0), Android Gradle Plugin 8.13.2, JUnit 4.13.2 (EPL 1.0), JSON-java 20240303 (public domain) and Robolectric 4.16.1 (Apache 2.0). They are not an assertion about APK runtime coverage.
 
 ## Native components and companion source materials
 

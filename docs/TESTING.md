@@ -1,5 +1,55 @@
 # 开发检查
 
+## 0.5.0 功能批次 · 集成验证入口
+
+本批升级 Media3 1.11.1、compileSdk 36、AGP 8.13.2 与 Gradle 8.14.6，保留 targetSdk 35 / minSdk 24。下载整队控制、批量/优先级、库筛选/收藏/合集、画中画/播放模式/轨道选择的新增回归与全量检查一起执行，最终结果以同一提交的 CI 为准。
+
+除原有单元、View、Lint 与 ARM64 构建外，CI 新增隔离的 Android 15 / x86_64 模拟器任务。它复用 `UiAcceptanceInstrumentation`、许可参考媒体和 `tools/qa-x86.init.gradle`，用真实 Android Media3 解码与系统窗口验证横/竖视频首帧、拖动取帧、返回视频库，以及从真实菜单进入 PiP 后播放位置继续前进、小窗内切换下一条仍有音频焦点并继续播放、回全屏和退出释放。构建与执行入口为：
+
+```bash
+gradle --no-daemon --console=plain -I tools/qa-x86.init.gradle assembleDebug assembleDebugAndroidTest
+bash tools/run-emulator-acceptance.sh
+```
+
+执行脚本只面向 CI 创建的 `emulator-${EMULATOR_PORT:-5554}`，失败时也收集日志和截图。模拟器包不会上传为安装/发行包。`StreamPocket-emulator-playback` artifact 保存该运行的原生窗口截图、Instrumentation 输出和 logcat；观察到的模拟器解码仍不代表 ARM64 手机硬件解码、OEM PiP、耗电或源站下载。该入口新增时尚未运行，不以脚本存在声称验收通过。
+
+## 2026-11-04 · 更新、停止与错误恢复
+
+本批基于 0.4.1 主线 `ef623f55c1530e90a7ce0dbe3839a4f9ef289af8`。方案和采用边界见 [升级研究](UPGRADE_RESEARCH_2026-11-04.md)。以下是本地集成的实际结果；Android CI 的最终结果以 PR 对应提交的 Actions 记录为准，不能沿用历史版本的测试数量。
+
+| 本地检查（JDK 17） | 结果与证明范围 |
+| --- | --- |
+| `CoreUpdateSelfTest` | 83 项检查通过，exit 0；故障注入 HTTP、大小/摘要/zipapp 版本、健康失败和元数据失败回滚、两次真实子进程突然终止后恢复、有界版本探测 |
+| `DownloadProcessStopperSelfTest` | 5 组检查通过，exit 0；阻塞终止不占调用线程、注册窗口重试同一执行、旧执行的延迟信号隔离、超时不代表执行完成、终止线程与等待队列有界 |
+| `CoreRulesSelfTest` | exit 0；链接、日志脱敏及用户恢复提示 |
+| `DownloadFlowSelfTest` | exit 0；错误优先级、X 精确缺格式措辞、批次去重、冷却与可取消调度 |
+| `git diff --check` | 通过 |
+
+独立编译两个新辅助类和自检时 `-Xlint:all` 无告警。连同既有链接/调度自检编译时有三项原有 lint 告警（异常类缺少 `serialVersionUID`，两处 try-with-resources 变量未显式引用），无编译错误；本批未为清理这些告警修改无关行为。
+
+X 新增用例先在旧分类上复现失败，再在修复后通过。旧 `CoreRulesSelfTest` 的“当前访问状态”文案断言在未改基线也失败；现改为同时核对 X 来源、重新解析建议与失败链接保留，没有删掉恢复要求。
+
+新增 Android 回归包括：`VideoFirstPlayerUiTest` 的首帧超时后点击真实 Retry、时间位置与播放意图持久化、普通暂停恢复；`DownloadPauseTest` 的阻塞终止与系统超时、活动任务不可提前重试、等待项转中断、暂停意图保留，以及活动 ID 尚未清理时超时或迟到的取消不能重开已结束任务。它们依赖 Android/Robolectric，未在缺少 Android SDK 的本地执行环境中运行。`DownloadProcessStopperTest` 将五组独立停止器检查接入 JUnit。
+
+独立源码审查另封住两处停止窗口：媒体地址刷新等待运行时锁后，每次 `execute` 前重新检查取消；来源调度回调的停止检查与状态写入使用同一服务锁，防止迟到反馈覆盖暂停记录。此处证据是调用链与锁顺序审查，未将其表述成真实源站并发实验。
+
+CI 新增以下独立步骤，确保进程终止恢复检查在普通 JVM classpath 上执行：
+
+```bash
+mkdir -p build/reliability-checks
+javac -Xlint:all -d build/reliability-checks \
+  app/src/main/java/dev/streampocket/CoreUpdate.java \
+  app/src/main/java/dev/streampocket/DownloadProcessStopper.java \
+  app/src/test/java/dev/streampocket/CoreUpdateSelfTest.java \
+  app/src/test/java/dev/streampocket/DownloadProcessStopperSelfTest.java
+java -cp build/reliability-checks dev.streampocket.CoreUpdateSelfTest
+java -cp build/reliability-checks dev.streampocket.DownloadProcessStopperSelfTest
+```
+
+原有 CI 的 `testDebugUnitTest lintDebug assembleDebug assembleRelease` 与并行安装预览包构建继续保留。测试中模拟的 HTTP、播放器时钟和被阻塞的停止器不代表真实平台下载、Android 原生进程树退出、硬件解码、设备断电恢复、耗电或原证书覆盖安装已通过。新核心 `--version` 检查只验证启动和版本，不代替 EJS/各平台能力检查。
+
+## 常用检查与历史证据
+
 ```bash
 ./gradlew testDebugUnitTest lintDebug
 ```

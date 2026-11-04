@@ -1,26 +1,36 @@
 package dev.streampocket;
 
 import android.app.Activity;
+import android.app.PendingIntent;
+import android.app.PictureInPictureParams;
+import android.app.RemoteAction;
 import android.animation.ValueAnimator;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.view.VelocityTracker;
 import android.view.ViewConfiguration;
 import android.content.Intent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.Icon;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.util.Rational;
 import android.view.Gravity;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
@@ -44,6 +54,8 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.Tracks;
+import androidx.media3.common.TrackSelectionOverride;
+import androidx.media3.common.TrackSelectionParameters;
 import androidx.media3.common.VideoSize;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -51,6 +63,8 @@ import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerControlView;
 import androidx.media3.ui.PlayerView;
 import androidx.media3.ui.TimeBar;
+import androidx.media3.ui.DefaultTrackNameProvider;
+import androidx.core.content.ContextCompat;
 import org.json.JSONObject;
 import java.io.File;
 import java.io.IOException;
@@ -66,6 +80,8 @@ public final class PlayerActivity extends Activity {
     private static final int BLACK=0xFF0A0C0F, WHITE=0xFFFAFAFA, MUTED=0xFFA1A1AA, ACCENT=0xFF70B8A8,
             PANEL=0xFF17191D, LINE=0xFF343E43;
     private static final float[] SPEEDS={.5f,.75f,1f,1.25f,1.5f,2f};
+    private static final String MODE_ONCE="once",MODE_LOOP="loop",MODE_CONTINUOUS="continuous";
+    private static final String PIP_CONTROL="dev.streampocket.PLAYER_PIP_CONTROL";
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private LibraryStore store;
@@ -73,10 +89,15 @@ public final class PlayerActivity extends Activity {
     private int videoWidth,videoHeight,measuredWidth,measuredHeight,loadGeneration,visibleMarkers=40;
     private float speed=1f,heldSpeed=1f;
     private boolean pressBoost;
-    private boolean nextPending;
+    private boolean nextPending,autoAdvancePending;
     private int nextRequest;
     private boolean started,resumed,destroyed,loaded,missing,fullscreen,bookmarkPending,rangePending;
     private boolean shouldPlay=true,restoredPosition,playbackResourceClaimed,scrubbing;
+    private String playbackMode=MODE_ONCE;
+    private boolean subtitlesOff,pictureInPicture,enteringPictureInPicture,pipReceiverRegistered,playbackFailed;
+    private String pipSession=java.util.UUID.randomUUID().toString();
+    private final java.util.Map<String,PendingIntent> pipCommands=new java.util.HashMap<>();
+    private TrackSelectionParameters trackParameters;
     private String sheetMode="";
     private Uri mediaUri;
     private JSONObject video;
@@ -115,15 +136,28 @@ public final class PlayerActivity extends Activity {
     private boolean canvasSheetDrag;
     private float sheetOffset;
     private final Runnable clearHint=()->{ if (gestureHint!=null) gestureHint.setVisibility(View.GONE); };
+    private final BroadcastReceiver pipReceiver=new BroadcastReceiver() {
+        @Override public void onReceive(Context context,Intent intent) {
+            if(destroyed||!started||!isPipPlayback()||!pipSession.equals(intent.getStringExtra("session")))return;
+            String command=intent.getStringExtra("command");
+            if("next".equals(command))playNextVideo();
+            else if("retry".equals(command)&&playbackFailed)retryPlayback();
+            else if(player!=null&&!playbackFailed){
+                if("pause".equals(command)){cancelAutoAdvance();shouldPlay=false;player.pause();savePosition();}
+                else if("play".equals(command)){cancelAutoAdvance();if(player.getPlaybackState()==Player.STATE_ENDED)player.seekTo(0);shouldPlay=true;player.play();}
+                updatePipParams();
+            }
+        }
+    };
 
     private final Runnable videoStartupCheck=()->{
-        if(player==null||!resumed||firstFrameRendered||player.getPlaybackState()!=Player.STATE_READY||!player.getPlayWhenReady())return;
+        if(player==null||!playbackVisible()||firstFrameRendered||player.getPlaybackState()!=Player.STATE_READY||!player.getPlayWhenReady())return;
         player.pause();shouldPlay=false;showError("视频画面未能启动，已暂停播放。请点击重试，或检查视频文件是否完整。",true);
     };
 
     private final Runnable checkpoint=new Runnable() {
         @Override public void run() {
-            if (!resumed || player==null || !player.isPlaying()) return;
+            if (!playbackVisible() || player==null || !player.isPlaying()) return;
             savePosition(); main.postDelayed(this,5000);
         }
     };
@@ -132,6 +166,8 @@ public final class PlayerActivity extends Activity {
         UiTheme.apply(this);
         getWindow().requestFeature(Window.FEATURE_ACTIVITY_TRANSITIONS);
         super.onCreate(state); videoId=state==null?getIntent().getLongExtra("video_id",0):state.getLong("video_id",getIntent().getLongExtra("video_id",0));
+        playbackMode=validPlaybackMode(getSharedPreferences("config",0).getString("player_playback_mode",MODE_ONCE));
+        subtitlesOff=getSharedPreferences("config",0).getBoolean("player_subtitles_off",false);
         String transitionName=getIntent().getStringExtra("transition_name");
         coverTransition=UiTheme.motionEnabled(this) && ("sp-video-"+videoId).equals(transitionName);
         if (coverTransition) {
@@ -143,8 +179,15 @@ public final class PlayerActivity extends Activity {
             splitReturning=state.getBoolean("split_returning",false);
             positionMs=Math.max(0,state.getLong("position_ms",0)); speed=validSpeed(state.getFloat("speed",1f));
             shouldPlay=state.getBoolean("should_play",true); restoredPosition=true; fillVideo=state.getBoolean("fill_video",false);
+            playbackMode=validPlaybackMode(state.getString("playback_mode",playbackMode));
+            if(state.getBundle("track_parameters")!=null)trackParameters=TrackSelectionParameters.fromBundle(state.getBundle("track_parameters"));
         }
         store=new LibraryStore(getApplicationContext()); buildUi(); loadTransitionCover(); immersive();
+        if(Build.VERSION.SDK_INT>=26){
+            IntentFilter controls=new IntentFilter(PIP_CONTROL);
+            controls.addDataScheme("streampocket");controls.addDataAuthority("pip",null);
+            ContextCompat.registerReceiver(this,pipReceiver,controls,ContextCompat.RECEIVER_NOT_EXPORTED);pipReceiverRegistered=true;
+        }
         if (Build.VERSION.SDK_INT>=33) getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                 android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,this::handleBack);
         if (state!=null && state.getBoolean("range_open",false)) {
@@ -162,6 +205,7 @@ public final class PlayerActivity extends Activity {
         });
         playerView=(PlayerView)getLayoutInflater().inflate(R.layout.streampocket_player_surface,root,false);
         root.addView(playerView,new FrameLayout.LayoutParams(-1,-1));
+        playerView.addOnLayoutChangeListener((view,left,top,right,bottom,oldLeft,oldTop,oldRight,oldBottom)->updatePipParams());
         applyAspect();
         playerView.setUseController(true); playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);
         // Media3 1.9.4's animated layout manager retains a progress-only stage for
@@ -298,6 +342,7 @@ public final class PlayerActivity extends Activity {
         root.addView(gestureHint,hint);
     }
     private void showHint(String message) {
+        if(isPipPlayback())return;
         main.removeCallbacks(clearHint); gestureHint.setText(message); gestureHint.setVisibility(View.VISIBLE); main.postDelayed(clearHint,1300);
     }
     private int seekSeconds() { int value=getSharedPreferences("config",0).getInt("seek_seconds",10);return value==5 || value==10 || value==15 || value==30?value:10; }
@@ -367,19 +412,141 @@ public final class PlayerActivity extends Activity {
     private void playAdjacentVideo(boolean forward){
         if(nextPending||destroyed||!loaded)return;
         if(bookmarkPending||rangePending){showHint("正在保存标记，请稍候再切换");return;}
-        nextPending=true;final int request=++nextRequest;final long currentId=videoId;
+        nextPending=true;updatePipParams();final int request=++nextRequest;final long currentId=videoId;
         String query=getIntent().getStringExtra("library_query"),order=getIntent().getStringExtra("library_order");long collection=getIntent().getLongExtra("library_collection",0);
         List<String> sources=getIntent().getStringArrayListExtra("library_sources");
-        io.execute(()->{long next=0;Exception failure=null;try{next=store.adjacentVideoId(currentId,query,sources,collection,order,forward);}catch(Exception error){failure=error;}final long target=next;final Exception problem=failure;
-            main.post(()->{if(destroyed||request!=nextRequest)return;nextPending=false;if(!resumed||videoId!=currentId)return;
+        String watchFilter=getIntent().getStringExtra("library_watch_filter");boolean favoritesOnly=getIntent().getBooleanExtra("library_favorites_only",false);
+        io.execute(()->{long next=0;Exception failure=null;try{next=store.adjacentVideoId(currentId,query,sources,collection,order,forward,watchFilter,favoritesOnly);}catch(Exception error){failure=error;}final long target=next;final Exception problem=failure;
+            main.post(()->{if(destroyed||request!=nextRequest)return;nextPending=false;autoAdvancePending=false;updatePipParams();if(!playbackVisible()||videoId!=currentId)return;
                 if(problem!=null){showHint("暂时无法读取下一个视频，请返回视频库刷新");return;}
                 if(target<=0){showHint(forward?"已经是当前列表的最后一个视频":"已经是当前列表的第一个视频");return;}
-                releasePlayer();clearMarkerFrames();markers=new ArrayList<>();video=null;mediaUri=null;videoId=target;getIntent().putExtra("video_id",target);
-                zoom.reset();
-                positionMs=0;durationMs=0;lastQueuedPosition=Long.MIN_VALUE;restoredPosition=false;shouldPlay=true;firstFrameRendered=false;coverTransition=false;coverGeneration++;
-                if(transitionCover!=null){transitionCover.setImageDrawable(null);transitionCover.setVisibility(View.GONE);}loadVideo();showHint("正在打开下一个视频");
+                switchVideo(target);showHint(forward?"正在打开下一个视频":"正在打开上一个视频");
             });
         });
+    }
+    private void switchVideo(long target){
+        releasePlayer();clearMarkerFrames();markers=new ArrayList<>();video=null;mediaUri=null;videoId=target;getIntent().putExtra("video_id",target);
+        zoom.reset();autoAdvancePending=false;newPipSession();clearTrackOverrides();
+        positionMs=0;durationMs=0;lastQueuedPosition=Long.MIN_VALUE;restoredPosition=false;shouldPlay=true;firstFrameRendered=false;coverTransition=false;coverGeneration++;
+        if(transitionCover!=null){transitionCover.setImageDrawable(null);transitionCover.setVisibility(View.GONE);}loadVideo();
+    }
+    private void playbackEnded(){
+        if(player==null)return;
+        ExoPlayer endedPlayer=player;boolean advance=MODE_CONTINUOUS.equals(playbackMode)&&player.getPlayWhenReady()&&player.getPlaybackSuppressionReason()==Player.PLAYBACK_SUPPRESSION_REASON_NONE&&playbackVisible();
+        shouldPlay=false;player.pause();savePosition();if(!isPipPlayback())playerView.showController();updatePipParams();
+        if(!advance)return;autoAdvancePending=true;
+        // Flush queued marker/progress writes before resolving the next filtered item.
+        long endedId=videoId;int request=nextRequest;
+        io.execute(()->main.post(()->{
+            if(destroyed||!playbackVisible()||player!=endedPlayer||videoId!=endedId||request!=nextRequest||!MODE_CONTINUOUS.equals(playbackMode)||player.getPlaybackState()!=Player.STATE_ENDED)return;
+            playNextVideo();
+        }));
+    }
+    private void cancelAutoAdvance(){if(autoAdvancePending){autoAdvancePending=false;nextRequest++;nextPending=false;}}
+    private static String validPlaybackMode(String value){return MODE_LOOP.equals(value)||MODE_CONTINUOUS.equals(value)?value:MODE_ONCE;}
+    private String playbackModeLabel(){return MODE_LOOP.equals(playbackMode)?"单个循环":MODE_CONTINUOUS.equals(playbackMode)?"连续播放":"单次播放";}
+    private void selectPlaybackMode(String value){
+        cancelAutoAdvance();playbackMode=validPlaybackMode(value);getSharedPreferences("config",0).edit().putString("player_playback_mode",playbackMode).apply();
+        if(player!=null)player.setRepeatMode(MODE_LOOP.equals(playbackMode)?Player.REPEAT_MODE_ONE:Player.REPEAT_MODE_OFF);
+        showSheet("playback_mode");
+    }
+    private void renderPlaybackModes(){
+        sheetTitle.setText("播放模式");LinearLayout choices=actionGroup(menuPanel);
+        choiceRow(choices,"单次播放","播完当前视频后停止",MODE_ONCE.equals(playbackMode),true,()->selectPlaybackMode(MODE_ONCE));
+        choiceRow(choices,"单个循环","重复播放当前视频，仍可手动切换",MODE_LOOP.equals(playbackMode),true,()->selectPlaybackMode(MODE_LOOP));
+        choiceRow(choices,"连续播放","按当前列表顺序继续，最后一条播完停止",MODE_CONTINUOUS.equals(playbackMode),true,()->selectPlaybackMode(MODE_CONTINUOUS));
+        add(menuPanel,text("连续播放沿用视频库的搜索、筛选、合集与排序。每条视频保留自己的观看进度。",12,MUTED,false),12,8);
+    }
+    private void renderTrackChoices(){
+        sheetTitle.setText("音轨与字幕");menuPanel.removeAllViews();
+        Tracks tracks=player==null?Tracks.EMPTY:player.getCurrentTracks();
+        TrackSelectionParameters parameters=player==null?trackParameters:player.getTrackSelectionParameters();
+        renderTrackType(tracks,parameters,C.TRACK_TYPE_AUDIO,"声音");
+        renderTrackType(tracks,parameters,C.TRACK_TYPE_TEXT,"字幕");
+    }
+    private void renderTrackType(Tracks tracks,TrackSelectionParameters parameters,int type,String label){
+        add(menuPanel,text(label,13,MUTED,true),14,0);LinearLayout choices=actionGroup(menuPanel);
+        boolean disabled=type==C.TRACK_TYPE_TEXT&&subtitlesOff,manual=false;
+        if(parameters!=null)for(TrackSelectionOverride override:parameters.overrides.values())if(override.getType()==type){manual=true;break;}
+        final boolean available=player!=null&&!missing;
+        choiceRow(choices,"自动",type==C.TRACK_TYPE_AUDIO?"使用视频默认声音":"按视频与系统字幕设置显示",!disabled&&!manual,available,()->selectAutomaticTrack(type));
+        if(type==C.TRACK_TYPE_TEXT)choiceRow(choices,"关闭字幕","本次及之后的视频都不显示字幕",disabled,available,()->disableSubtitles());
+        DefaultTrackNameProvider names=new DefaultTrackNameProvider(getResources());int count=0;
+        for(Tracks.Group group:tracks.getGroups()){
+            if(group.getType()!=type)continue;
+            for(int index=0;index<group.length;index++){
+                final int track=index;count++;String name=names.getTrackName(group.getTrackFormat(index));
+                if(TextUtils.isEmpty(name)||"未知".equals(name))name=label+" "+count;
+                boolean supported=group.isTrackSupported(index);
+                String description=supported?(type==C.TRACK_TYPE_AUDIO?"视频中的声音":"视频内嵌字幕"):"当前设备暂不支持";
+                if(supported&&!disabled&&!manual&&group.isTrackSelected(index))description="当前使用 · "+description;
+                choiceRow(choices,name,description,!disabled&&manual&&group.isTrackSelected(index),available&&supported,()->selectTrack(type,group,track));
+            }
+        }
+        if(count==0){String empty=type==C.TRACK_TYPE_AUDIO?"此视频没有可选择的音轨。":"此视频没有内嵌字幕。";if(player==null)empty="开始播放后可查看"+label+"。";else if(player.getPlaybackState()==Player.STATE_BUFFERING)empty="正在读取"+label+"…";add(menuPanel,text(empty,12,MUTED,false),10,4);}
+    }
+    private void applyTrackParameters(TrackSelectionParameters parameters){trackParameters=parameters;if(player!=null)player.setTrackSelectionParameters(parameters);}
+    private void selectAutomaticTrack(int type){
+        if(player==null)return;if(type==C.TRACK_TYPE_TEXT)setSubtitlesOff(false);
+        applyTrackParameters(player.getTrackSelectionParameters().buildUpon().clearOverridesOfType(type).setTrackTypeDisabled(type,false).build());renderTrackChoices();layoutSheet();
+    }
+    private void disableSubtitles(){
+        if(player==null)return;setSubtitlesOff(true);
+        applyTrackParameters(player.getTrackSelectionParameters().buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT).setTrackTypeDisabled(C.TRACK_TYPE_TEXT,true).build());renderTrackChoices();layoutSheet();
+    }
+    private void selectTrack(int type,Tracks.Group group,int index){
+        if(player==null||!group.isTrackSupported(index)||!player.getCurrentTracks().getGroups().contains(group))return;
+        if(type==C.TRACK_TYPE_TEXT)setSubtitlesOff(false);
+        applyTrackParameters(player.getTrackSelectionParameters().buildUpon().setTrackTypeDisabled(type,false).setOverrideForType(new TrackSelectionOverride(group.getMediaTrackGroup(),index)).build());renderTrackChoices();layoutSheet();
+    }
+    private void setSubtitlesOff(boolean disabled){subtitlesOff=disabled;getSharedPreferences("config",0).edit().putBoolean("player_subtitles_off",disabled).apply();}
+    private void clearTrackOverrides(){if(trackParameters!=null)trackParameters=trackParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_AUDIO).clearOverridesOfType(C.TRACK_TYPE_TEXT).setTrackTypeDisabled(C.TRACK_TYPE_TEXT,subtitlesOff).build();}
+    private boolean pipSupported(){return Build.VERSION.SDK_INT>=26&&getPackageManager().hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE);}
+    private boolean isPipPlayback(){return Build.VERSION.SDK_INT>=26&&(enteringPictureInPicture||pictureInPicture||isInPictureInPictureMode());}
+    private boolean playbackVisible(){return started&&!destroyed&&(resumed||isPipPlayback());}
+    private void newPipSession(){for(PendingIntent command:pipCommands.values())command.cancel();pipCommands.clear();pipSession=java.util.UUID.randomUUID().toString();}
+    private void enterPip(){
+        if(Build.VERSION.SDK_INT<26||!pipSupported()){showHint("这台设备暂不支持画中画");return;}
+        if(player==null||!loaded||missing||playbackFailed){showHint("开始播放视频后可开启画中画");return;}
+        cancelCanvasGesture();hideKeyboard();cancelSheetAnimation();if(!sheetMode.isEmpty())settleSheet(false,false);zoom.reset();
+        newPipSession();enteringPictureInPicture=true;applyPipUi(true);
+        try {
+            if(!enterPictureInPictureMode(pipParams())){enteringPictureInPicture=false;applyPipUi(false);showHint("暂时无法开启画中画，请在应用设置中检查画中画权限");}
+        } catch(RuntimeException unavailable){enteringPictureInPicture=false;applyPipUi(false);showHint("暂时无法开启画中画，请在应用设置中检查画中画权限");}
+    }
+    @androidx.annotation.RequiresApi(26)
+    private PictureInPictureParams pipParams(){
+        PictureInPictureParams.Builder params=new PictureInPictureParams.Builder();
+        int width=videoWidth>0?videoWidth:16,height=videoHeight>0?videoHeight:9;double ratio=(double)width/height;
+        params.setAspectRatio(ratio>2.39?new Rational(239,100):ratio<1d/2.39?new Rational(100,239):new Rational(width,height));
+        Rect bounds=new Rect();View surface=playerView.getVideoSurfaceView();
+        if(surface!=null&&surface.getGlobalVisibleRect(bounds)&&!bounds.isEmpty())params.setSourceRectHint(bounds);
+        List<RemoteAction> actions=new ArrayList<>();
+        if(playbackFailed&&retryButton.getVisibility()==View.VISIBLE)actions.add(pipAction("retry","重试播放",android.R.drawable.ic_popup_sync));
+        else if(!playbackFailed&&player!=null){boolean playing=player.getPlayWhenReady();actions.add(pipAction(playing?"pause":"play",playing?"暂停":"播放",playing?android.R.drawable.ic_media_pause:android.R.drawable.ic_media_play));}
+        RemoteAction next=pipAction("next","下一个视频",android.R.drawable.ic_media_next);next.setEnabled(loaded&&!nextPending);actions.add(next);params.setActions(actions);
+        if(Build.VERSION.SDK_INT>=31){params.setAutoEnterEnabled(false);params.setSeamlessResizeEnabled(true);}
+        return params.build();
+    }
+    @androidx.annotation.RequiresApi(26)
+    private RemoteAction pipAction(String command,String label,int icon){
+        PendingIntent pending=pipCommands.get(command);
+        if(pending==null){
+            Intent intent=new Intent(PIP_CONTROL).setPackage(getPackageName()).setData(Uri.parse("streampocket://pip/"+pipSession+"/"+command)).putExtra("session",pipSession).putExtra("command",command);
+            pending=PendingIntent.getBroadcast(this,command.hashCode(),intent,PendingIntent.FLAG_IMMUTABLE);pipCommands.put(command,pending);
+        }
+        return new RemoteAction(Icon.createWithResource(this,icon),label,label,pending);
+    }
+    private void updatePipParams(){if(Build.VERSION.SDK_INT>=26&&started&&isPipPlayback())try{setPictureInPictureParams(pipParams());}catch(IllegalStateException ignored){}}
+    private void applyPipUi(boolean pip){
+        playerView.setUseController(!pip);if(pip)playerView.hideController();
+        if(pip){cancelSheetAnimation();if(!sheetMode.isEmpty())settleSheet(false,false);hidePreview();gestureHint.setVisibility(View.GONE);resetZoom.setVisibility(View.GONE);errorPanel.setVisibility(View.GONE);}
+        else {errorPanel.setVisibility(playbackFailed||!loaded?View.VISIBLE:View.GONE);if(player!=null)playerView.showController();}
+    }
+    @androidx.annotation.RequiresApi(26)
+    @Override public void onPictureInPictureModeChanged(boolean pip,Configuration configuration){
+        super.onPictureInPictureModeChanged(pip,configuration);pictureInPicture=pip;enteringPictureInPicture=false;applyPipUi(pip);refreshPreviewPreparation();
+        if(pip){updatePipParams();if(player!=null&&player.isPlaying()){main.removeCallbacks(checkpoint);main.postDelayed(checkpoint,5000);}}
     }
     /** Highlight ticks are a visual overlay only; they never change media/ad state. */
     private final class HighlightTicks extends View {
@@ -404,7 +571,7 @@ public final class PlayerActivity extends Activity {
         status=text("正在读取本地视频…",14,WHITE,false); status.setGravity(Gravity.CENTER);
         status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); errorPanel.addView(status,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout actions=row(); actions.setGravity(Gravity.CENTER);
-        retryButton=button("重试",false); retryButton.setOnClickListener(v->loadVideo());
+        retryButton=button("重试",false); retryButton.setOnClickListener(v->retryPlayback());
         actions.addView(retryButton,new LinearLayout.LayoutParams(dp(96),dp(48)));
         Button back=button("返回视频库",false); back.setOnClickListener(v->finishPlayback());
         actions.addView(back,new LinearLayout.LayoutParams(dp(120),dp(48))); add(errorPanel,actions,12,0);
@@ -473,6 +640,10 @@ public final class PlayerActivity extends Activity {
             if ("speed".equals(mode)) {
                 sheetTitle.setText("播放倍速");
                 LinearLayout speeds=null;for(int n=0;n<SPEEDS.length;n++){if(n%3==0){speeds=row();add(menuPanel,speeds,8,0);}final float option=SPEEDS[n];Button choose=PocketButton.dark(this,speedLabel(option),option==speed?PocketButton.Role.PRIMARY:PocketButton.Role.QUIET);choose.setSelected(option==speed);choose.setContentDescription(speedLabel(option)+(option==speed?"，当前倍速":""));choose.setOnClickListener(v->{speed=option;if(player!=null)player.setPlaybackSpeed(speed);speedButton.setText(speedLabel(speed));closeSheet();});LinearLayout.LayoutParams cell=new LinearLayout.LayoutParams(0,dp(48),1);if(n%3>0)cell.leftMargin=dp(8);speeds.addView(choose,cell);}
+            } else if ("playback_mode".equals(mode)) {
+                renderPlaybackModes();
+            } else if ("tracks".equals(mode)) {
+                renderTrackChoices();
             } else if ("aspect".equals(mode)) {
                 sheetTitle.setText("画面比例");
                 action(menuPanel,"完整显示"+(!fillVideo?"    当前":""),()->{fillVideo=false;applyAspect();closeSheet();});
@@ -494,12 +665,16 @@ public final class PlayerActivity extends Activity {
                 info("画面",videoWidth>0 && videoHeight>0?videoWidth+" × "+videoHeight:"未知");
                 if (video!=null) { info("文件名",video.optString("fileName","")); info("来源",sourceLabel(video.optString("source"))); }
             } else {
-                sheetTitle.setText("更多操作");LinearLayout creative=actionGroup(menuPanel);
+                sheetTitle.setText("更多操作");LinearLayout playback=actionGroup(menuPanel);
+                actionRow(playback,"播放模式 · "+playbackModeLabel(),"单次、循环或按当前列表连续播放","repeat",()->showSheet("playback_mode"));
+                actionRow(playback,"音轨与字幕","选择视频中的声音与字幕","tracks",()->showSheet("tracks"));
+                if(pipSupported()){Button pip=actionRow(playback,"画中画","缩成小窗，切到其他应用继续看","pip",this::enterPip);pip.setEnabled(player!=null&&!missing&&!playbackFailed);}
+                LinearLayout creative=actionGroup(menuPanel);
                 actionRow(creative,"精彩标记","查看、跳转和管理已保存的时间点","bookmark",()->showSheet("markers"));
                 clipButton=actionRow(creative,"截取片段","选择时间范围并导出","scissors",this::openEditor);clipButton.setEnabled(player!=null&&!missing);
                 LinearLayout viewing=actionGroup(menuPanel);actionRow(viewing,"视频信息","来源、画面与本地文件","info",()->showSheet("info"));
-                actionRow(viewing,"下一个视频","也可在画面向下滑动","play",()->{closeSheet();playNextVideo();});
-                actionRow(viewing,"双视频分屏","同时播放两路，独立缩放与声音切换","play",()->{closeSheet();splitReturning=true;startActivityForResult(new Intent(this,SplitPlayerActivity.class).putExtra("video_id",videoId).putExtra("position_ms",player==null?positionMs:player.getCurrentPosition()),74);});
+                actionRow(viewing,"下一个视频","也可在画面向下滑动","next",()->{closeSheet();playNextVideo();});
+                actionRow(viewing,"双视频分屏","同时播放两路，独立缩放与声音切换","split",()->{closeSheet();splitReturning=true;startActivityForResult(new Intent(this,SplitPlayerActivity.class).putExtra("video_id",videoId).putExtra("position_ms",player==null?positionMs:player.getCurrentPosition()),74);});
                 actionRow(viewing,"画面比例 · "+(fillVideo?"填充裁切":"完整显示"),"保留完整画幅，按需切换","crop",()->showSheet("aspect"));
                 actionRow(viewing,"播放手势","点击、滑动与按住倍速","gesture",()->showSheet("gestures"));
             }
@@ -514,9 +689,15 @@ public final class PlayerActivity extends Activity {
     private LinearLayout actionGroup(LinearLayout parent){LinearLayout group=column();group.setBackground(shape(0xFF24282D,16));add(parent,group,12,0);return group;}
     private Button actionRow(LinearLayout parent,String label,String subtitle,String icon,Runnable run){
         FrameLayout row=new FrameLayout(this);Button hit=PocketButton.dark(this,label,PocketButton.Role.QUIET);hit.setGravity(Gravity.TOP|Gravity.START);hit.setPadding(dp(58),dp(14),dp(36),dp(30));hit.setTextSize(14);hit.setContentDescription(label+"，"+subtitle);hit.setOnClickListener(v->run.run());row.addView(hit,new FrameLayout.LayoutParams(-1,-1));
-        ImageView glyph=new ImageView(this);glyph.setImageDrawable(new PocketIcon(icon,0xFFD8DFE2));glyph.setPadding(dp(8),dp(8),dp(8),dp(8));glyph.setBackground(shape(0xFF30363B,10));glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams gp=new FrameLayout.LayoutParams(dp(34),dp(34),Gravity.CENTER_VERTICAL|Gravity.START);gp.leftMargin=dp(12);row.addView(glyph,gp);
+        ImageView glyph=new ImageView(this);glyph.setImageDrawable(PlayerMenuIcon.create(icon,0xFFD8DFE2));glyph.setPadding(dp(8),dp(8),dp(8),dp(8));glyph.setBackground(shape(0xFF30363B,10));glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams gp=new FrameLayout.LayoutParams(dp(34),dp(34),Gravity.CENTER_VERTICAL|Gravity.START);gp.leftMargin=dp(12);row.addView(glyph,gp);
         TextView hint=text(subtitle,12,MUTED,false);hint.setSingleLine(true);hint.setEllipsize(TextUtils.TruncateAt.END);hint.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams hp=new FrameLayout.LayoutParams(-1,dp(24),Gravity.BOTTOM);hp.leftMargin=dp(58);hp.rightMargin=dp(32);hp.bottomMargin=dp(9);row.addView(hint,hp);
         ImageView arrow=new ImageView(this);arrow.setImageDrawable(new PocketIcon("chevron",MUTED));arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams ap=new FrameLayout.LayoutParams(dp(16),dp(16),Gravity.END|Gravity.CENTER_VERTICAL);ap.rightMargin=dp(14);row.addView(arrow,ap);parent.addView(row,new LinearLayout.LayoutParams(-1,dp(72)));return hit;
+    }
+    private Button choiceRow(LinearLayout parent,String label,String description,boolean selected,boolean enabled,Runnable run){
+        FrameLayout row=new FrameLayout(this);Button choose=PocketButton.dark(this,label,PocketButton.Role.QUIET);choose.setGravity(Gravity.TOP|Gravity.START);choose.setPadding(dp(14),dp(12),dp(42),dp(30));choose.setTextSize(14);choose.setSingleLine(true);choose.setEllipsize(TextUtils.TruncateAt.END);choose.setSelected(selected);choose.setEnabled(enabled);choose.setContentDescription(label+"，"+description+(selected?"，已选择":"")+(!enabled?"，不可用":""));choose.setOnClickListener(v->run.run());row.addView(choose,new FrameLayout.LayoutParams(-1,-1));
+        TextView detail=text(description,12,MUTED,false);detail.setSingleLine(true);detail.setEllipsize(TextUtils.TruncateAt.END);detail.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams hintParams=new FrameLayout.LayoutParams(-1,dp(22),Gravity.BOTTOM);hintParams.setMargins(dp(14),0,dp(38),dp(8));row.addView(detail,hintParams);
+        if(selected){TextView check=text("✓",18,ACCENT,true);check.setGravity(Gravity.CENTER);check.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams cp=new FrameLayout.LayoutParams(dp(32),-1,Gravity.END);cp.rightMargin=dp(8);row.addView(check,cp);}
+        row.setAlpha(enabled?1f:.45f);parent.addView(row,new LinearLayout.LayoutParams(-1,dp(68)));return choose;
     }
     private void info(String label,String value) { if (value.isEmpty()) return; add(menuPanel,text(label+"  "+value,13,MUTED,false),8,8); }
     private void closeSheet() { hideKeyboard();settleSheet(false,true); }
@@ -538,7 +719,7 @@ public final class PlayerActivity extends Activity {
         refreshPreviewPreparation();
         playerView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);resetControllerTimeout();
     }
-    private void resetControllerTimeout() { playerView.setControllerShowTimeoutMs(scrubbing || !sheetMode.isEmpty()?0:2500); if (!scrubbing) playerView.showController(); }
+    private void resetControllerTimeout() { playerView.setControllerShowTimeoutMs(scrubbing || !sheetMode.isEmpty()?0:2500); if (!scrubbing&&!isPipPlayback()) playerView.showController(); }
     private void layoutSheet() {
         boolean landscape=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
         boolean side=sideDrawer();
@@ -601,8 +782,8 @@ public final class PlayerActivity extends Activity {
     }
 
     private void loadVideo() {
-        int generation=++loadGeneration;final long requestedId=videoId; releasePlayer(); loaded=false; missing=false; measuredDuration=0; measuredWidth=0; measuredHeight=0;
-        setMediaActions(false); errorPanel.setVisibility(View.VISIBLE); status.setText("正在读取本地视频…"); retryButton.setVisibility(View.GONE);
+        int generation=++loadGeneration;final long requestedId=videoId; releasePlayer(); loaded=false; missing=false; playbackFailed=false; measuredDuration=0; measuredWidth=0; measuredHeight=0;
+        setMediaActions(false); errorPanel.setVisibility(isPipPlayback()?View.GONE:View.VISIBLE); status.setText("正在读取本地视频…"); retryButton.setVisibility(View.GONE);if("tracks".equals(sheetMode))renderTrackChoices();updatePipParams();
         io.execute(()->{ try {
             JSONObject item=requestedId>0?store.video(requestedId):null; List<JSONObject> saved=requestedId>0?store.markers(requestedId):new ArrayList<>();
             String accessError=item!=null&&item.optBoolean("missing",true)?unreadableVideoMessage(Uri.parse(item.optString("uri",""))):null;
@@ -617,9 +798,10 @@ public final class PlayerActivity extends Activity {
             });
         } catch (Exception failure) { main.post(()->{ if (!destroyed && generation==loadGeneration) showError("本地视频记录读取失败，请重试。",true); }); } });
     }
+    private void retryPlayback(){shouldPlay=true;loadVideo();}
     private void showError(String message,boolean retry) {
         releaseEnterTransition(); if (transitionCover!=null) transitionCover.setVisibility(View.GONE);
-        status.setText(message); errorPanel.setVisibility(View.VISIBLE); retryButton.setVisibility(retry?View.VISIBLE:View.GONE); setMediaActions(false);
+        playbackFailed=true;status.setText(message); errorPanel.setVisibility(isPipPlayback()?View.GONE:View.VISIBLE); retryButton.setVisibility(retry?View.VISIBLE:View.GONE); setMediaActions(false);updatePipParams();
     }
     private void ensurePlayer() {
         if (!started || !loaded || missing || destroyed || player!=null) return;
@@ -627,35 +809,38 @@ public final class PlayerActivity extends Activity {
             ExoPlayer current=new ExoPlayer.Builder(this,new DefaultRenderersFactory(this).setEnableDecoderFallback(true)).build(); player=current;
             playbackResourceClaimed=true; MediaWorkload.playerStarted();
             current.setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true); current.setHandleAudioBecomingNoisy(true);
+            current.setRepeatMode(MODE_LOOP.equals(playbackMode)?Player.REPEAT_MODE_ONE:Player.REPEAT_MODE_OFF);
+            applyTrackParameters((trackParameters==null?current.getTrackSelectionParameters():trackParameters).buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT,subtitlesOff).build());
             current.addListener(new Player.Listener() {
                 @Override public void onPlaybackStateChanged(int state) {
                     if (player!=current) return;
                     if (state==Player.STATE_READY) {
                         if(rejectUnrenderableTracks(current.getCurrentTracks()))return;
-                        persistActualMetadata();setMediaActions(true);errorPanel.setVisibility(View.GONE);refreshPreviewPreparation();
+                        playbackFailed=false;persistActualMetadata();setMediaActions(true);errorPanel.setVisibility(View.GONE);refreshPreviewPreparation();updatePipParams();
                         if(!firstFrameRendered){main.removeCallbacks(videoStartupCheck);main.postDelayed(videoStartupCheck,8000);}
                     }
                     else if (state==Player.STATE_BUFFERING) previewLoader.pausePreparation();
-                    else if (state==Player.STATE_ENDED) { shouldPlay=false; savePosition(); playerView.showController(); }
+                    else if (state==Player.STATE_ENDED) playbackEnded();
                 }
                 @Override public void onIsPlayingChanged(boolean playing) {
                     if (player!=current) return; main.removeCallbacks(checkpoint);
                     refreshPreviewPreparation();
-                    if (playing && resumed) { getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); main.postDelayed(checkpoint,5000); }
+                    if (playing && playbackVisible()) { getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); main.postDelayed(checkpoint,5000); }
                     else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 }
                 @Override public void onPlayWhenReadyChanged(boolean playWhenReady,int reason) { if(player==current){
-                    main.removeCallbacks(videoStartupCheck);if(playWhenReady&&!firstFrameRendered)main.postDelayed(videoStartupCheck,8000);refreshPreviewPreparation();
+                    if(reason==Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST&&(playWhenReady||current.getPlaybackState()!=Player.STATE_ENDED))cancelAutoAdvance();
+                    shouldPlay=playWhenReady;main.removeCallbacks(videoStartupCheck);if(playWhenReady&&!firstFrameRendered)main.postDelayed(videoStartupCheck,8000);refreshPreviewPreparation();updatePipParams();
                 } }
                 @Override public void onRenderedFirstFrame() { if (player==current) { firstFrameRendered=true; revealVideo(); refreshPreviewPreparation(); } }
-                @Override public void onTracksChanged(Tracks tracks) { if(player==current)rejectUnrenderableTracks(tracks); }
-                @Override public void onVideoSizeChanged(VideoSize size) { if (player==current) { videoWidth=size.width; videoHeight=size.height; persistActualMetadata(); } }
+                @Override public void onTracksChanged(Tracks tracks) { if(player==current){rejectUnrenderableTracks(tracks);if("tracks".equals(sheetMode)){int scroll=details.getScrollY();renderTrackChoices();layoutSheet();details.post(()->details.scrollTo(0,scroll));}} }
+                @Override public void onVideoSizeChanged(VideoSize size) { if (player==current) { videoWidth=size.width; videoHeight=size.height; persistActualMetadata();updatePipParams(); } }
                 @Override public void onPlayerError(PlaybackException error) { if (player==current) {
-                    main.removeCallbacks(checkpoint); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); showError(playbackError(error),true);
+                    current.pause();shouldPlay=false;main.removeCallbacks(checkpoint); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); showError(playbackError(error),true);
                 } }
             });
-            firstFrameRendered=false; playerView.setPlayer(current); current.setMediaItem(MediaItem.fromUri(mediaUri)); current.setPlaybackSpeed(speed);
-            positionMs=durationMs>0 && positionMs>=durationMs-500?0:positionMs; current.seekTo(Math.max(0,positionMs)); current.prepare(); current.setPlayWhenReady(resumed && shouldPlay); main.removeCallbacks(videoStartupCheck);main.postDelayed(videoStartupCheck,8000);playerView.showController();
+            firstFrameRendered=false; playerView.setPlayer(current); current.setMediaItem(new MediaItem.Builder().setMediaId(Long.toString(videoId)).setUri(mediaUri).build()); current.setPlaybackSpeed(speed);
+            positionMs=LibraryWatchState.isWatched(positionMs,durationMs)?0:positionMs; current.seekTo(Math.max(0,positionMs)); current.prepare(); current.setPlayWhenReady(playbackVisible() && shouldPlay); main.removeCallbacks(videoStartupCheck);main.postDelayed(videoStartupCheck,8000);if(!isPipPlayback())playerView.showController();updatePipParams();
         } catch (RuntimeException error) { releasePlayer(); showError("播放器初始化失败，请重试或返回视频库。",true); }
     }
     private boolean rejectUnrenderableTracks(Tracks tracks) {
@@ -812,29 +997,36 @@ public final class PlayerActivity extends Activity {
             WindowInsetsController bars=getWindow().getInsetsController(); if (bars!=null) { bars.hide(WindowInsets.Type.systemBars()); bars.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE); }
         }
     }
-    @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); if(zoom!=null)zoom.reset();fullscreen=config.orientation==Configuration.ORIENTATION_LANDSCAPE; immersive(); if (!sheetMode.isEmpty()) {cancelSheetAnimation();canvasSheetDrag=false;recycleCanvasVelocity();layoutSheet();sheetBody.post(()->{if(!sheetMode.isEmpty()){setSheetOffset(0);bindVisibleMarkerFrames();}});} if (scrubbing) positionPreview(scrubPosition); }
+    @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); if(zoom!=null)zoom.reset();fullscreen=config.orientation==Configuration.ORIENTATION_LANDSCAPE; if(!isPipPlayback())immersive(); if (!sheetMode.isEmpty()) {cancelSheetAnimation();canvasSheetDrag=false;recycleCanvasVelocity();layoutSheet();sheetBody.post(()->{if(!sheetMode.isEmpty()){setSheetOffset(0);bindVisibleMarkerFrames();}});} if (scrubbing) positionPreview(scrubPosition);updatePipParams(); }
+    @Override protected void onNewIntent(Intent intent){
+        super.onNewIntent(intent);long target=intent.getLongExtra("video_id",0);if(target<=0)return;
+        nextRequest++;nextPending=false;autoAdvancePending=false;setIntent(intent);cancelCanvasGesture();cancelSheetAnimation();if(!sheetMode.isEmpty())settleSheet(false,false);
+        if(target!=videoId)switchVideo(target);
+        else {newPipSession();shouldPlay=true;if(playbackFailed)loadVideo();else if(player!=null)player.setPlayWhenReady(true);updatePipParams();}
+    }
     @Override protected void onStart() { super.onStart(); started=true; if(!splitReturning)ensurePlayer(); }
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);
         if(request==74&&result==RESULT_OK&&data!=null&&data.getLongExtra("video_id",0)>0){
-            releasePlayer();videoId=data.getLongExtra("video_id",videoId);getIntent().putExtra("video_id",videoId);
+            releasePlayer();long returnedId=data.getLongExtra("video_id",videoId);if(returnedId!=videoId)clearTrackOverrides();videoId=returnedId;getIntent().putExtra("video_id",videoId);
             positionMs=data.getLongExtra("position_ms",0);shouldPlay=data.getBooleanExtra("should_play",true);restoredPosition=true;splitReturning=false;
             loaded=false;mediaUri=null;zoom.reset();loadVideo();
         }
     }
-    @Override protected void onResume() { super.onResume(); resumed=true; if(splitReturning){splitReturning=false;restoredPosition=false;loadVideo();}else ensurePlayer(); if (player!=null) player.setPlayWhenReady(shouldPlay); markerList.post(this::bindVisibleMarkerFrames);immersive(); }
+    @Override protected void onResume() { super.onResume(); resumed=true; if(splitReturning){splitReturning=false;restoredPosition=false;loadVideo();}else ensurePlayer(); if (player!=null) player.setPlayWhenReady(shouldPlay); if(!isPipPlayback()){applyPipUi(false);markerList.post(this::bindVisibleMarkerFrames);immersive();} }
     @Override protected void onPause() {
-        nextRequest++;nextPending=false;
+        boolean keepPip=isPipPlayback();if(!keepPip){nextRequest++;nextPending=false;autoAdvancePending=false;}
         cancelCanvasGesture();cancelSheetAnimation();if(!sheetMode.isEmpty())settleSheet(true,false);
-        clearMarkerFrames();if (player!=null) { shouldPlay=player.getPlayWhenReady(); savePosition(); } resumed=false; releasePlayer(); super.onPause();
+        clearMarkerFrames();if (player!=null) { shouldPlay=player.getPlayWhenReady(); savePosition(); } resumed=false;if(!keepPip)releasePlayer();else refreshPreviewPreparation();super.onPause();
     }
-    @Override protected void onStop() { started=false; releasePlayer(); super.onStop(); }
+    @Override protected void onStop() { if(player!=null)shouldPlay=player.getPlayWhenReady();started=false;nextRequest++;nextPending=false;autoAdvancePending=false;releasePlayer();newPipSession();pictureInPicture=false;enteringPictureInPicture=false;super.onStop(); }
     @Override protected void onSaveInstanceState(Bundle state) {
         if (player!=null) positionMs=Math.max(0,player.getCurrentPosition());state.putLong("video_id",videoId); state.putLong("position_ms",positionMs); state.putFloat("speed",speed);
-        state.putBoolean("split_returning",splitReturning);state.putBoolean("fill_video",fillVideo); state.putBoolean("should_play",resumed && player!=null?player.getPlayWhenReady():shouldPlay); state.putBoolean("range_open","range".equals(sheetMode));
+        state.putBoolean("split_returning",splitReturning);state.putBoolean("fill_video",fillVideo); state.putBoolean("should_play",player!=null?player.getPlayWhenReady():shouldPlay); state.putBoolean("range_open","range".equals(sheetMode));
+        state.putString("playback_mode",playbackMode);if(trackParameters!=null)state.putBundle("track_parameters",trackParameters.toBundle());
         state.putString("range_start",rangeStart.getText().toString()); state.putString("range_end",rangeEnd.getText().toString()); state.putString("range_name",rangeName.getText().toString()); super.onSaveInstanceState(state);
     }
-    @Override protected void onDestroy() { cancelSheetAnimation();recycleCanvasVelocity();releasePlayer(); destroyed=true; loadGeneration++; coverGeneration++; releaseEnterTransition(); if (transitionCover!=null) {transitionCover.animate().cancel();transitionCover.setImageDrawable(null);} previewLoader.release(); markerThumbnails.release(); main.removeCallbacksAndMessages(null); io.execute(store::close); io.shutdown(); super.onDestroy(); }
+    @Override protected void onDestroy() { cancelSheetAnimation();recycleCanvasVelocity();releasePlayer(); destroyed=true;newPipSession();if(pipReceiverRegistered){unregisterReceiver(pipReceiver);pipReceiverRegistered=false;} loadGeneration++; coverGeneration++; releaseEnterTransition(); if (transitionCover!=null) {transitionCover.animate().cancel();transitionCover.setImageDrawable(null);} previewLoader.release(); markerThumbnails.release(); main.removeCallbacksAndMessages(null); io.execute(store::close); io.shutdown(); super.onDestroy(); }
     private void handleBack() { if (!sheetMode.isEmpty()) closeSheet(); else finishPlayback(); }
     @Override public void onBackPressed() { handleBack(); }
 

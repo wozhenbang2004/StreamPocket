@@ -19,6 +19,7 @@ final class ResolvedMediaCache {
     private static final class Entry {
         String source, scope; long created; byte[] iv, encrypted;
     }
+    static synchronized void clear() { ITEMS.clear(); }
     static synchronized String put(JSONObject info, String source, String scope, long now) throws Exception {
         prune(now);
         byte[] bytes = info.toString().getBytes(StandardCharsets.UTF_8);

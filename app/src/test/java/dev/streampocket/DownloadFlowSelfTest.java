@@ -43,6 +43,25 @@ public final class DownloadFlowSelfTest {
         check(SourceFailure.kind("ERROR: HTTP Error 401: Unauthorized")==SourceFailure.Kind.AUTH,"Explicit auth failure missed");
         check(SourceFailure.kind("ERROR: login required\nERROR: timed out")==SourceFailure.Kind.TIMEOUT,"Earlier attempt hid latest error");
         check(!SourceFailure.retryable(new Exception("HTTP Error 429")),"A platform limit must not be immediately retried");
+        String noVideo = "ERROR: [twitter] 210403404429123: No video could be found in this tweet";
+        check(SourceFailure.kind(noVideo) == SourceFailure.Kind.NO_FORMATS,
+                "A missing Twitter format blocked the existing bounded public fallback");
+        check(!SourceFailure.retryable(new Exception(noVideo)),
+                "A missing format must not trigger a network retry");
+        check(CoreRules.inspectionMessage(new Exception(noVideo)).contains("失败链接已保留"),
+                "Missing formats lost the retryable link explanation");
+        check(SourceFailure.kind("ERROR: Unsupported URL: https://example.com/post") == SourceFailure.Kind.UNSUPPORTED,
+                "Unsupported input was mistaken for a missing format");
+        check(SourceFailure.kind("ERROR: Requested format is not available") == SourceFailure.Kind.UNSUPPORTED,
+                "A selected quality error was mistaken for a source fallback");
+        check(SourceFailure.kind(noVideo + "\nERROR: HTTP Error 403: Forbidden") == SourceFailure.Kind.ACCESS,
+                "An access restriction was replaced by an earlier missing-format error");
+        check(SourceFailure.kind(noVideo + "\nERROR: HTTP Error 401: Unauthorized") == SourceFailure.Kind.AUTH,
+                "An account requirement was replaced by an earlier missing-format error");
+        check(SourceFailure.kind(noVideo + "\nERROR: HTTP Error 429: Too Many Requests") == SourceFailure.Kind.RATE_LIMIT,
+                "A rate limit was replaced by an earlier missing-format error");
+        check(SourceFailure.kind(noVideo + "\nERROR: Complete the verification") == SourceFailure.Kind.CHALLENGE,
+                "A verification requirement was replaced by an earlier missing-format error");
     }
     static void scheduler() throws Exception {
         AtomicLong time=new AtomicLong(10_000);SourceScheduler scheduler=new SourceScheduler(time::get);

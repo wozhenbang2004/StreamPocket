@@ -32,8 +32,10 @@ public final class SourceFailure {
                 || text.contains("authentication required") || text.contains("http error 401") || text.contains("401 unauthorized")
                 || text.contains("cookies have expired") || text.contains("invalid cookies") || text.contains("登录后")
                 || text.contains("会员专享")||text.contains("private video")||text.contains("members-only")) return Kind.AUTH;
-        if(text.contains("no video formats")||text.contains("no usable video"))return Kind.NO_FORMATS;
-        if(text.contains("unsupported url")||text.contains("requested format")||text.contains("no video could be found")||text.contains("no video formats")||text.contains("no usable video"))return Kind.UNSUPPORTED;
+        // yt-dlp's Twitter extractor uses this wording when a valid post has no
+        // formats. Keep it eligible for the existing single public-endpoint fallback.
+        if(text.contains("no video formats")||text.contains("no usable video")||text.contains("no video could be found in this tweet"))return Kind.NO_FORMATS;
+        if(text.contains("unsupported url")||text.contains("requested format")||text.contains("no video could be found"))return Kind.UNSUPPORTED;
         return Kind.OTHER;
     }
     private static boolean httpCode(String text,String codes){return java.util.regex.Pattern.compile("(?:http(?: error| status)?|status(?: code)?|response(?: code)?)[ :\\t]*(?:=\\s*)?(?:"+codes+")\\b").matcher(text).find();}

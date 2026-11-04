@@ -28,8 +28,9 @@
         <activity android:name=".LoginActivity" android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".PlayerActivity" android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden"
+        <activity android:name=".PlayerActivity" android:exported="false" android:launchMode="singleTask"
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
             android:windowSoftInputMode="adjustResize" />
         <activity android:name=".SplitPlayerActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity android:name=".EditorActivity" android:exported="false"

@@ -1,6 +1,6 @@
 # Resolved runtime dependency license inventory
 
-Resolved from debugRuntimeClasspath on 2026-10-31. Licenses below are declarations in the cached official Maven POM (or its parent), not an audit of bundled native code. Do not treat this table as permission to publish an APK.
+Historical snapshot resolved from debugRuntimeClasspath on 2026-10-31. The 0.5.0 development branch upgrades Media3 to 1.11.1, so the table below is not its resolved dependency inventory. Current direct versions and source attribution are in [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md). Licenses below are declarations in the cached official Maven POM (or its parent), not an audit of bundled native code. Do not treat this table as permission to publish an APK.
 
 | Artifact | POM license |
 | --- | --- |

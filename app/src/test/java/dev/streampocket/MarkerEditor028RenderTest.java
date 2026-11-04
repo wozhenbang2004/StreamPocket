@@ -85,7 +85,21 @@ public final class MarkerEditor028RenderTest {
     }
     @Test public void groupedPlaybackToolsAndCompactSpeedChoicesUseTheCurrentProductionViews()throws Exception{
         Player022UiTest fixture=new Player022UiTest();fixture.setup();Object session=call(fixture,"open",new Class<?>[0]);PlayerActivity a=get(session,"a",PlayerActivity.class);
-        try{FrameLayout root=get(a,"root",FrameLayout.class);for(int i=root.getChildCount()-1;i>=0;i--){View child=root.getChildAt(i);if(child instanceof TextView&&((TextView)child).getText().toString().startsWith("界面时钟夹具"))root.removeView(child);}TextView referenceNote=note(a,"界面预览 · 参考静态帧 · 非真机");FrameLayout.LayoutParams noteParams=new FrameLayout.LayoutParams(-1,dp(a,24),Gravity.TOP);noteParams.topMargin=dp(a,60);root.addView(referenceNote,noteParams);referenceSurface(get(a,"playerView",PlayerView.class),5000);call(a,"showSheet",new Class<?>[]{String.class},"more");layout(a.getWindow().getDecorView(),412,915);idle();assertEquals(2,get(a,"menuPanel",ViewGroup.class).getChildCount());capture(a.getWindow().getDecorView(),412,915,"035-grouped-player-tools-reference-stills");
+        try{
+            Shadows.shadowOf(a.getPackageManager()).setSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE,true);
+            FrameLayout root=get(a,"root",FrameLayout.class);for(int i=root.getChildCount()-1;i>=0;i--){View child=root.getChildAt(i);if(child instanceof TextView&&((TextView)child).getText().toString().startsWith("界面时钟夹具"))root.removeView(child);}TextView referenceNote=note(a,"界面预览 · 参考静态帧 · 非真机");FrameLayout.LayoutParams noteParams=new FrameLayout.LayoutParams(-1,dp(a,24),Gravity.TOP);noteParams.topMargin=dp(a,60);root.addView(referenceNote,noteParams);referenceSurface(get(a,"playerView",PlayerView.class),5000);
+            call(a,"showSheet",new Class<?>[]{String.class},"more");layout(a.getWindow().getDecorView(),412,915);idle();
+            ViewGroup menu=get(a,"menuPanel",ViewGroup.class);assertEquals("Watching, creative tools and viewing tools stay grouped",3,menu.getChildCount());
+            assertButtons(menu.getChildAt(0),"播放模式 · 单次播放","音轨与字幕","画中画");
+            assertButtons(menu.getChildAt(1),"精彩标记","截取片段");
+            assertButtons(menu.getChildAt(2),"视频信息","下一个视频","双视频分屏","画面比例 · 完整显示","播放手势");
+            capture(a.getWindow().getDecorView(),412,915,"035-grouped-player-tools-reference-stills");
+            assertToolOpens(a,"播放模式 · 单次播放","playback_mode");assertToolOpens(a,"精彩标记","markers");
+            assertToolOpens(a,"视频信息","info");assertToolOpens(a,"画面比例 · 完整显示","aspect");assertToolOpens(a,"播放手势","gestures");
+            call(a,"showSheet",new Class<?>[]{String.class},"more");assertTrue(menuButton(a,"截取片段").performClick());
+            Intent editor=Shadows.shadowOf(a).getNextStartedActivity();assertNotNull(editor);assertEquals(EditorActivity.class.getName(),editor.getComponent().getClassName());assertEquals(get(a,"videoId",Long.class).longValue(),editor.getLongExtra("video_id",0));
+            call(a,"showSheet",new Class<?>[]{String.class},"more");assertTrue(menuButton(a,"双视频分屏").performClick());
+            Intent split=Shadows.shadowOf(a).getNextStartedActivity();assertNotNull(split);assertEquals(SplitPlayerActivity.class.getName(),split.getComponent().getClassName());assertEquals(get(a,"videoId",Long.class).longValue(),split.getLongExtra("video_id",0));
             call(a,"showSheet",new Class<?>[]{String.class},"speed");layout(a.getWindow().getDecorView(),412,915);idle();assertEquals(2,get(a,"menuPanel",ViewGroup.class).getChildCount());capture(a.getWindow().getDecorView(),412,915,"035-compact-speed-reference-stills");
         }finally{call(session,"close",new Class<?>[0]);}
     }
@@ -111,6 +125,10 @@ public final class MarkerEditor028RenderTest {
     private static void referenceSurface(PlayerView view,long at)throws Exception{AspectRatioFrameLayout content=view.findViewById(androidx.media3.ui.R.id.exo_content_frame);content.setAspectRatio(16f/9f);ImageView still=new ImageView(view.getContext());still.setScaleType(ImageView.ScaleType.FIT_CENTER);still.setImageBitmap(reference(at));still.setContentDescription("许可参考视频的静态帧，非 Android 解码");content.addView(still,new FrameLayout.LayoutParams(-1,-1));TextView note=note(view.getContext(),"布局参考 · 静态视频帧 · 非真机");content.addView(note,new FrameLayout.LayoutParams(-1,dp(view.getContext(),28),Gravity.BOTTOM));}
     private static TextView note(Context app,String text){TextView note=new TextView(app);note.setText(text);note.setTextColor(0xFFCFD7D5);note.setTextSize(11);note.setGravity(Gravity.CENTER);note.setBackgroundColor(0x990A0C0F);return note;}
     private static int countImages(View v){if(v instanceof ImageView)return ((ImageView)v).getDrawable()!=null?1:0;int count=0;if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++)count+=countImages(((ViewGroup)v).getChildAt(i));return count;}
+    private static java.util.List<Button> buttons(View view){java.util.List<Button> result=new java.util.ArrayList<>();if(view instanceof Button)result.add((Button)view);if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++)result.addAll(buttons(((ViewGroup)view).getChildAt(i)));return result;}
+    private static void assertButtons(View group,String... labels){java.util.List<Button> choices=buttons(group);assertEquals(labels.length,choices.size());for(int i=0;i<labels.length;i++){Button button=choices.get(i);assertEquals(labels[i],button.getText().toString());assertTrue(labels[i]+" stays clickable",button.isClickable()&&button.hasOnClickListeners()&&button.isEnabled());}}
+    private static Button menuButton(PlayerActivity activity,String label)throws Exception{for(Button button:buttons(get(activity,"menuPanel",View.class)))if(label.contentEquals(button.getText()))return button;throw new AssertionError("Missing playback tool: "+label);}
+    private static void assertToolOpens(PlayerActivity activity,String label,String destination)throws Exception{call(activity,"showSheet",new Class<?>[]{String.class},"more");assertTrue(menuButton(activity,label).performClick());idle();assertEquals(destination,get(activity,"sheetMode",String.class));}
     private static void await(EditorActivity a)throws Exception{for(int i=0;i<3;i++){get(a,"io",ExecutorService.class).submit(()->{}).get(5,TimeUnit.SECONDS);idle();}}
     private static void drain(TimestampThumbnails frames)throws Exception{get(frames,"worker",ThreadPoolExecutor.class).submit(()->{}).get(5,TimeUnit.SECONDS);idle();}
     private static void idle(){Shadows.shadowOf(Looper.getMainLooper()).idle();}

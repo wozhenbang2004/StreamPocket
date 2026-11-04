@@ -2,6 +2,7 @@ package dev.streampocket;
 
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -44,10 +45,10 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             File wide=copyAsset(media,"bbb-licensed-20s.mp4"),tall=copyAsset(media,"bbb-portrait-crop-20s.mp4");
             MainActivity main=(MainActivity)startActivitySync(new Intent(app,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();
             app.getSharedPreferences("config",0).edit().putString("appearance_theme","light").commit();
-            JSONObject a=completed("qa-wide","Big Buck Bunny · 花园里的清晨，完整横幅与声音",wide,320,180,1);
-            JSONObject b=completed("qa-tall","Big Buck Bunny · 竖屏构图测试（原片裁切衍生）",tall,180,320,2);
+            JSONObject a=completed("qa-wide","Big Buck Bunny · 花园里的清晨，完整横幅与声音",wide,320,180,"upgrade050".equals(phase)?2:1);
+            JSONObject b=completed("qa-tall","Big Buck Bunny · 竖屏构图测试（原片裁切衍生）",tall,180,320,"upgrade050".equals(phase)?1:2);
             app.getSharedPreferences("tasks",0).edit().putString("items",new JSONArray().put(a).put(b).toString()).commit();
-            long wideId;try(LibraryStore store=new LibraryStore(app)){wideId=store.upsertCompletedDownload(a);store.upsertCompletedDownload(b);if(store.markers(wideId).isEmpty())store.addMarker(wideId,5000,"真实媒体验收标记");}
+            long wideId,tallId;try(LibraryStore store=new LibraryStore(app)){wideId=store.upsertCompletedDownload(a);tallId=store.upsertCompletedDownload(b);if(store.markers(wideId).isEmpty())store.addMarker(wideId,5000,"真实媒体验收标记");}
             onMain(()->invoke(main,"showTab",new Class<?>[]{String.class},"library"));
             waitUntil(()->{try{return field(main,"libraryView",VideoLibraryView.class)!=null&&field(field(main,"libraryView",VideoLibraryView.class),"grid",GridView.class).getCount()==2;}catch(Exception e){return false;}},30000,"two real media records");
             SystemClock.sleep(2500);capture("01-library-real-media");
@@ -55,7 +56,9 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             onMain(()->{ExoPlayer p=field(player,"player",ExoPlayer.class);p.pause();p.seekTo(5000);field(player,"playerView",PlayerView.class).showController();});SystemClock.sleep(1400);
             capture("02-player-real-frame");
             check(onMainValue(()->field(player,"firstFrameRendered",Boolean.class)),"real Android first frame callback");
+            if("upgrade050".equals(phase)) verifyPictureInPicture(player,main,wideId,tallId);
             if(!"before".equals(phase)){
+                onMain(()->field(player,"playerView",PlayerView.class).showController());waitForIdleSync();
                 View timeBar=onMainValue(()->field(player,"timeBarView",View.class));int[] at=location(timeBar);float x=at[0]+timeBar.getWidth()*.35f,y=at[1]+timeBar.getHeight()/2f;long down=SystemClock.uptimeMillis();
                 inject(MotionEvent.ACTION_DOWN,x,y,down);inject(MotionEvent.ACTION_MOVE,at[0]+timeBar.getWidth()*.65f,y,down);
                 waitUntil(()->{try{return field(player,"previewImage",ImageView.class).getDrawable() instanceof BitmapDrawable;}catch(Exception e){return false;}},15000,"real retriever thumbnail during timebar drag");
@@ -69,7 +72,10 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
                 inject(MotionEvent.ACTION_CANCEL,x,y+90,down);SystemClock.sleep(400);check(onMainValue(()->field(player,"sheetBody",View.class).getTranslationY())==0,"cancel returns sheet to open");
                 onMain(player::onBackPressed);SystemClock.sleep(400);check(onMainValue(()->field(player,"sheetOverlay",View.class).getVisibility())==View.GONE,"Back closes sheet first");
             }else {onMain(player::onBackPressed);SystemClock.sleep(200);}
-            onMain(player::onBackPressed);waitForIdleSync();SystemClock.sleep(700);capture("06-returned-library");
+            onMain(player::onBackPressed);waitForIdleSync();
+            if("upgrade050".equals(phase))waitUntil(()->{try{return main.hasWindowFocus()&&field(main,"libraryView",VideoLibraryView.class).isShown();}catch(Exception e){return false;}},10000,"Back actually returns focus to the visible video library");
+            SystemClock.sleep(700);capture("06-returned-library");
+            if("upgrade050".equals(phase))check(onMainValue(()->field(player,"player",ExoPlayer.class))==null,"leaving playback releases the real player");
             PlayerActivity portrait=openVideo(main,"qa-tall");awaitFrame(portrait);onMain(()->{ExoPlayer p=field(portrait,"player",ExoPlayer.class);p.pause();p.seekTo(5000);field(portrait,"playerView",PlayerView.class).showController();});SystemClock.sleep(1200);capture("07-portrait-real-frame");onMain(portrait::onBackPressed);SystemClock.sleep(500);
             JSONObject live=new JSONObject(a.toString()).put("id","qa-telemetry").put("title","队列界面样例 · 正在传输的测试片").put("status","downloading").put("phase","video").put("progress",38).put("stageProgress",38).put("downloadedBytes",39845888).put("totalBytes",104857600).put("speedBytesPerSecond",2.4*1048576).put("etaSeconds",26).put("transferMode","parallel-http").put("activeConnections",4).put("configuredConnections",4).put("detail","当前阶段 38% · 本阶段约 26 秒").put("media",new JSONObject().put("thumbnail",Uri.fromFile(wide)));
             JSONObject paused=new JSONObject(b.toString()).put("id","qa-paused").put("title","队列界面样例 · 已暂停，保留原断点").put("status","paused").put("downloadedBytes",6291456).put("totalBytes",104857600);
@@ -82,8 +88,40 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             onMain(()->invoke(main,"showTab",new Class<?>[]{String.class},"new"));
             Engine.Media parsed=new Engine.Media();parsed.url="https://peach.blender.org/";parsed.id="qa-inline";parsed.platform="合法测试媒体";parsed.title=a.optString("title");parsed.uploader="Blender Foundation";parsed.duration=20;parsed.width=320;parsed.height=180;parsed.thumbnail=Uri.fromFile(wide).toString();parsed.filesize=wide.length();parsed.qualities.add(new Engine.Quality("best","原片画质","best"));
             onMain(()->{field(main,"input",android.widget.EditText.class).setText(parsed.url);invoke(main,"showMedia",new Class<?>[]{java.util.List.class},java.util.Collections.singletonList(parsed));});SystemClock.sleep(1000);capture("10-inline-real-artwork-metadata-fixture");
-            result.putString("stream","PASS: "+phase+"; real horizontal/portrait decode, first frame, library return"+("before".equals(phase)?"":"; real scrub bitmap, sheet drag/cancel/back, non-executing swipe")+"; captures="+output.getAbsolutePath());finish(Activity.RESULT_OK,result);
+            result.putString("stream","PASS: "+phase+"; real horizontal/portrait decode, first frame, library return"+("before".equals(phase)?"":"; real scrub bitmap, sheet drag/cancel/back, non-executing swipe")+("upgrade050".equals(phase)?"; system PiP retains playback, next media keeps playback and audio focus, returns to fullscreen, releases on exit":"")+"; captures="+output.getAbsolutePath());finish(Activity.RESULT_OK,result);
         }catch(Throwable failure){result.putString("stream","FAIL at "+phase+": "+android.util.Log.getStackTraceString(failure));finish(Activity.RESULT_CANCELED,result);}
+    }
+    private void verifyPictureInPicture(PlayerActivity activity,MainActivity libraryActivity,long videoId,long nextVideoId)throws Exception{
+        check(getTargetContext().getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE),"emulator supports system PiP");
+        int fullWidth=onMainValue(()->activity.getWindow().getDecorView().getWidth()),fullHeight=onMainValue(()->activity.getWindow().getDecorView().getHeight());
+        ExoPlayer original=onMainValue(()->field(activity,"player",ExoPlayer.class));
+        onMain(()->{original.seekTo(2000);original.play();field(activity,"playerView",PlayerView.class).showController();activity.findViewById(R.id.sp_player_more).performClick();});
+        waitForIdleSync();
+        onMain(()->{View entry=findText(activity.getWindow().getDecorView(),"画中画");check(entry!=null&&entry.isShown(),"PiP has a real visible tool entry");check(entry.performClick(),"PiP entry invokes its action");});
+        waitUntil(activity::isInPictureInPictureMode,15000,"system enters PiP");
+        waitUntil(()->activity.getWindow().getDecorView().getWidth()<fullWidth*.8&&activity.getWindow().getDecorView().getHeight()<fullHeight*.8,15000,"system PiP transition reaches a visibly smaller window");
+        check(getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME),"navigate to the launcher while PiP remains visible");
+        waitUntil(()->{try{return !field(libraryActivity,"foreground",Boolean.class)&&activity.isInPictureInPictureMode();}catch(Exception e){return false;}},10000,"the main app leaves foreground while system PiP stays visible");
+        check(onMainValue(()->field(activity,"player",ExoPlayer.class))==original,"PiP onPause keeps the current player");
+        long position=onMainValue(original::getCurrentPosition);
+        waitUntil(()->original.getCurrentPosition()>position+500,10000,"real media position advances while in PiP");
+        capture("02a-system-pip-real-playback");
+        onMain(()->{PendingIntent next=(PendingIntent)field(activity,"pipCommands",java.util.Map.class).get("next");check(next!=null,"current PiP session has a next action");next.send();});
+        waitUntil(()->{try{return field(activity,"videoId",Long.class)==nextVideoId;}catch(Exception e){return false;}},15000,"PiP next action selects the next real media item");
+        awaitFrame(activity);
+        ExoPlayer nextPlayer=onMainValue(()->field(activity,"player",ExoPlayer.class));
+        check(onMainValue(()->activity.isInPictureInPictureMode()&&nextPlayer.isPlaying()&&nextPlayer.getPlaybackSuppressionReason()==Player.PLAYBACK_SUPPRESSION_REASON_NONE),"new media plays with audio focus while still in PiP");
+        long nextPosition=onMainValue(nextPlayer::getCurrentPosition);
+        waitUntil(()->nextPlayer.getCurrentPosition()>nextPosition+500,10000,"next media advances without returning to foreground");
+        capture("02a-next-media-in-system-pip");
+        onMain(()->getTargetContext().startActivity(new Intent(getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
+        waitUntil(libraryActivity::hasWindowFocus,15000,"return to the existing library before expanding PiP");
+        onMain(()->getTargetContext().startActivity(new Intent(getTargetContext(),PlayerActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("video_id",videoId)));
+        waitUntil(()->!activity.isInPictureInPictureMode(),15000,"existing playback activity returns to fullscreen");
+        awaitFrame(activity);
+        check(onMainValue(()->field(activity,"videoId",Long.class))==videoId,"fullscreen return keeps the selected video");
+        onMain(()->{ExoPlayer current=field(activity,"player",ExoPlayer.class);current.pause();current.seekTo(5000);field(activity,"playerView",PlayerView.class).showController();});
+        SystemClock.sleep(700);capture("02b-pip-returned-fullscreen");
     }
     private PlayerActivity openVideo(MainActivity main,String taskId)throws Exception{
         long id;try(LibraryStore store=new LibraryStore(getTargetContext())){id=store.upsertCompletedDownload(TaskStore.get(getTargetContext(),taskId));}
@@ -104,5 +142,6 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
     private static <T>T field(Object o,String name,Class<T> type)throws Exception{Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);return type.cast(f.get(o));}
     private static void invoke(Object o,String name,Class<?>[] types,Object... args)throws Exception{Method m=o.getClass().getDeclaredMethod(name,types);m.setAccessible(true);m.invoke(o,args);}
     private static View findType(View v,Class<?> type){if(type.isInstance(v))return v;if(v instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++){View found=findType(((android.view.ViewGroup)v).getChildAt(i),type);if(found!=null)return found;}return null;}
+    private static View findText(View view,String label){if(view instanceof android.widget.Button&&label.contentEquals(((android.widget.Button)view).getText()))return view;if(view instanceof android.view.ViewGroup)for(int i=0;i<((android.view.ViewGroup)view).getChildCount();i++){View found=findText(((android.view.ViewGroup)view).getChildAt(i),label);if(found!=null)return found;}return null;}
     private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
 }

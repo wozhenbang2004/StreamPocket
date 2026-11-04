@@ -28,8 +28,15 @@ public final class DownloadService extends Service {
     public static final String ENQUEUE = "dev.streampocket.ENQUEUE";
     public static final String CANCEL = "dev.streampocket.CANCEL";
     public static final String PAUSE = "dev.streampocket.PAUSE";
+    public static final String PAUSE_QUEUE = "dev.streampocket.PAUSE_QUEUE";
+    public static final String RESUME_QUEUE = "dev.streampocket.RESUME_QUEUE";
+    public static final String RESUME = "dev.streampocket.RESUME";
+    public static final String RETRY_FAILED = "dev.streampocket.RETRY_FAILED";
+    public static final String MOVE_NEXT = "dev.streampocket.MOVE_NEXT";
+    public static final String MOVE_LAST = "dev.streampocket.MOVE_LAST";
     private static final String CHANNEL = "downloads";
     private static final int NOTIFICATION = 88;
+    private static final DownloadProcessStopper PROCESS_STOPS = new DownloadProcessStopper();
     private final Object lock = new Object();
     private final ArrayDeque<String> queue = new ArrayDeque<>();
     private final Set<String> cancelled = new HashSet<>();
@@ -39,13 +46,15 @@ public final class DownloadService extends Service {
     private final Handler main = new Handler(Looper.getMainLooper());
     private boolean draining;
     private volatile boolean destroyed;
+    private boolean lifecycleStopRequested;
     private String active;
+    private DownloadProcessStopper.Attempt activeAttempt;
+    private DownloadProcessStopper processStops = PROCESS_STOPS;
     private int lastStartId;
-    private Engine engine;
     private long lastProgressWrite;
 
     @Override public void onCreate() {
-        super.onCreate(); TaskStore.init(this); engine = new Engine(this);
+        super.onCreate(); TaskStore.init(this);
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel channel = new NotificationChannel(CHANNEL, "下载进度", NotificationManager.IMPORTANCE_LOW);
             channel.setDescription("显示下载状态，传输时可暂停或取消。");
@@ -56,34 +65,66 @@ public final class DownloadService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         lastStartId = startId;
         if (intent == null) { stopSelf(startId); return START_NOT_STICKY; }
-        String id = intent.getStringExtra("id");
-        if (PAUSE.equals(intent.getAction())) {
-            pause(id); finishIfIdle(startId); return START_NOT_STICKY;
+        if (destroyed) {
+            // A new start may arrive while Android is destroying this instance.
+            // Do not leave newly created tasks queued on a worker that is stopping.
+            if (ENQUEUE.equals(intent.getAction())) {
+                java.util.ArrayList<String> rejected = intent.getStringArrayListExtra("ids");
+                if (rejected == null) { rejected = new java.util.ArrayList<>(); rejected.add(intent.getStringExtra("id")); }
+                for (String item : rejected) {
+                    JSONObject task = TaskStore.get(this, item);
+                    if (task != null && "queued".equals(task.optString("status")))
+                        TaskStore.markStopped(this, item, "interrupted", "下载服务正在停止，点击重试可继续");
+                }
+            }
+            stopSelf(startId); return START_NOT_STICKY;
         }
-        if (CANCEL.equals(intent.getAction())) {
-            cancel(id); finishIfIdle(startId); return START_NOT_STICKY;
-        }
+        String id = intent.getStringExtra("id"), action = intent.getAction();
         java.util.ArrayList<String> ids = intent.getStringArrayListExtra("ids");
         if (ids == null) { ids = new java.util.ArrayList<>(); if (id != null) ids.add(id); }
         ids.removeIf(item -> item == null || TaskStore.get(this, item) == null);
-        if (!ENQUEUE.equals(intent.getAction()) || ids.isEmpty()) {
+        if (PAUSE.equals(action)) {
+            pauseTasks(ids); finishIfIdle(startId); return START_NOT_STICKY;
+        }
+        if (CANCEL.equals(action)) {
+            for (String item : ids) cancel(item);
+            finishIfIdle(startId); return START_NOT_STICKY;
+        }
+        if (PAUSE_QUEUE.equals(action)) {
+            pauseQueue(); finishIfIdle(startId); return START_NOT_STICKY;
+        }
+        if (MOVE_NEXT.equals(action) || MOVE_LAST.equals(action)) {
+            moveWaiting(id, MOVE_NEXT.equals(action)); finishIfIdle(startId); return START_NOT_STICKY;
+        }
+        boolean resumeQueue = RESUME_QUEUE.equals(action);
+        DownloadQueuePolicy.Admission admission = RESUME.equals(action) ? DownloadQueuePolicy.Admission.RESUME
+                : RETRY_FAILED.equals(action) ? DownloadQueuePolicy.Admission.RETRY_FAILED : DownloadQueuePolicy.Admission.ANY;
+        if ((!resumeQueue && !ENQUEUE.equals(action) && !RESUME.equals(action) && !RETRY_FAILED.equals(action))
+                || (!resumeQueue && ids.isEmpty())) {
             finishIfIdle(startId); return START_NOT_STICKY;
         }
         // A foreground start acknowledges Android immediately, but the notification
         // must remain attached to the worker's current task, not the newly added one.
         synchronized (lock) {
             String shown = active != null ? active : queue.peekFirst();
-            if (shown == null) shown = ids.get(0);
+            if (shown == null && !ids.isEmpty()) shown = ids.get(0);
             JSONObject current = TaskStore.get(this, shown);
             startForeground(NOTIFICATION, notification(current == null ? "等待下载" : current.optString("title"), shown,
                     current == null ? -1 : current.optDouble("progress", -1)));
             java.util.List<String> candidates = new java.util.ArrayList<>();
             for (String item : ids) if (!item.equals(active) && !queue.contains(item)) candidates.add(item);
-            java.util.List<String> accepted = TaskStore.markQueuedBatch(this, candidates);
-            for (String item : accepted) { cancelled.remove(item); pauseRequested.remove(item); queue.addLast(item); }
-            if (accepted.isEmpty()) for (String item : candidates) if (TaskStore.canEnqueue(TaskStore.get(this, item)))
-                patch(item, "failed", -1, "无法记录下载队列，请重试", "下载尚未开始。");
-            if (!draining && !queue.isEmpty()) { draining = true; worker.execute(this::drain); }
+            java.util.List<String> accepted = resumeQueue ? TaskStore.resumeQueue(this, active) : TaskStore.markQueuedBatch(this, candidates, admission);
+            for (String item : accepted) {
+                cancelled.remove(item); pauseRequested.remove(item);
+                JSONObject task = TaskStore.get(this, item);
+                if (task != null && "queued".equals(task.optString("status")) && !queue.contains(item)) queue.addLast(item);
+            }
+            if (accepted.isEmpty() && !resumeQueue) for (String item : candidates) {
+                JSONObject task = TaskStore.get(this, item);
+                if (task != null && DownloadQueuePolicy.accepts(task.optString("status"), task.optString("pauseOrigin"), admission))
+                    patch(item, "failed", -1, "无法记录下载队列，请重试", "下载尚未开始。");
+            }
+            if (!TaskStore.isQueuePaused(this) && !draining && !queue.isEmpty()) { draining = true; worker.execute(this::drain); }
         }
         finishIfIdle(startId);
         return START_NOT_STICKY;
@@ -97,14 +138,12 @@ public final class DownloadService extends Service {
             if (task == null || "completed".equals(task.optString("status"))) return;
             isActive = id.equals(active);
             if (!isActive && !TaskStore.canEnqueue(task)) return;
-            pauseRequested.remove(id);
-            cancelled.add(id);
             if (!isActive) {
+                pauseRequested.remove(id); cancelled.add(id);
                 queue.remove(id); TaskStore.markStopped(this, id, "cancelled", "已取消；可重试继续");
             } else {
-                try { TaskStore.update(this, id, new JSONObject().put("status", "cancelling").put("pauseRequested", false)
-                        .put("detail", "正在取消").put("userError", "").put("speedBytesPerSecond", -1)
-                        .put("etaSeconds", -1).put("activeConnections", -1)); } catch (Exception ignored) {}
+                if (!TaskStore.markCancelRequested(this, id)) return;
+                pauseRequested.remove(id); cancelled.add(id);
             }
         }
         if (isActive) {
@@ -112,23 +151,48 @@ public final class DownloadService extends Service {
         }
     }
 
-    private void pause(String id) {
-        if (id == null) return;
-        boolean isActive;
+    private void pauseTasks(List<String> ids) {
+        String stopping = null;
         synchronized (lock) {
-            JSONObject task = TaskStore.get(this, id);
-            if (task == null || cancelled.contains(id) || !canPause(task)) return;
-            isActive = id.equals(active);
-            if (!isActive && !"queued".equals(task.optString("status"))) return;
             // The durable request and visible state are installed together, before
             // killing anything. A crash here restores paused, with all bytes kept.
-            if (!TaskStore.markPauseRequested(this, id, isActive)) return;
-            pauseRequested.add(id);
-            if (!isActive) queue.remove(id);
+            for (String id : TaskStore.pauseBatch(this, ids, active)) {
+                if (!id.equals(active)) queue.remove(id);
+                else if ("pausing".equals(TaskStore.get(this, id).optString("status"))) {
+                    pauseRequested.add(id); stopping = id;
+                }
+            }
         }
-        if (isActive) {
-            updateNotification("正在暂停，等待下载进程退出…", id, -1);
-            stopActiveProcess(id);
+        if (stopping != null) {
+            updateNotification("正在暂停，等待下载进程退出…", stopping, -1);
+            stopActiveProcess(stopping);
+        }
+    }
+
+    private void pauseQueue() {
+        String stopping = null;
+        synchronized (lock) {
+            if (!TaskStore.pauseQueue(this, active, new java.util.ArrayList<>(queue))) return;
+            queue.removeIf(id -> TaskStore.heldByQueue(TaskStore.get(this, id)));
+            JSONObject task = TaskStore.get(this, active);
+            if (task != null && DownloadQueuePolicy.stoppingQueue(task.optString("status"), task.optString("pauseOrigin"))) {
+                pauseRequested.add(active); stopping = active;
+            }
+        }
+        if (stopping != null) {
+            updateNotification("正在暂停队列，等待当前下载退出…", stopping, -1);
+            stopActiveProcess(stopping);
+        }
+    }
+
+    private void moveWaiting(String id, boolean next) {
+        synchronized (lock) {
+            if (id == null || id.equals(active)) return;
+            List<String> reordered = TaskStore.moveWaiting(this, id, next, new java.util.ArrayList<>(queue));
+            Set<String> admitted = new HashSet<>(queue);
+            if (reordered.isEmpty()) return;
+            queue.clear();
+            for (String item : reordered) if (admitted.contains(item)) queue.addLast(item);
         }
     }
 
@@ -141,13 +205,9 @@ public final class DownloadService extends Service {
     }
 
     private void stopActiveProcess(String id) {
-        YoutubeDL.getInstance().destroyProcessById("download-" + id);
-        // Covers a stop arriving between the final preflight check and process registration.
-        main.postDelayed(() -> {
-            synchronized (lock) {
-                if (id.equals(active) && isCancelled(id)) YoutubeDL.getInstance().destroyProcessById("download-" + id);
-            }
-        }, 350);
+        DownloadProcessStopper.Attempt attempt;
+        synchronized (lock) { attempt = id.equals(active) ? activeAttempt : null; }
+        processStops.requestStop(attempt);
     }
 
     private boolean isCancelled(String id) {
@@ -157,18 +217,35 @@ public final class DownloadService extends Service {
     private void drain() {
         while (!destroyed) {
             String id;
+            DownloadProcessStopper.Attempt attempt;
+            Engine attemptEngine;
             synchronized (lock) {
+                if (TaskStore.isQueuePaused(this)) { active = null; draining = false; break; }
                 id = queue.poll();
                 if (id == null) { active = null; draining = false; break; }
                 active = id;
+                attemptEngine = new Engine(this);
+                attempt = processStops.newAttempt(id, processId -> {
+                    // A refresh runs an inspect process. Its Engine belongs only
+                    // to this attempt, so an old stop cannot cancel a later one.
+                    attemptEngine.cancelInspect();
+                    return YoutubeDL.getInstance().destroyProcessById(processId);
+                });
+                activeAttempt = attempt;
             }
-            download(id);
-            synchronized (lock) { active = null; cancelled.remove(id); pauseRequested.remove(id); awaitingResumeProgress.remove(id); }
+            try { download(id, attempt.processId, attemptEngine); }
+            finally {
+                processStops.finish(attempt);
+                synchronized (lock) {
+                    active = null; activeAttempt = null;
+                    cancelled.remove(id); pauseRequested.remove(id); awaitingResumeProgress.remove(id);
+                }
+            }
         }
         main.post(() -> finishIfIdle(lastStartId));
     }
 
-    private void download(String id) {
+    private void download(String id, String processId, Engine engine) {
         JSONObject task = TaskStore.get(this, id);
         if (task == null) return;
         StringBuilder log = new StringBuilder();
@@ -177,6 +254,7 @@ public final class DownloadService extends Service {
         PowerManager.WakeLock wakeLock = null;
         MediaExporter.Result committed = null;
         long committedBytes = 0;
+        boolean stopped = false;
         String committedLocation = DownloadLocation.DEFAULT_LABEL;
         SourceScheduler.Lease[] admission = {null};
         try {
@@ -196,17 +274,20 @@ public final class DownloadService extends Service {
             Engine.Media media = Engine.Media.fromJson(task.getJSONObject("media"));
             Engine.Quality quality = Engine.Quality.fromJson(task.getJSONObject("quality"));
             admission[0] = SourceScheduler.SHARED.acquire(media.url, () -> isCancelled(id), stage -> {
-                if (isCancelled(id)) return;
-                try { TaskStore.update(this, id, new JSONObject().put("status", "downloading").put("phase", "preparing")
-                        .put("stageLabel", stage).put("detail", stage)); } catch (Exception ignored) {}
-                updateNotification(media.title + " · " + stage, id, -1);
+                synchronized (lock) {
+                    // A late scheduler callback must not overwrite a durable stop request.
+                    if (isCancelled(id)) return;
+                    try { TaskStore.update(this, id, new JSONObject().put("status", "downloading").put("phase", "preparing")
+                            .put("stageLabel", stage).put("detail", stage)); } catch (Exception ignored) {}
+                    updateNotification(media.title + " · " + stage, id, -1);
+                }
             });
             File root = getExternalFilesDir("downloads");
             if (root == null) root = new File(getFilesDir(), "downloads");
             File directory = new File(root, id);
-            YoutubeDLRequest request = engine.request(media.url, "download-" + id,!media.publicTwitter);
+            YoutubeDLRequest request = engine.request(media.url, processId,!media.publicTwitter);
             boolean preservingNative = DownloadTuning.hasNativeResume(directory);
-            String transferMode = engine.configureDownload(request, media.url, preservingNative, "download-" + id);
+            String transferMode = engine.configureDownload(request, media.url, preservingNative, processId);
             TaskStore.update(this, id, new JSONObject().put("transferReason", preservingNative
                     ? "保留已有断点，使用兼容方式续传" : ""));
             int configuredConnections = DownloadTuning.connections(getSharedPreferences("config", MODE_PRIVATE)
@@ -236,27 +317,29 @@ public final class DownloadService extends Service {
                 request.addOption("--write-subs"); request.addOption("--write-auto-subs");
                 request.addOption("--sub-langs", media.subtitleLanguage); request.addOption("--sub-format", "srt/vtt/best");
             }
-            if (media.album && !engine.useResolved(request, media, "download-" + id)) {
+            if (media.album && !engine.useResolved(request, media, processId)) {
                 admission[0].close();
                 List<Engine.Media> refreshed = engine.inspect(media.url, message -> updateNotification(message,id,-1), () -> isCancelled(id));
                 Engine.Media selected = null;
                 for (Engine.Media item : refreshed) if (item.album && item.id.equals(media.id)) selected = item;
-                if (selected == null || !engine.useResolved(request, selected, "download-" + id)) throw new IOException("图集信息已失效，请重新解析");
+                if (selected == null || !engine.useResolved(request, selected, processId)) throw new IOException("图集信息已失效，请重新解析");
                 media.imageCount = selected.imageCount;
                 admission[0] = SourceScheduler.SHARED.acquire(media.url, () -> isCancelled(id), message -> updateNotification(message,id,-1));
             }
-            boolean resolved = request.hasOption("--load-info-json") || engine.useResolved(request, media, "download-" + id);
-            String requestScope = engine.requestScope("download-" + id);
+            boolean resolved = request.hasOption("--load-info-json") || engine.useResolved(request, media, processId);
+            String requestScope = engine.requestScope(processId);
             lastProgressWrite = 0;
             String output;
             Engine.RUNTIME_LOCK.readLock().lockInterruptibly();
             boolean runtimeHeld = true;
             try {
-                if (isCancelled(id)) throw new IOException("cancelled");
                 for (int refresh = 0;; refresh++) try {
+                    // A refresh may wait for the runtime lock after Stop. Check
+                    // again for every execution, not only before the first try.
+                    if (isCancelled(id)) throw new IOException("cancelled");
                     // The wrapper only dispatches stdout. Merge download stderr so
                     // retries and real source errors reach the same stage model.
-                    output = YoutubeDL.getInstance().execute(request, "download-" + id, true, (progress, eta, line) -> {
+                    output = YoutubeDL.getInstance().execute(request, processId, true, (progress, eta, line) -> {
                         if (line.startsWith(DownloadProgress.PLAN_PREFIX) || line.startsWith(DownloadProgress.DOWNLOAD_PREFIX)) {
                             admission[0].close(); // Metadata is ready; the transfer may continue alongside later inspections.
                         }
@@ -287,7 +370,7 @@ public final class DownloadService extends Service {
                         Engine.RUNTIME_LOCK.readLock().unlock(); runtimeHeld=false;
                         List<Engine.Media> refreshed=engine.inspect(media.url,message->updateNotification(message,id,-1),()->isCancelled(id));
                         Engine.Media selected=null;for(Engine.Media item:refreshed)if(item.id.equals(media.id)&&!item.album)selected=item;
-                        if(selected==null||!engine.useResolved(request,selected,"download-"+id))throw new IOException("未能刷新所选内容，请重新解析原链接");
+                        if(selected==null||!engine.useResolved(request,selected,processId))throw new IOException("未能刷新所选内容，请重新解析原链接");
                         admission[0]=SourceScheduler.SHARED.acquire(media.url,()->isCancelled(id),message->updateNotification(message,id,-1));
                         Engine.RUNTIME_LOCK.readLock().lockInterruptibly(); runtimeHeld=true;
                         continue;
@@ -351,7 +434,7 @@ public final class DownloadService extends Service {
                 } catch (Exception ignored) { /* Never misreport a committed file as failed. */ }
             } else {
                 synchronized (lock) {
-                    if (isCancelled(id)) finishStopped(id);
+                    if (isCancelled(id)) stopped = true;
                     else {
                         SourceScheduler.SHARED.outcomeForUrl(task.optString("url"), failure);
                         log.append('\n').append(Engine.cleanLog(failure.toString()));
@@ -364,8 +447,9 @@ public final class DownloadService extends Service {
         } finally {
             try {TaskStore.update(this,id,new JSONObject().put("publicationBusy",false));} catch(Exception ignored) {}
             if (admission[0] != null) admission[0].close();
-            engine.cleanupRequest("download-" + id);
+            engine.cleanupRequest(processId);
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+            if (stopped) finishStopped(id);
         }
     }
 
@@ -501,23 +585,33 @@ public final class DownloadService extends Service {
 
     @Override public void onTimeout(int startId, int foregroundServiceType) {
         destroyed = true;
-        synchronized (lock) {
-            if (active != null) YoutubeDL.getInstance().destroyProcessById("download-" + active);
-            for (String id : queue) patch(id, "interrupted", -1, "已达到系统后台运行时限，打开应用后重试", "");
-            queue.clear();
-        }
+        // Acknowledge the system's deadline before persistence. The third-party
+        // process stop runs separately because its native cleanup can block.
         stopForeground(STOP_FOREGROUND_REMOVE); stopSelf();
+        stopWork("已达到系统后台运行时限，打开应用后重试");
     }
 
     @Override public void onDestroy() {
         destroyed = true;
         main.removeCallbacksAndMessages(null);
+        stopWork("任务已中断，打开应用后重试");
+        super.onDestroy();
+    }
+
+    private void stopWork(String detail) {
+        DownloadProcessStopper.Attempt attempt;
         synchronized (lock) {
-            if (active != null) YoutubeDL.getInstance().destroyProcessById("download-" + active);
-            for (String id : queue) patch(id, "interrupted", -1, "任务已中断，打开应用后重试", "");
-            queue.clear();
+            if (!lifecycleStopRequested) {
+                lifecycleStopRequested = true;
+                TaskStore.markServiceStopping(this, active, new java.util.ArrayList<>(queue), detail);
+                queue.clear();
+            }
+            attempt = activeAttempt;
         }
-        worker.shutdownNow(); super.onDestroy();
+        processStops.requestStop(attempt);
+        // Interrupting wrapper.execute makes it return before its output readers
+        // and native children are known to have exited. Keep ownership until unwind.
+        worker.shutdown();
     }
 
     private static void deleteTree(File file) {

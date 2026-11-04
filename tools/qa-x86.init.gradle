@@ -1,9 +1,12 @@
 // Isolated emulator acceptance only: never use this ABI/signature build as an upgrade APK.
 allprojects { p ->
     p.plugins.withId('com.android.application') {
-        p.android.defaultConfig.ndk.abiFilters.clear()
-        p.android.defaultConfig.ndk.abiFilters.add('x86_64')
-        p.android.defaultConfig.testInstrumentationRunner = 'dev.streampocket.UiAcceptanceInstrumentation'
-        p.android.sourceSets.androidTest.assets.srcDir(p.rootProject.file('test-media'))
+        // Run after the app DSL has added its release ARM64 filter.
+        p.androidComponents.finalizeDsl { android ->
+            android.defaultConfig.ndk.abiFilters.clear()
+            android.defaultConfig.ndk.abiFilters.add('x86_64')
+            android.defaultConfig.testInstrumentationRunner = 'dev.streampocket.UiAcceptanceInstrumentation'
+            android.sourceSets.androidTest.assets.srcDir(p.rootProject.file('test-media'))
+        }
     }
 }
