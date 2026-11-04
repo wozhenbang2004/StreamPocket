@@ -56,7 +56,7 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             onMain(()->{ExoPlayer p=field(player,"player",ExoPlayer.class);p.pause();p.seekTo(5000);field(player,"playerView",PlayerView.class).showController();});SystemClock.sleep(1400);
             capture("02-player-real-frame");
             check(onMainValue(()->field(player,"firstFrameRendered",Boolean.class)),"real Android first frame callback");
-            if("upgrade050".equals(phase)) verifyPictureInPicture(player,wideId,tallId);
+            if("upgrade050".equals(phase)) verifyPictureInPicture(player,main,wideId,tallId);
             if(!"before".equals(phase)){
                 onMain(()->field(player,"playerView",PlayerView.class).showController());waitForIdleSync();
                 View timeBar=onMainValue(()->field(player,"timeBarView",View.class));int[] at=location(timeBar);float x=at[0]+timeBar.getWidth()*.35f,y=at[1]+timeBar.getHeight()/2f;long down=SystemClock.uptimeMillis();
@@ -91,7 +91,7 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             result.putString("stream","PASS: "+phase+"; real horizontal/portrait decode, first frame, library return"+("before".equals(phase)?"":"; real scrub bitmap, sheet drag/cancel/back, non-executing swipe")+("upgrade050".equals(phase)?"; system PiP retains playback, next media keeps playback and audio focus, returns to fullscreen, releases on exit":"")+"; captures="+output.getAbsolutePath());finish(Activity.RESULT_OK,result);
         }catch(Throwable failure){result.putString("stream","FAIL at "+phase+": "+android.util.Log.getStackTraceString(failure));finish(Activity.RESULT_CANCELED,result);}
     }
-    private void verifyPictureInPicture(PlayerActivity activity,long videoId,long nextVideoId)throws Exception{
+    private void verifyPictureInPicture(PlayerActivity activity,MainActivity libraryActivity,long videoId,long nextVideoId)throws Exception{
         check(getTargetContext().getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE),"emulator supports system PiP");
         int fullWidth=onMainValue(()->activity.getWindow().getDecorView().getWidth()),fullHeight=onMainValue(()->activity.getWindow().getDecorView().getHeight());
         ExoPlayer original=onMainValue(()->field(activity,"player",ExoPlayer.class));
@@ -100,6 +100,8 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
         onMain(()->{View entry=findText(activity.getWindow().getDecorView(),"画中画");check(entry!=null&&entry.isShown(),"PiP has a real visible tool entry");check(entry.performClick(),"PiP entry invokes its action");});
         waitUntil(activity::isInPictureInPictureMode,15000,"system enters PiP");
         waitUntil(()->activity.getWindow().getDecorView().getWidth()<fullWidth*.8&&activity.getWindow().getDecorView().getHeight()<fullHeight*.8,15000,"system PiP transition reaches a visibly smaller window");
+        check(getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME),"navigate to the launcher while PiP remains visible");
+        waitUntil(()->{try{return !field(libraryActivity,"foreground",Boolean.class)&&activity.isInPictureInPictureMode();}catch(Exception e){return false;}},10000,"the main app leaves foreground while system PiP stays visible");
         check(onMainValue(()->field(activity,"player",ExoPlayer.class))==original,"PiP onPause keeps the current player");
         long position=onMainValue(original::getCurrentPosition);
         waitUntil(()->original.getCurrentPosition()>position+500,10000,"real media position advances while in PiP");
@@ -112,6 +114,8 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
         long nextPosition=onMainValue(nextPlayer::getCurrentPosition);
         waitUntil(()->nextPlayer.getCurrentPosition()>nextPosition+500,10000,"next media advances without returning to foreground");
         capture("02a-next-media-in-system-pip");
+        onMain(()->getTargetContext().startActivity(new Intent(getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
+        waitUntil(libraryActivity::hasWindowFocus,15000,"return to the existing library before expanding PiP");
         onMain(()->getTargetContext().startActivity(new Intent(getTargetContext(),PlayerActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("video_id",videoId)));
         waitUntil(()->!activity.isInPictureInPictureMode(),15000,"existing playback activity returns to fullscreen");
         awaitFrame(activity);

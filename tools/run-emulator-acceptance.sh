@@ -22,7 +22,7 @@ adb -s "$qa_serial" install -r app/build/outputs/apk/androidTest/debug/app-debug
 # Acknowledge the emulator's one-time system navigation tutorial before UI capture.
 adb -s "$qa_serial" shell settings put secure immersive_mode_confirmations confirmed
 adb -s "$qa_serial" logcat -c
-timeout 240s adb -s "$qa_serial" shell am instrument -w -e scenario upgrade050 \
+timeout 240s adb -s "$qa_serial" shell am instrument -w -r -e scenario upgrade050 \
   dev.streampocket.localtest.test/dev.streampocket.UiAcceptanceInstrumentation \
   | tee "$qa_output/instrumentation.txt"
 

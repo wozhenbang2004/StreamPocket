@@ -209,6 +209,7 @@ public final class ExportService extends Service {
         return new Prepared(id, project.optString("title", "拾流剪辑"), inputs, size[0], size[1], duration);
     }
 
+    @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.ExperimentalApi.class)
     private void startExport(Prepared job) {
         try {
             File parent = getExternalFilesDir("exports");
