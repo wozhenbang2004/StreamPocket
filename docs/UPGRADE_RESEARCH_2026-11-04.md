@@ -2,7 +2,7 @@
 
 ## 结论与范围
 
-本轮从已发布的 **0.4.1 / versionCode 30**、主线 `ef623f55c1530e90a7ce0dbe3839a4f9ef289af8` 出发，比较本地提取、组件更新、后台传输、播放预加载与帧提取等路线。采用方向是：保留现有 Java、yt-dlp、FFmpeg、aria2、Media3 组合，先修正已经在真实调用链中定位的可靠性问题；后续把 Media3 稳定版迁移与 Android 长下载调度作为完整切片验证。
+本轮从已发布的 **0.4.1 / versionCode 30**、主线 `ef623f55c1530e90a7ce0dbe3839a4f9ef289af8` 出发，比较本地提取、组件更新、后台传输、播放预加载与帧提取等路线。首批完成可靠性修改；用户追加要求更完整的功能迭代后，本报告继续记录 **0.5.0 / versionCode 31** 的下载管理、视频库、播放器和 Media3 稳定版迁移。保留现有 Java、yt-dlp、FFmpeg、aria2、Media3 组合，Android 长下载调度与端侧转写保留为后续独立验证路线。0.5.0 范围和采用依据见第 8 节。
 
 本轮修改在独立升级分支中审查。版本号、发行 APK 和原签名未变；已有 `uiux/verify-041-20261102` 界面验证分支单独保留。实现与测试状态见本文末尾和 [开发检查](TESTING.md)，不能把开发分支当作已发布版本。
 
@@ -88,7 +88,7 @@ Android 14 引入的 **User-Initiated Data Transfer Job（UIDT）** 更贴近用
 
 已对照 1.11.1 的 Transformer / Codec 源码，本项目使用的编码工厂、导出监听、`start(Composition, String)` 和两个实验性裁剪开关仍存在。Java 可以继续使用这些能力，不需要为播放器升级重写 Kotlin/Compose。全工程编译、音视频导出和真实播放行为仍需验证。
 
-**本批保留 1.9.4。** 后续先把编译工具链与 Media3 stable 一起迁移，targetSdk 的行为变化单独判断；验证单路首帧、快速 seek、上下切片、双视频、音频焦点、后台返回，以及非关键帧精确裁剪，验证通过后再加入预加载功能。
+**首批可靠性修改保留了 1.9.4；用户追加更完整功能升级后，0.5.0 批次正式迁移到 1.11.1。** 配套选择 compileSdk 36、AGP 8.13.2、Gradle 8.14.6、Java 17 和 Build Tools 35.0.0。AGP 8.13 官方页明确支持 API 36.1、最低 Gradle 8.13，避免只依据最低版本表推断旧插件支持范围；Gradle 分发的 SHA-256 同步固定在启动脚本和 wrapper 配置。targetSdk 维持 35，最低版本维持 24。全量构建与既有播放/导出测试属于本次集成门槛；设备硬件播放、耗电和非关键帧导出质量仍需对应设备证据。[AGP 8.13 兼容范围](https://developer.android.com/build/releases/agp-8-13-0-release-notes) · [Gradle 官方摘要](https://gradle.org/release-checksums/)
 
 ### 哪些新能力值得采用
 
@@ -113,7 +113,7 @@ X、知乎与小黑盒相关检索未取得足以支撑本轮技术决策的完�
 | 优先级 | 用户收益与切片 | 进入实施前的必要证据 | 验收重点 |
 | --- | --- | --- | --- |
 | P0 · 本轮 | X 错误恢复、显式播放重试、更新回滚、可靠停止 | 已定位调用链、针对性回归 | 限流/权限不被绕过；暂停数据保留；旧任务不影响新任务；更新失败仍可使用旧核心 |
-| P1 | Media3 stable + 编译工具链迁移 | SDK/AGP/Gradle 配套；现有导出 API 检查 | 全量构建；代表性设备单路/双路播放、seek 与精确裁剪 |
+| P1 · 已进入 0.5.0 实施 | Media3 stable + 编译工具链迁移 | SDK/AGP/Gradle 配套；现有导出 API 检查 | 全量构建；代表性设备单路/双路播放、seek 与精确裁剪 |
 | P1 | 相邻视频预加载 | 稳定版基线通过，设备资源预算明确 | 首帧 p50/p95、峰值内存、切换取消、后台释放；记录原始样本，不预设提升百分比 |
 | P1 | API 34+ UIDT 调度适配 | 任务恢复与执行所有权可验证 | 入队与通知、系统停止、进程重建、断点恢复；低版本行为不退化 |
 | P2 | Inspector 帧提取统一 | 固定媒体集和现有耗时/资源记录 | 输出时间点和尺寸、过期结果隔离、取消与释放、前台播放不受抢占 |
@@ -129,3 +129,32 @@ X、知乎与小黑盒相关检索未取得足以支撑本轮技术决策的完�
 集成后的核心更新自检 83 项、停止器自检 5 项均在 JDK 17 以 exit 0 完成；两个独立 JVM 的强制终止恢复包含在前者内。播放器新增回归走实际重试按钮与保存/恢复状态，使用项目已有、明确标注的播放器时钟 fixture。具体命令、CI 必需步骤与设备验证边界见 [TESTING](TESTING.md)。
 
 本次执行环境没有 Android SDK、模拟器或连接的手机。本地 Java 检查不能替代 Android 编译、Robolectric、硬件解码、源站真实下载、原证书覆盖安装及耗电测量；这些结果必须分别记录，不能互相推定。
+
+## 8. 0.5.0 功能迭代合同 · 2026-11-04
+
+用户指出上一批可见变化偏少，要求更大、更彻底的优化和功能迭代。审阅实际源码与当前 View 截图后确认：批量解析、来源/标题搜索、合集、双/三列、进度徽标、分屏和轻剪辑已经存在，不把它们重新计为本轮新增。目标改为完整打通“管理下载 → 找回要看的内容 → 连续观看”三段重复使用流程。
+
+| 模块 | 本次新增结果 | 数据与交互约束 |
+| --- | --- | --- |
+| 下载管理 | 全队列暂停/继续、下一项/移至队尾、多选暂停/继续/失败重试与记录移除 | 持久暂停开关；整队继续不恢复用户手动暂停项；新入队也遵守开关；顺序同时更新持久记录和服务队列；旧执行退出后才能重启 |
+| 视频库 | 继续观看/未看/已看筛选、独立收藏、合集改名/删除和批量移出 | schema v1 → v2 保留原数据；组合筛选与分页/相邻导航一致；合集操作不删除视频文件；日期/来源排序继续用稳定锚点 |
+| 单播放器 | 显式画中画、单次/单个循环/连续播放、已有音轨与内嵌字幕选择 | PiP 隐藏完整工具层并保持可见播放；普通后台释放；连续播放跟随当前筛选，末项停止；可用轨道以实际媒体为准 |
+| 播放基础 | Media3 1.11.1 与配套构建迁移 | 复用既有 Java/Views/Media3，不引入另一套解码器；覆盖既有分屏、进度、标记、剪辑与错误恢复回归 |
+
+设计继承 `MEDIA_EXPERIENCE.md` 的封面优先、低噪音和分组工具规则，以及 `DOWNLOAD_FLOW.md` 的结果优先、对象身份和具体恢复动作。下载页提供一个整队主控制与按需多选；库筛选保持紧凑并与原搜索/来源/合集组合；播放器能力放进既有分组面板。新增按钮保留足够点击范围，长标题与小屏面板不得遮住确认/返回。当前参考来自上一批实际 CI 的原生 View 夹具，新的渲染和交互检查在本批完成后更新，旧图不作为新版验收。
+
+复用决策：采用 Android 系统 [画中画](https://developer.android.com/develop/ui/views/picture-in-picture) 与 Media3 [轨道选择](https://developer.android.com/media/media3/exoplayer/track-selection)，适配现有 Pocket 组件、SQLite 库及单所有者下载服务。PiP 的 `onPause` 不等于不可见，检查点、首帧保护和异步切片必须统一处理；不能只增加 manifest 属性。观看状态从已有时间位置和时长推导，收藏单独持久化；不为同一视频另建重复资料库。
+
+本批不包含云端 AI、外部字幕文件导入、UIDT 调度重写、相邻解码预加载或第二播放引擎。它们涉及独立的数据/资源策略，保留在有明确输入与可测收益的后续切片。当前验收是功能入口可操作、状态重建正确、旧数据保留、停止和播放意图正确、全量 Android 测试/Lint/构建通过，以及本轮代表界面渲染检查；真实设备 PiP/音轨解码、源站成功率和性能提升不能用离线夹具推定。
+
+### 更大功能迭代的下一条研究线：把视频变成可检索、可编辑的内容
+
+0.5.0 补齐日常操作后，最值得继续验证的产品方向是“本地转写 → 点击句子定位画面 → 按句子选段剪辑 → 搜索说过的话”。它复用现有毫秒标记、片段项目与导出流程；转写结果需要绑定稳定视频 ID、时间区间、模型版本和用户修订，不应只生成一段无法回到视频的摘要。这是候选产品路线，本批未安装模型、运行转写或声称已实现。
+
+| 候选 | 已读一手证据与价值 | 在拾流中的判断与下一验证 |
+| --- | --- | --- |
+| sherpa-onnx + SenseVoice / Whisper | [官方仓库](https://github.com/k2-fsa/sherpa-onnx)、[Android 本地 APK](https://k2-fsa.github.io/sherpa/onnx/android/prebuilt-apk.html)、[SenseVoice 文档](https://github.com/k2-fsa/sherpa/blob/master/docs/source/onnx/sense-voice/pretrained.rst) 提供离线 Android、VAD 与多语种识别路线 | 优先比较中文/夹杂英文的视频；核对时间戳能力、模型授权、内存、耗时和取消。Android 示例可作为实现来源，项目名或 APK 存在不能证明本机精度与性能 |
+| whisper.cpp | [官方 Android 示例](https://github.com/ggml-org/whisper.cpp/blob/master/examples/whisper.android/README.md) 建议从 tiny/base 试起；[README](https://github.com/ggml-org/whisper.cpp) 提供模型磁盘/内存表和量化能力 | 作为同一媒体集的备选；模型按需下载并可删除，长音频分段/时间对齐需真实验证，不把桌面结果直接当手机结果 |
+| LiteRT-LM | [Google 旧 API 页面](https://developers.google.com/edge/mediapipe/solutions/genai/llm_inference/android) 已将 MediaPipe LLM Inference 标为维护模式，建议迁移到 [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM)；[Kotlin API](https://github.com/google-ai-edge/LiteRT-LM/blob/main/docs/api/kotlin/getting_started.md) 有 Android/JVM 与多模态接入说明 | 后续用于章节、内容问答/摘要候选，先做基于转写的可回溯结果。需固定版本、确认 Kotlin/原生组件/设备能力兼容；不照抄示例的 `latest.release`，也不默认给 Android 7 的所有设备加载大模型 |
+
+本次增量改变了一个选型判断：如果做端侧内容理解，不能直接沿用旧 MediaPipe LLM Inference 教程，应先核对 LiteRT-LM 的当前维护方向和设备约束。专业语音识别与通用多模态模型承担不同职责；先比较带时间定位的转写质量，再决定是否值得增加摘要模型。语义检索、章节摘要和按句剪辑均为待验证能力，不计入 0.5.0 已交付功能。

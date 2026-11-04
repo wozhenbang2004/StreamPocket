@@ -1,6 +1,6 @@
 # 安装与版本
 
-当前发行版本 **0.4.1 / versionCode 30**，应用名“拾流”。支持 Android 7.0+ / ARM64，包名为 `dev.streampocket.localtest`，沿用既有安装身份。2026-11-04 的升级研究与可靠性修改处于独立开发分支，尚未作为新发行版本发布。
+当前发行版本 **0.4.1 / versionCode 30**，应用名“拾流”。支持 Android 7.0+ / ARM64，包名为 `dev.streampocket.localtest`，沿用既有安装身份。2026-11-04 的开发分支已递增至 **0.5.0 / versionCode 31**，用于下载管理、视频库和播放器的功能升级及配套稳定性修改；尚未作为新发行版本发布，正式版下载链接仍指向 0.4.1。
 
 - [安装包](https://github.com/wozhenbang2004/StreamPocket/releases/download/v0.4.1/StreamPocket-arm64-v8a.apk)
 - [版本更新内容](https://github.com/wozhenbang2004/StreamPocket/releases/tag/v0.4.1)

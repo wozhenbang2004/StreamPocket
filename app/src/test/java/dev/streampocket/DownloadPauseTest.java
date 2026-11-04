@@ -310,6 +310,109 @@ public final class DownloadPauseTest {
         }
     }
 
+    @Test public void globalHoldKeepsManualPausesAndHoldsNewRetriesUntilExecutionHasUnwound() throws Exception {
+        seed(task("active","downloading","video").put("downloadedBytes",300).put("queuedAt",1),
+                task("waiting","queued","queued").put("queuedAt",2),
+                task("manual","paused","video").put("pauseOrigin","manual"),
+                task("explicit","paused","video").put("pauseOrigin","manual").put("downloadedBytes",80),
+                task("late","queued","queued"),task("failed","failed","video"),task("cancelled","cancelled","video"));
+        own("active");queue().add("waiting");command(DownloadService.PAUSE_QUEUE,null);
+        assertTrue(TaskStore.isQueuePaused(app));assertEquals("pausing",TaskStore.get(app,"active").getString("status"));
+        assertEquals("queue",TaskStore.get(app,"active").getString("pauseOrigin"));assertTrue(queue().isEmpty());
+        command(DownloadService.ENQUEUE,"late");long position=TaskStore.get(app,"late").getLong("queuedAt");
+        command(DownloadService.ENQUEUE,"late");assertEquals(position,TaskStore.get(app,"late").getLong("queuedAt"));
+        batchCommand(DownloadService.RETRY_FAILED,"failed","cancelled");command(DownloadService.RESUME,"explicit");
+        for(String id:new String[]{"waiting","late","failed","explicit"})assertTrue(TaskStore.heldByQueue(TaskStore.get(app,id)));
+        assertEquals("cancelled",TaskStore.get(app,"cancelled").getString("status"));
+        command(DownloadService.RESUME_QUEUE,null);assertTrue(TaskStore.isQueuePaused(app));assertTrue(queue().isEmpty());
+        invoke("finishStopped",new Class<?>[]{String.class},"active");
+        command(DownloadService.RESUME_QUEUE,null);assertTrue("Bookkeeping still owns the old attempt",TaskStore.isQueuePaused(app));
+        field("active").set(service,null);field("draining").setBoolean(service,false);
+        command(DownloadService.RESUME_QUEUE,null);
+        assertFalse(TaskStore.isQueuePaused(app));assertEquals(Arrays.asList("active","waiting","late","failed","explicit"),queueIds());
+        assertEquals("paused",TaskStore.get(app,"manual").getString("status"));assertEquals("manual",TaskStore.get(app,"manual").getString("pauseOrigin"));
+        assertEquals(300,TaskStore.get(app,"active").getLong("downloadedBytes"));assertEquals(80,TaskStore.get(app,"explicit").getLong("downloadedBytes"));
+    }
+
+    @Test public void anIndividualPauseOverridesTheGlobalHoldWithoutReopeningATerminalAttempt() throws Exception {
+        seed(task("a","queued","queued"),task("b","queued","queued"));batchCommand(DownloadService.ENQUEUE,"a","b");
+        command(DownloadService.PAUSE_QUEUE,null);command(DownloadService.PAUSE,"a");command(DownloadService.RESUME_QUEUE,null);
+        assertEquals(Arrays.asList("b"),queueIds());assertEquals("manual",TaskStore.get(app,"a").getString("pauseOrigin"));
+        TaskStore.update(app,"a",new JSONObject().put("pauseOrigin","queue"));own("a");
+        command(DownloadService.PAUSE,"a");assertEquals("paused",TaskStore.get(app,"a").getString("status"));
+        assertEquals("manual",TaskStore.get(app,"a").getString("pauseOrigin"));
+    }
+
+    @Test public void aGlobalPauseLetsPublicationFinishAndNeverRewritesSavedOutput() throws Exception {
+        seed(task("active","saving","saving").put("transferComplete",true),task("waiting","queued","queued"),
+                task("saved","completed","completed").put("uri","content://fixture/committed"));
+        own("active");queue().add("waiting");command(DownloadService.PAUSE_QUEUE,null);
+        assertEquals("saving",TaskStore.get(app,"active").getString("status"));assertFalse(TaskStore.get(app,"active").optBoolean("pauseRequested"));
+        assertTrue(TaskStore.heldByQueue(TaskStore.get(app,"waiting")));assertEquals("completed",TaskStore.get(app,"saved").getString("status"));
+        assertEquals("content://fixture/committed",TaskStore.get(app,"saved").getString("uri"));
+    }
+
+    @Test public void theGlobalGateSurvivesColdStartAnIdleServiceAndAnotherNewBatch() throws Exception {
+        seed(task("waiting","queued","queued"),task("stopping","pausing","video").put("pauseRequested",true).put("pauseOrigin","queue"),
+                task("manual","paused","video").put("pauseOrigin","manual"));
+        app.getSharedPreferences("tasks",0).edit().putBoolean("queuePaused",true).commit();resetInitialization();TaskStore.init(app);
+        assertTrue(TaskStore.heldByQueue(TaskStore.get(app,"waiting")));assertTrue(TaskStore.heldByQueue(TaskStore.get(app,"stopping")));
+        ServiceController<DownloadService> idle=Robolectric.buildService(DownloadService.class).create();
+        try {
+            JSONObject queued=task("new","queued","queued");JSONArray items=new JSONArray(app.getSharedPreferences("tasks",0).getString("items","[]"));items.put(queued);
+            app.getSharedPreferences("tasks",0).edit().putString("items",items.toString()).commit();
+            idle.get().onStartCommand(new Intent(app,DownloadService.class).setAction(DownloadService.ENQUEUE).putStringArrayListExtra("ids",new java.util.ArrayList<>(Arrays.asList("new"))),0,1);
+            assertTrue(TaskStore.heldByQueue(TaskStore.get(app,"new")));assertFalse(field("draining").getBoolean(idle.get()));
+            assertEquals("manual",TaskStore.get(app,"manual").getString("pauseOrigin"));
+        } finally { idle.destroy(); }
+        assertTrue(TaskStore.isQueuePaused(app));assertTrue(TaskStore.heldByQueue(TaskStore.get(app,"new")));
+    }
+
+    @Test public void changingWaitingPriorityChangesTheWorkerAndDiskButNeverTheActiveTask() throws Exception {
+        seed(task("active","downloading","video").put("queuedAt",1),task("a","queued","queued"),task("b","queued","queued"),task("c","queued","queued"),task("late","queued","queued"));
+        own("active");batchCommand(DownloadService.ENQUEUE,"a","b","c");
+        command(DownloadService.MOVE_NEXT,"c");assertEquals(Arrays.asList("c","a","b"),queueIds());assertEquals("active",field("active").get(service));
+        assertEquals(1,TaskStore.get(app,"active").getLong("queuedAt"));assertTrue(TaskStore.get(app,"c").getLong("queuedAt")<TaskStore.get(app,"a").getLong("queuedAt"));
+        command(DownloadService.MOVE_LAST,"c");assertEquals(Arrays.asList("a","b","c"),queueIds());
+        command(DownloadService.ENQUEUE,"late");assertEquals(Arrays.asList("a","b","c","late"),queueIds());
+        command(DownloadService.MOVE_NEXT,"active");assertEquals(Arrays.asList("a","b","c","late"),queueIds());
+        assertEquals("downloading",TaskStore.get(app,"active").getString("status"));
+    }
+
+    @Test public void heldPrioritySurvivesRestartAndResumesOnlyQueueOwnedTasks() throws Exception {
+        seed(task("a","paused","video").put("pauseOrigin","queue").put("queuedAt",1),
+                task("b","paused","video").put("pauseOrigin","queue").put("queuedAt",2),
+                task("c","paused","video").put("pauseOrigin","queue").put("queuedAt",3).put("downloadedBytes",77).put("destinationTree","content://fixture/tree"),
+                task("manual","paused","video").put("pauseOrigin","manual"));
+        app.getSharedPreferences("tasks",0).edit().putBoolean("queuePaused",true).commit();
+        command(DownloadService.MOVE_NEXT,"c");resetInitialization();TaskStore.init(app);
+        command(DownloadService.RESUME_QUEUE,null);assertEquals(Arrays.asList("c","a","b"),queueIds());
+        assertEquals(77,TaskStore.get(app,"c").getLong("downloadedBytes"));assertEquals("content://fixture/tree",TaskStore.get(app,"c").getString("destinationTree"));
+        assertEquals("paused",TaskStore.get(app,"manual").getString("status"));
+    }
+
+    @Test public void batchResumeAndRetryRecheckEligibilityAndNeverResumeCancelledWork() throws Exception {
+        seed(task("waiting","queued","queued"),task("paused","paused","video").put("downloadedBytes",200),
+                task("failed","failed","video"),task("interrupted","interrupted","video"),task("cancelled","cancelled","video"),
+                task("stopping","pausing","video"),task("saved","completed","completed"));
+        command(DownloadService.ENQUEUE,"waiting");batchCommand(DownloadService.RESUME,"paused","failed","cancelled","stopping","saved");
+        assertEquals(Arrays.asList("waiting","paused"),queueIds());assertEquals(200,TaskStore.get(app,"paused").getLong("downloadedBytes"));
+        batchCommand(DownloadService.RETRY_FAILED,"failed","interrupted","cancelled","stopping","saved","failed");
+        assertEquals(Arrays.asList("waiting","paused","failed","interrupted"),queueIds());
+        assertEquals("cancelled",TaskStore.get(app,"cancelled").getString("status"));assertEquals("pausing",TaskStore.get(app,"stopping").getString("status"));
+        assertEquals("completed",TaskStore.get(app,"saved").getString("status"));
+    }
+
+    @Test public void oldRemovalCannotEraseANewResumeEvenWhileTheQueueIsHeld() throws Exception {
+        seed(task("paused","paused","video").put("queuedAt",10),task("saved","completed","completed").put("publicationBusy",true));
+        app.getSharedPreferences("tasks",0).edit().putBoolean("queuePaused",true).commit();
+        assertTrue(TaskStore.markQueued(app,"paused"));assertTrue(TaskStore.heldByQueue(TaskStore.get(app,"paused")));
+        assertFalse(TaskStore.removeIfInactive(app,"paused",10));assertFalse(TaskStore.removeIfInactive(app,"saved"));
+        assertNotNull(TaskStore.get(app,"paused"));assertNotNull(TaskStore.get(app,"saved"));
+    }
+
+    private java.util.List<String> queueIds() throws Exception { return Arrays.asList(queue().toArray(new String[0])); }
+    private void batchCommand(String action,String...ids) { service.onStartCommand(new Intent(app,DownloadService.class).setAction(action).putStringArrayListExtra("ids",new java.util.ArrayList<>(Arrays.asList(ids))),0,1); }
     private void command(String action,String id) { service.onStartCommand(new Intent(app,DownloadService.class).setAction(action).putExtra("id",id),0,1); }
     private void replay(DownloadProgress model,String line) throws Exception {
         assertTrue(model.accept(line));

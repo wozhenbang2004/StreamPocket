@@ -2,15 +2,15 @@ plugins { id 'com.android.application' }
 
 android {
     namespace 'dev.streampocket'
-    compileSdk 35
+    compileSdk 36
     buildToolsVersion '35.0.0'
     defaultConfig {
         // Preserve the installed lineage for signed overwrite updates.
         applicationId 'dev.streampocket.localtest'
         minSdk 24
         targetSdk 35
-        versionCode 30
-        versionName '0.4.1'
+        versionCode 31
+        versionName '0.5.0'
         manifestPlaceholders = [appLabel: '拾流']
         ndk { abiFilters 'arm64-v8a' }
     }
@@ -40,10 +40,10 @@ dependencies {
     implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'
     implementation 'io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1'
     implementation 'io.github.junkfood02.youtubedl-android:aria2c:0.18.1'
-    implementation 'androidx.media3:media3-exoplayer:1.9.4'
-    implementation 'androidx.media3:media3-ui:1.9.4'
-    implementation 'androidx.media3:media3-transformer:1.9.4'
-    implementation 'androidx.media3:media3-effect:1.9.4'
+    implementation 'androidx.media3:media3-exoplayer:1.11.1'
+    implementation 'androidx.media3:media3-ui:1.11.1'
+    implementation 'androidx.media3:media3-transformer:1.11.1'
+    implementation 'androidx.media3:media3-effect:1.11.1'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
     testImplementation 'org.robolectric:robolectric:4.16.1'

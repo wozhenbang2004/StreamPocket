@@ -1,6 +1,7 @@
 package dev.streampocket;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -15,6 +16,9 @@ import java.io.FileOutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -142,6 +146,103 @@ public final class TaskQueueUiTest {
         } finally { controller.pause().stop().destroy(); }
     }
 
+    @Test public void globalHoldShowsWaitingOrderManualPausesAndARealStoppingState() throws Exception {
+        ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class);
+        try {
+            MainActivity activity=controller.create(initialState()).start().resume().visible().get();
+            seed(new JSONArray().put(task("a","样例 · 暂停队列后仍保留顺序","paused",1,1).put("pauseOrigin","queue"))
+                    .put(task("b","样例 · 后来新加入的下载","paused",2,2).put("pauseOrigin","queue"))
+                    .put(task("manual","样例 · 我单独暂停的任务","paused",3,3).put("pauseOrigin","manual")));
+            app.getSharedPreferences("tasks",0).edit().putBoolean("queuePaused",true).commit();showQueue(activity);
+            View decor=activity.getWindow().getDecorView();assertNotNull(findText(decor,"队列已暂停"));assertTrue(findText(decor,"继续队列").isEnabled());
+            assertNotNull(findText(decor,"等待继续 · 2 项"));assertNotNull(findText(decor,"单独暂停 · 1 项"));
+            assertNotNull(findText(decor,"等待继续 · 第 1 位"));assertNotNull(findText(decor,"等待继续 · 第 2 位"));assertEquals(0,bars(decor));
+            capture(decor,"050-queue-held-and-manual-fixture");
+            TaskStore.update(app,"a",new JSONObject().put("status","pausing").put("pauseRequested",true));showQueue(activity);
+            assertFalse(findText(decor,"暂停中…").isEnabled());assertNull(findText(decor,"继续队列"));
+            assertNotNull(findText(decor,"当前任务停止后可继续；已下载的数据保留"));capture(decor,"050-queue-stopping-fixture");
+        } finally { controller.pause().stop().destroy(); }
+    }
+
+    @Test @Config(qualifiers="w320dp-h640dp-xhdpi")
+    public void multiSelectionKeepsStableIdsDuringRefreshAndFiltersEachBatchAction() throws Exception {
+        ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class);
+        app.getSharedPreferences("config",0).edit().putString("appearance_theme","dark").commit();
+        try {
+            MainActivity activity=controller.create(initialState()).start().resume().visible().get();
+            seed(new JSONArray().put(task("waiting","样例 · 一个较长的等待标题，在窄屏选择模式中仍可读","queued",1,1))
+                    .put(task("paused","样例 · 手动暂停","paused",2,2)).put(task("failed","样例 · 网络失败","failed",3,3))
+                    .put(task("interrupted","样例 · 系统中断","interrupted",4,4)).put(task("cancelled","样例 · 已主动取消","cancelled",5,5)));
+            showQueue(activity);findText(activity.getWindow().getDecorView(),"选择").performClick();findText(activity.getWindow().getDecorView(),"全选").performClick();
+            View decor=activity.getWindow().getDecorView();assertNotNull(findText(decor,"已选 5 项"));assertTrue(findText(decor,"操作").isEnabled());
+            @SuppressWarnings("unchecked") Set<String> selected=(Set<String>)field(activity,"queueSelection");
+            assertEquals(new LinkedHashSet<>(Arrays.asList("waiting","paused","failed","interrupted","cancelled")),selected);
+            assertEquals(Arrays.asList("waiting"),eligible(activity,DownloadService.PAUSE,selected));assertEquals(Arrays.asList("paused"),eligible(activity,DownloadService.RESUME,selected));
+            assertEquals(Arrays.asList("failed","interrupted"),eligible(activity,DownloadService.RETRY_FAILED,selected));
+            TaskStore.update(app,"waiting",new JSONObject().put("status","downloading").put("phase","video"));
+            invoke(activity,"refreshQueue",new Class<?>[]{boolean.class},true);assertEquals(5,selected.size());
+            capture(decor,"050-queue-selection-narrow-dark-fixture");
+            Bundle saved=new Bundle();controller.saveInstanceState(saved);assertTrue(saved.getBoolean("queue_selecting"));assertEquals(5,saved.getStringArrayList("queue_selection").size());
+            activity.onBackPressed();assertNotNull(findText(decor,"选择"));assertNull(findText(decor,"已选 5 项"));assertTrue(selected.isEmpty());
+            assertNull("Selecting, refreshing and leaving selection must not start downloads",Shadows.shadowOf(activity).getNextStartedService());
+        } finally { controller.pause().stop().destroy();app.getSharedPreferences("config",0).edit().remove("appearance_theme").commit(); }
+    }
+
+    @Test public void failedBatchShortcutExcludesCancellationAndPreservesExistingTaskIds() throws Exception {
+        ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class);
+        try {
+            MainActivity activity=controller.create(initialState()).start().resume().visible().get();
+            seed(new JSONArray().put(task("failed","样例 · 失败","failed",1,1)).put(task("interrupted","样例 · 中断","interrupted",2,2))
+                    .put(task("cancelled","样例 · 取消","cancelled",3,3)));
+            setField(activity,"queueFilter","failed");showQueue(activity);
+            TextView retry=findText(activity.getWindow().getDecorView(),"重试失败与中断 · 2 项");assertNotNull(retry);retry.performClick();
+            Intent command=Shadows.shadowOf(activity).getNextStartedService();assertNotNull(command);assertEquals(DownloadService.RETRY_FAILED,command.getAction());
+            assertEquals(Arrays.asList("failed","interrupted"),command.getStringArrayListExtra("ids"));assertEquals(3,TaskStore.all(app).size());
+            assertEquals("cancelled",TaskStore.get(app,"cancelled").getString("status"));
+        } finally { controller.pause().stop().destroy(); }
+    }
+
+    @Test public void bulkRecordRemovalHasOneUndoAndDoesNotTouchFilesOrActiveWork() throws Exception {
+        ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class);
+        File savedFile=new File(app.getFilesDir(),"explicit-queue-removal-fixture.mp4");
+        try {
+            try(FileOutputStream out=new FileOutputStream(savedFile)){out.write(new byte[]{1,2,3});}
+            MainActivity activity=controller.create(initialState()).start().resume().visible().get();
+            seed(new JSONArray().put(task("saved","样例 · 已保存文件","completed",1,1).put("uri",savedFile.toURI().toString()))
+                    .put(task("failed","样例 · 失败记录","failed",2,2)).put(task("active","样例 · 下载中","downloading",3,3)));
+            showQueue(activity);invoke(activity,"removeTasksWithUndo",new Class<?>[]{List.class},Arrays.asList("saved","failed","active"));
+            View decor=activity.getWindow().getDecorView();assertNotNull(findText(decor,"5秒后移除 2 条记录，文件保留"));assertNull(findText(decor,"样例 · 已保存文件"));
+            assertNotNull(TaskStore.get(app,"saved"));findText(decor,"撤销").performClick();assertNotNull(findText(decor,"样例 · 已保存文件"));
+            invoke(activity,"removeTasksWithUndo",new Class<?>[]{List.class},Arrays.asList("saved","failed","active"));
+            invoke(activity,"commitPendingRemovals",new Class<?>[]{boolean.class},true);
+            assertNull(TaskStore.get(app,"saved"));assertNull(TaskStore.get(app,"failed"));assertNotNull(TaskStore.get(app,"active"));assertTrue(savedFile.isFile());
+        } finally { controller.pause().stop().destroy();savedFile.delete(); }
+    }
+
+    @Test public void continueQueueCommitsHiddenRemovalsBeforeAnyTaskCanRestart() throws Exception {
+        ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class);
+        try {
+            MainActivity activity=controller.create(initialState()).start().resume().visible().get();
+            seed(new JSONArray().put(task("removed","样例 · 不应重新开始","paused",1,1).put("pauseOrigin","queue"))
+                    .put(task("kept","样例 · 保留等待项","paused",2,2).put("pauseOrigin","queue")));
+            app.getSharedPreferences("tasks",0).edit().putBoolean("queuePaused",true).commit();showQueue(activity);
+            invoke(activity,"removeTasksWithUndo",new Class<?>[]{List.class},Arrays.asList("removed"));
+            assertNull(findText(activity.getWindow().getDecorView(),"样例 · 不应重新开始"));assertNotNull(TaskStore.get(app,"removed"));
+            findText(activity.getWindow().getDecorView(),"继续队列").performClick();
+            assertNull("The hidden row is committed before foreground service admission",TaskStore.get(app,"removed"));
+            assertNull(findText(activity.getWindow().getDecorView(),"撤销"));
+            Intent command=Shadows.shadowOf(activity).getNextStartedService();assertNotNull(command);assertEquals(DownloadService.RESUME_QUEUE,command.getAction());
+            assertEquals(Arrays.asList("kept"),TaskStore.resumeQueue(app,null));assertEquals("queued",TaskStore.get(app,"kept").getString("status"));
+        } finally { controller.pause().stop().destroy(); }
+    }
+
+    @SuppressWarnings("unchecked") private static List<String> eligible(MainActivity activity,String action,Set<String> selected) throws Exception {
+        return (List<String>)invoke(activity,"eligibleQueueIds",new Class<?>[]{String.class,Set.class},action,selected);
+    }
+    private static Object invoke(MainActivity activity,String name,Class<?>[] types,Object...args) throws Exception { Method method=MainActivity.class.getDeclaredMethod(name,types);method.setAccessible(true);return method.invoke(activity,args); }
+    private static Object field(MainActivity activity,String name) throws Exception { Field field=MainActivity.class.getDeclaredField(name);field.setAccessible(true);return field.get(activity); }
+    private static void setField(MainActivity activity,String name,Object value) throws Exception { Field field=MainActivity.class.getDeclaredField(name);field.setAccessible(true);field.set(activity,value); }
+
     private void seed(JSONArray tasks) { app.getSharedPreferences("tasks", 0).edit().putString("items", tasks.toString()).commit(); }
     private static JSONObject task(String id, String title, String status, long created, long queued) throws Exception {
         return new JSONObject().put("id", id).put("title", title).put("status", status).put("createdAt", created).put("queuedAt", queued)
@@ -190,11 +291,11 @@ public final class TaskQueueUiTest {
         return count;
     }
     private static void capture(View decor, String name) throws Exception {
-        int width = Math.round(412 * decor.getResources().getDisplayMetrics().density);
-        int height = Math.round(915 * decor.getResources().getDisplayMetrics().density);
+        int width = Math.round(decor.getResources().getConfiguration().screenWidthDp * decor.getResources().getDisplayMetrics().density);
+        int height = Math.round(decor.getResources().getConfiguration().screenHeightDp * decor.getResources().getDisplayMetrics().density);
         decor.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
         decor.layout(0, 0, width, height);
-        File output = new File("docs/design/assets/020-queue"); if (!output.isDirectory() && !output.mkdirs()) throw new java.io.IOException("Cannot create fixture render directory");
+        File output = new File(name.startsWith("050-")?"build/reports/view-fixtures/050-queue":"docs/design/assets/020-queue"); if (!output.isDirectory() && !output.mkdirs()) throw new java.io.IOException("Cannot create fixture render directory");
         Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888); decor.draw(new Canvas(bitmap));
         try (FileOutputStream file = new FileOutputStream(new File(output, name + ".png"))) { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, file)); }
         finally { bitmap.recycle(); }

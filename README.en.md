@@ -20,16 +20,16 @@ Failed links stay available for retry. Unfinished work and selected qualities ar
 
 | Task | What StreamPocket offers |
 | --- | --- |
-| Download videos | Share-link recognition, quality selection, batch queues, pause/resume, retries, and automatic audio/video merging |
+| Download videos | Share-link recognition, quality selection, persistent whole-queue pause/resume, waiting-order changes, batch management, and automatic audio/video merging |
 | Save images and extras | Experimental Xiaohongshu/Douyin image albums as ZIP; optional available subtitles and cover images |
 | Choose collection items | Explicit preview of the first 100 YouTube playlist or Bilibili multipart items; selection before parsing and batch quality rules |
-| Organize your collection | Two-column, three-column, and list layouts; source filters, search, collections, and saved playback positions |
-| Watch locally | Swipe between videos, pinch to zoom, playback speed controls, and two-video split playback with selectable audio |
+| Organize your collection | Two-column, three-column, and list layouts; combined watch-state, favorite, source, search, and collection filters; rename and organize collections |
+| Watch locally | Swipe, pinch to zoom, playback speed, explicit picture-in-picture, single/repeat/continuous modes, embedded audio/subtitle selection, and two-video split playback |
 | Keep useful moments | Named timestamps and clip markers that you can revisit or send to the editor |
 | Make a short collection | Trim and arrange clips, export a new video, and keep the original files and editing draft |
 | Manage accounts | Optional website sign-in or login-file import, with per-platform enable/disable and removal |
 
-Version 0.4.1 adds a selectable save folder, moving existing downloads, removable extraction items, and direct cover-to-play controls. Recent extraction reuse, album ZIPs, subtitles, covers and collection selection remain available. See [download usage](docs/DOWNLOAD_FLOW.md).
+This branch contains the **0.5.0 development preview**. The published release is still 0.4.1; see [PR #1](https://github.com/wozhenbang2004/StreamPocket/pull/1) for the preview build and verification. The existing selectable save folder, download relocation, extraction reuse, album ZIPs, optional attachments, and collection selection remain available. See [download usage](docs/DOWNLOAD_FLOW.md).
 
 ## Supported sites
 
@@ -84,7 +84,7 @@ Download only content you have permission to save and follow the source platform
 
 Bug reports, usability feedback, and pull requests are welcome. For download issues, include the platform, reproduction steps, and error message. Do not upload login files or private videos.
 
-Requirements: JDK 17, Python 3.9+, Android SDK 35, and Build Tools 35.0.0. The project uses Gradle 8.9 and AGP 8.7.3.
+Requirements: JDK 17, Python 3.9+, Android SDK 36, and Build Tools 35.0.0. The project uses Gradle 8.14.6, AGP 8.13.2, and Media3 1.11.1. Android 7.0 remains the minimum supported version; targetSdk stays at 35.
 
 ```bash
 # Linux / macOS

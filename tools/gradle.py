@@ -10,8 +10,8 @@ import tempfile
 import urllib.request
 import zipfile
 
-VERSION = '8.9'
-SHA256 = 'd725d707bfabd4dfdc958c624003b3c80accc03f7037b5122c4b1d0ef15cecab'
+VERSION = '8.14.6'
+SHA256 = '7988ed071b2a07900e2ec715fca15c6ab72bce6db433af301fa7fa7e9407bd24'
 URL = f'https://downloads.gradle.org/distributions/gradle-{VERSION}-bin.zip'
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -61,5 +61,5 @@ if __name__ == '__main__':
         sys.exit(main())
     except Exception as error:
         print(f'Build bootstrap failed: {error}', file=sys.stderr)
-        print('Requires Python 3.9+, JDK 17, Android SDK 35, and access to official repositories.', file=sys.stderr)
+        print('Requires Python 3.9+, JDK 17, Android SDK 36 / Build Tools 35.0.0, and access to official repositories.', file=sys.stderr)
         sys.exit(1)

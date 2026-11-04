@@ -28,6 +28,12 @@ public final class DownloadService extends Service {
     public static final String ENQUEUE = "dev.streampocket.ENQUEUE";
     public static final String CANCEL = "dev.streampocket.CANCEL";
     public static final String PAUSE = "dev.streampocket.PAUSE";
+    public static final String PAUSE_QUEUE = "dev.streampocket.PAUSE_QUEUE";
+    public static final String RESUME_QUEUE = "dev.streampocket.RESUME_QUEUE";
+    public static final String RESUME = "dev.streampocket.RESUME";
+    public static final String RETRY_FAILED = "dev.streampocket.RETRY_FAILED";
+    public static final String MOVE_NEXT = "dev.streampocket.MOVE_NEXT";
+    public static final String MOVE_LAST = "dev.streampocket.MOVE_LAST";
     private static final String CHANNEL = "downloads";
     private static final int NOTIFICATION = 88;
     private static final DownloadProcessStopper PROCESS_STOPS = new DownloadProcessStopper();
@@ -73,34 +79,52 @@ public final class DownloadService extends Service {
             }
             stopSelf(startId); return START_NOT_STICKY;
         }
-        String id = intent.getStringExtra("id");
-        if (PAUSE.equals(intent.getAction())) {
-            pause(id); finishIfIdle(startId); return START_NOT_STICKY;
-        }
-        if (CANCEL.equals(intent.getAction())) {
-            cancel(id); finishIfIdle(startId); return START_NOT_STICKY;
-        }
+        String id = intent.getStringExtra("id"), action = intent.getAction();
         java.util.ArrayList<String> ids = intent.getStringArrayListExtra("ids");
         if (ids == null) { ids = new java.util.ArrayList<>(); if (id != null) ids.add(id); }
         ids.removeIf(item -> item == null || TaskStore.get(this, item) == null);
-        if (!ENQUEUE.equals(intent.getAction()) || ids.isEmpty()) {
+        if (PAUSE.equals(action)) {
+            pauseTasks(ids); finishIfIdle(startId); return START_NOT_STICKY;
+        }
+        if (CANCEL.equals(action)) {
+            for (String item : ids) cancel(item);
+            finishIfIdle(startId); return START_NOT_STICKY;
+        }
+        if (PAUSE_QUEUE.equals(action)) {
+            pauseQueue(); finishIfIdle(startId); return START_NOT_STICKY;
+        }
+        if (MOVE_NEXT.equals(action) || MOVE_LAST.equals(action)) {
+            moveWaiting(id, MOVE_NEXT.equals(action)); finishIfIdle(startId); return START_NOT_STICKY;
+        }
+        boolean resumeQueue = RESUME_QUEUE.equals(action);
+        DownloadQueuePolicy.Admission admission = RESUME.equals(action) ? DownloadQueuePolicy.Admission.RESUME
+                : RETRY_FAILED.equals(action) ? DownloadQueuePolicy.Admission.RETRY_FAILED : DownloadQueuePolicy.Admission.ANY;
+        if ((!resumeQueue && !ENQUEUE.equals(action) && !RESUME.equals(action) && !RETRY_FAILED.equals(action))
+                || (!resumeQueue && ids.isEmpty())) {
             finishIfIdle(startId); return START_NOT_STICKY;
         }
         // A foreground start acknowledges Android immediately, but the notification
         // must remain attached to the worker's current task, not the newly added one.
         synchronized (lock) {
             String shown = active != null ? active : queue.peekFirst();
-            if (shown == null) shown = ids.get(0);
+            if (shown == null && !ids.isEmpty()) shown = ids.get(0);
             JSONObject current = TaskStore.get(this, shown);
             startForeground(NOTIFICATION, notification(current == null ? "等待下载" : current.optString("title"), shown,
                     current == null ? -1 : current.optDouble("progress", -1)));
             java.util.List<String> candidates = new java.util.ArrayList<>();
             for (String item : ids) if (!item.equals(active) && !queue.contains(item)) candidates.add(item);
-            java.util.List<String> accepted = TaskStore.markQueuedBatch(this, candidates);
-            for (String item : accepted) { cancelled.remove(item); pauseRequested.remove(item); queue.addLast(item); }
-            if (accepted.isEmpty()) for (String item : candidates) if (TaskStore.canEnqueue(TaskStore.get(this, item)))
-                patch(item, "failed", -1, "无法记录下载队列，请重试", "下载尚未开始。");
-            if (!draining && !queue.isEmpty()) { draining = true; worker.execute(this::drain); }
+            java.util.List<String> accepted = resumeQueue ? TaskStore.resumeQueue(this, active) : TaskStore.markQueuedBatch(this, candidates, admission);
+            for (String item : accepted) {
+                cancelled.remove(item); pauseRequested.remove(item);
+                JSONObject task = TaskStore.get(this, item);
+                if (task != null && "queued".equals(task.optString("status")) && !queue.contains(item)) queue.addLast(item);
+            }
+            if (accepted.isEmpty() && !resumeQueue) for (String item : candidates) {
+                JSONObject task = TaskStore.get(this, item);
+                if (task != null && DownloadQueuePolicy.accepts(task.optString("status"), task.optString("pauseOrigin"), admission))
+                    patch(item, "failed", -1, "无法记录下载队列，请重试", "下载尚未开始。");
+            }
+            if (!TaskStore.isQueuePaused(this) && !draining && !queue.isEmpty()) { draining = true; worker.execute(this::drain); }
         }
         finishIfIdle(startId);
         return START_NOT_STICKY;
@@ -127,23 +151,48 @@ public final class DownloadService extends Service {
         }
     }
 
-    private void pause(String id) {
-        if (id == null) return;
-        boolean isActive;
+    private void pauseTasks(List<String> ids) {
+        String stopping = null;
         synchronized (lock) {
-            JSONObject task = TaskStore.get(this, id);
-            if (task == null || cancelled.contains(id) || !canPause(task)) return;
-            isActive = id.equals(active);
-            if (!isActive && !"queued".equals(task.optString("status"))) return;
             // The durable request and visible state are installed together, before
             // killing anything. A crash here restores paused, with all bytes kept.
-            if (!TaskStore.markPauseRequested(this, id, isActive)) return;
-            pauseRequested.add(id);
-            if (!isActive) queue.remove(id);
+            for (String id : TaskStore.pauseBatch(this, ids, active)) {
+                if (!id.equals(active)) queue.remove(id);
+                else if ("pausing".equals(TaskStore.get(this, id).optString("status"))) {
+                    pauseRequested.add(id); stopping = id;
+                }
+            }
         }
-        if (isActive) {
-            updateNotification("正在暂停，等待下载进程退出…", id, -1);
-            stopActiveProcess(id);
+        if (stopping != null) {
+            updateNotification("正在暂停，等待下载进程退出…", stopping, -1);
+            stopActiveProcess(stopping);
+        }
+    }
+
+    private void pauseQueue() {
+        String stopping = null;
+        synchronized (lock) {
+            if (!TaskStore.pauseQueue(this, active, new java.util.ArrayList<>(queue))) return;
+            queue.removeIf(id -> TaskStore.heldByQueue(TaskStore.get(this, id)));
+            JSONObject task = TaskStore.get(this, active);
+            if (task != null && DownloadQueuePolicy.stoppingQueue(task.optString("status"), task.optString("pauseOrigin"))) {
+                pauseRequested.add(active); stopping = active;
+            }
+        }
+        if (stopping != null) {
+            updateNotification("正在暂停队列，等待当前下载退出…", stopping, -1);
+            stopActiveProcess(stopping);
+        }
+    }
+
+    private void moveWaiting(String id, boolean next) {
+        synchronized (lock) {
+            if (id == null || id.equals(active)) return;
+            List<String> reordered = TaskStore.moveWaiting(this, id, next, new java.util.ArrayList<>(queue));
+            Set<String> admitted = new HashSet<>(queue);
+            if (reordered.isEmpty()) return;
+            queue.clear();
+            for (String item : reordered) if (admitted.contains(item)) queue.addLast(item);
         }
     }
 
@@ -171,6 +220,7 @@ public final class DownloadService extends Service {
             DownloadProcessStopper.Attempt attempt;
             Engine attemptEngine;
             synchronized (lock) {
+                if (TaskStore.isQueuePaused(this)) { active = null; draining = false; break; }
                 id = queue.poll();
                 if (id == null) { active = null; draining = false; break; }
                 active = id;

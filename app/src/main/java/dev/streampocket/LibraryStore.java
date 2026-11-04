@@ -35,13 +35,14 @@ public final class LibraryStore implements Closeable {
     }
 
     private static final class Database extends SQLiteOpenHelper {
-        Database(Context context) { super(context, "media-library.db", null, 1); }
+        Database(Context context) { super(context, "media-library.db", null, 2); }
         @Override public void onConfigure(SQLiteDatabase db) { db.setForeignKeyConstraintsEnabled(true); }
         @Override public void onCreate(SQLiteDatabase db) {
-            db.execSQL("CREATE TABLE video (id INTEGER PRIMARY KEY AUTOINCREMENT,uri TEXT NOT NULL UNIQUE,title TEXT NOT NULL,mime TEXT NOT NULL,source TEXT NOT NULL,file_name TEXT NOT NULL DEFAULT '',duration_ms INTEGER NOT NULL DEFAULT 0,width INTEGER NOT NULL DEFAULT 0,height INTEGER NOT NULL DEFAULT 0,bytes INTEGER NOT NULL DEFAULT 0,playback_ms INTEGER NOT NULL DEFAULT 0,author TEXT NOT NULL DEFAULT '',source_url TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL)");
+            db.execSQL("CREATE TABLE video (id INTEGER PRIMARY KEY AUTOINCREMENT,uri TEXT NOT NULL UNIQUE,title TEXT NOT NULL,mime TEXT NOT NULL,source TEXT NOT NULL,file_name TEXT NOT NULL DEFAULT '',duration_ms INTEGER NOT NULL DEFAULT 0,width INTEGER NOT NULL DEFAULT 0,height INTEGER NOT NULL DEFAULT 0,bytes INTEGER NOT NULL DEFAULT 0,playback_ms INTEGER NOT NULL DEFAULT 0,author TEXT NOT NULL DEFAULT '',source_url TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL,favorite INTEGER NOT NULL DEFAULT 0)");
             // A separate ledger prevents repeated imports, including after catalogue removal.
             db.execSQL("CREATE TABLE imported_task (task_id TEXT PRIMARY KEY,uri TEXT NOT NULL,video_id INTEGER REFERENCES video(id) ON DELETE SET NULL)");
             db.execSQL("CREATE INDEX video_created ON video(created_at DESC,id DESC)");
+            db.execSQL("CREATE INDEX video_favorite_created ON video(favorite,created_at DESC,id DESC)");
             db.execSQL("CREATE TABLE marker (id INTEGER PRIMARY KEY AUTOINCREMENT,video_id INTEGER NOT NULL REFERENCES video(id) ON DELETE CASCADE,position_ms INTEGER NOT NULL,end_ms INTEGER NOT NULL DEFAULT 0,label TEXT NOT NULL DEFAULT '')");
             db.execSQL("CREATE INDEX marker_video ON marker(video_id,position_ms)");
             db.execSQL("CREATE TABLE collection (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE)");
@@ -53,6 +54,11 @@ public final class LibraryStore implements Closeable {
             db.execSQL("CREATE INDEX clip_order ON edit_clip(project_id,position,id)");
         }
         @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            if (oldVersion == 1 && newVersion == 2) {
+                db.execSQL("ALTER TABLE video ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0");
+                db.execSQL("CREATE INDEX video_favorite_created ON video(favorite,created_at DESC,id DESC)");
+                return;
+            }
             throw new IllegalStateException("Unsupported media library migration " + oldVersion + " -> " + newVersion);
         }
     }
@@ -161,7 +167,10 @@ public final class LibraryStore implements Closeable {
         return listVideosFromSources(query,source==null||source.isEmpty()||source.equals("all")?java.util.Collections.emptyList():java.util.Collections.singletonList(source),collectionId,limit,offset,order);
     }
     public List<JSONObject> listVideosFromSources(String query,List<String> sources,long collectionId,int limit,int offset,String order){
-        List<String> args=new ArrayList<>();StringBuilder where=videoFilter(query,sources,collectionId,args);
+        return listVideosFromSources(query,sources,collectionId,limit,offset,order,LibraryWatchState.ALL,false);
+    }
+    public List<JSONObject> listVideosFromSources(String query,List<String> sources,long collectionId,int limit,int offset,String order,String watchFilter,boolean favoritesOnly){
+        List<String> args=new ArrayList<>();StringBuilder where=videoFilter(query,sources,collectionId,watchFilter,favoritesOnly,args);
         List<JSONObject> videos = new ArrayList<>();
         try (Cursor c = helper.getReadableDatabase().query("video", null, where.toString(), args.toArray(new String[0]), null, null,
                 videoOrder(order), Math.max(0, offset) + "," + Math.max(1, Math.min(100, limit)))) {
@@ -169,13 +178,26 @@ public final class LibraryStore implements Closeable {
         }
         return videos;
     }
+    /** Counts use the same predicate without opening each matching media file. */
+    public long countVideosFromSources(String query,List<String> sources,long collectionId,String watchFilter,boolean favoritesOnly){
+        List<String> args=new ArrayList<>();StringBuilder where=videoFilter(query,sources,collectionId,watchFilter,favoritesOnly,args);
+        try(Cursor c=helper.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM video WHERE "+where,args.toArray(new String[0]))){return c.moveToFirst()?c.getLong(0):0;}
+    }
     /** Seek by the same stable ordering as the catalogue, including beyond its loaded page. */
     public long nextVideoId(long currentId,String query,List<String> sources,long collectionId,String order){
         return adjacentVideoId(currentId,query,sources,collectionId,order,true);
     }
+    public long nextVideoId(long currentId,String query,List<String> sources,long collectionId,String order,String watchFilter,boolean favoritesOnly){
+        return adjacentVideoId(currentId,query,sources,collectionId,order,true,watchFilter,favoritesOnly);
+    }
     public long adjacentVideoId(long currentId,String query,List<String> sources,long collectionId,String order,boolean forward){
+        return adjacentVideoId(currentId,query,sources,collectionId,order,forward,LibraryWatchState.ALL,false);
+    }
+    public long adjacentVideoId(long currentId,String query,List<String> sources,long collectionId,String order,boolean forward,String watchFilter,boolean favoritesOnly){
+        // The current row remains the stable anchor even after playback or an
+        // unfavorite makes it fall outside the candidate filter.
         JSONObject current=video(currentId);if(current==null)return 0;
-        List<String> args=new ArrayList<>();StringBuilder where=videoFilter(query,sources,collectionId,args);
+        List<String> args=new ArrayList<>();StringBuilder where=videoFilter(query,sources,collectionId,watchFilter,favoritesOnly,args);
         String compare=forward?"<":">",later="(created_at"+compare+"? OR (created_at=? AND id"+compare+"?))";
         if("source".equals(order)){where.append(" AND (source COLLATE NOCASE").append(forward?">":"<").append("? OR (source COLLATE NOCASE=? AND ").append(later).append("))");args.add(current.optString("source"));args.add(current.optString("source"));}
         else where.append(" AND ").append(later);
@@ -184,7 +206,7 @@ public final class LibraryStore implements Closeable {
         try(Cursor c=helper.getReadableDatabase().query("video",new String[]{"id"},where.toString(),args.toArray(new String[0]),null,null,sort,"1")){return c.moveToFirst()?c.getLong(0):0;}
     }
     private static String videoOrder(String order){return "source".equals(order)?"source COLLATE NOCASE,created_at DESC,id DESC":"created_at DESC,id DESC";}
-    private static StringBuilder videoFilter(String query,List<String> sources,long collectionId,List<String> args){
+    private static StringBuilder videoFilter(String query,List<String> sources,long collectionId,String watchFilter,boolean favoritesOnly,List<String> args){
         StringBuilder where = new StringBuilder("1=1");
         if (query != null && !query.trim().isEmpty()) {
             where.append(" AND (title LIKE ? ESCAPE '\\' OR author LIKE ? ESCAPE '\\')");
@@ -193,6 +215,8 @@ public final class LibraryStore implements Closeable {
         }
         if(sources!=null&&!sources.isEmpty()){where.append(" AND source IN (");for(int n=0;n<sources.size();n++){if(n>0)where.append(',');where.append('?');args.add(sources.get(n));}where.append(')');}
         if (collectionId > 0) { where.append(" AND id IN (SELECT video_id FROM collection_video WHERE collection_id=?)"); args.add(String.valueOf(collectionId)); }
+        where.append(" AND ").append(LibraryWatchState.sql(watchFilter));
+        if(favoritesOnly)where.append(" AND favorite=1");
         return where;
     }
 
@@ -206,7 +230,7 @@ public final class LibraryStore implements Closeable {
         String uri = str(c, "uri"); long id = num(c, "id");
         return json("id", id, "title", str(c, "title"), "uri", uri, "mime", str(c, "mime"), "platform", str(c, "source"),
                 "source", str(c, "source"), "fileName", str(c, "file_name"), "durationMs", num(c, "duration_ms"), "width", num(c, "width"), "height", num(c, "height"),
-                "bytes", num(c, "bytes"), "createdAt", num(c, "created_at"), "playbackMs", num(c, "playback_ms"), "author", str(c, "author"), "sourceUrl", str(c, "source_url"),
+                "bytes", num(c, "bytes"), "createdAt", num(c, "created_at"), "playbackMs", num(c, "playback_ms"), "author", str(c, "author"), "sourceUrl", str(c, "source_url"), "favorite", num(c,"favorite")!=0,
                 "thumbnailKey", id + "-" + Integer.toHexString(uri.hashCode()), "missing", !readable(uri));
     }
 
@@ -219,6 +243,23 @@ public final class LibraryStore implements Closeable {
         long duration = duration(videoId); ContentValues v = new ContentValues();
         v.put("playback_ms", duration > 0 ? Math.min(duration, Math.max(0, positionMs)) : Math.max(0, positionMs));
         helper.getWritableDatabase().update("video", v, "id=?", strings(videoId));
+    }
+
+    public void setFavorite(long videoId, boolean favorite) {
+        setFavoriteForVideos(java.util.Collections.singletonList(videoId),favorite);
+    }
+
+    public void setFavoriteForVideos(List<Long> videoIds, boolean favorite) {
+        if(videoIds==null||videoIds.isEmpty())throw new IllegalArgumentException("请选择视频");
+        SQLiteDatabase db=helper.getWritableDatabase();db.beginTransaction();
+        try {
+            ContentValues values=new ContentValues();values.put("favorite",favorite?1:0);
+            for(Long id:new java.util.LinkedHashSet<>(videoIds)) {
+                if(id==null||id<=0||db.update("video",values,"id=?",strings(id))!=1)
+                    throw new IllegalArgumentException("部分视频已不在视频库中，请刷新后重试");
+            }
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
     }
 
     /** Persist actual container metadata discovered by playback or local probing. */
@@ -285,6 +326,22 @@ public final class LibraryStore implements Closeable {
         return findId(db, "collection", "name=?", new String[]{valid});
     }
 
+    public void renameCollection(long collectionId, String name) {
+        String valid=name==null?"":name.trim();
+        if(valid.isEmpty()||valid.length()>80)throw new IllegalArgumentException("合集名称需为 1–80 个字符");
+        ContentValues values=new ContentValues();values.put("name",valid);
+        try {
+            if(collectionId<=0||helper.getWritableDatabase().update("collection",values,"id=?",strings(collectionId))!=1)
+                throw new IllegalArgumentException("合集已不存在，请刷新后重试");
+        }catch(android.database.sqlite.SQLiteConstraintException duplicate){throw new IllegalArgumentException("已有同名合集，请换一个名称",duplicate);}
+    }
+
+    /** Foreign keys remove only this collection's memberships, never its videos. */
+    public void deleteCollection(long collectionId) {
+        if(collectionId<=0||helper.getWritableDatabase().delete("collection","id=?",strings(collectionId))!=1)
+            throw new IllegalArgumentException("合集已不存在，请刷新后重试");
+    }
+
     public void setCollection(long videoId, long collectionId, boolean included) {
         SQLiteDatabase db = helper.getWritableDatabase();
         if (included) { ContentValues v = new ContentValues(); v.put("collection_id", collectionId); v.put("video_id", videoId); db.insertWithOnConflict("collection_video", null, v, SQLiteDatabase.CONFLICT_IGNORE); }
@@ -304,6 +361,20 @@ public final class LibraryStore implements Closeable {
             for(Long id:videoIds){if(id==null||id<=0)throw new IllegalArgumentException("视频不存在");setCollection(id,collectionId,true);}
             db.setTransactionSuccessful();
         }finally{db.endTransaction();}
+    }
+
+    public List<Long> removeVideosFromCollection(List<Long> videoIds, long collectionId) {
+        if(videoIds==null||videoIds.isEmpty()||collectionId<=0)throw new IllegalArgumentException("请选择视频和合集");
+        SQLiteDatabase db=helper.getWritableDatabase();db.beginTransaction();List<Long> removed=new ArrayList<>();
+        try {
+            if(findId(db,"collection","id=?",strings(collectionId))==0)throw new IllegalArgumentException("合集已不存在，请刷新后重试");
+            for(Long id:new java.util.LinkedHashSet<>(videoIds)) {
+                if(id==null||id<=0||findId(db,"video","id=?",strings(id))==0)throw new IllegalArgumentException("部分视频已不在视频库中，请刷新后重试");
+                if(db.delete("collection_video","collection_id=? AND video_id=?",new String[]{String.valueOf(collectionId),String.valueOf(id)})>0)removed.add(id);
+            }
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+        return removed;
     }
 
     /** Catalogue deletion preserves public media, queue history, and edit-clip URI snapshots. */

@@ -1,5 +1,18 @@
 # 开发检查
 
+## 0.5.0 功能批次 · 集成验证入口
+
+本批升级 Media3 1.11.1、compileSdk 36、AGP 8.13.2 与 Gradle 8.14.6，保留 targetSdk 35 / minSdk 24。下载整队控制、批量/优先级、库筛选/收藏/合集、画中画/播放模式/轨道选择的新增回归与全量检查一起执行，最终结果以同一提交的 CI 为准。
+
+除原有单元、View、Lint 与 ARM64 构建外，CI 新增隔离的 Android 15 / x86_64 模拟器任务。它复用 `UiAcceptanceInstrumentation`、许可参考媒体和 `tools/qa-x86.init.gradle`，用真实 Android Media3 解码与系统窗口验证横/竖视频首帧、拖动取帧、返回视频库，以及从真实菜单进入 PiP 后播放位置继续前进、回全屏和退出释放。构建与执行入口为：
+
+```bash
+gradle --no-daemon --console=plain -I tools/qa-x86.init.gradle assembleDebug assembleDebugAndroidTest
+bash tools/run-emulator-acceptance.sh
+```
+
+执行脚本只面向 CI 创建的 `emulator-${EMULATOR_PORT:-5554}`，失败时也收集日志和截图。模拟器包不会上传为安装/发行包。`StreamPocket-emulator-playback` artifact 保存该运行的原生窗口截图、Instrumentation 输出和 logcat；观察到的模拟器解码仍不代表 ARM64 手机硬件解码、OEM PiP、耗电或源站下载。该入口新增时尚未运行，不以脚本存在声称验收通过。
+
 ## 2026-11-04 · 更新、停止与错误恢复
 
 本批基于 0.4.1 主线 `ef623f55c1530e90a7ce0dbe3839a4f9ef289af8`。方案和采用边界见 [升级研究](UPGRADE_RESEARCH_2026-11-04.md)。以下是本地集成的实际结果；Android CI 的最终结果以 PR 对应提交的 Actions 记录为准，不能沿用历史版本的测试数量。
