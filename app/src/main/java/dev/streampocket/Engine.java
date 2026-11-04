@@ -27,6 +27,7 @@ import java.security.MessageDigest;
 /** Local yt-dlp adapter. No media or login credentials are sent to an app server. */
 public final class Engine {
     private static final Object INIT_LOCK = new Object();
+    private static final java.util.concurrent.locks.ReentrantLock UPDATE_LOCK = new java.util.concurrent.locks.ReentrantLock(true);
     private static boolean initialized;
     private static final String BUNDLED_VERSION = "2026.10.26";
     private static final String BUNDLED_SHA256 = "e51e69e89489f199530f13d32a4342da3ddb2cf34842f364603a066db05afbf3";
@@ -40,8 +41,14 @@ public final class Engine {
 
     public void init() throws Exception {
         synchronized (INIT_LOCK) {
-            if (initialized) return;
+            CoreUpdate core = coreUpdate();
+            if (initialized && !core.needsRecovery()) return;
+            RUNTIME_LOCK.writeLock().lockInterruptibly();
             try {
+                // Restore an interrupted replacement before the wrapper can recreate a missing core.
+                core.recover(coreMetadata());
+                if (initialized) return;
+                core.discardDownload();
                 YoutubeDL.getInstance().init(app);
                 FFmpeg.getInstance().init(app);
                 installBundledCoreIfOlder();
@@ -56,7 +63,7 @@ public final class Engine {
             } catch (Throwable error) {
                 throw new Exception("下载功能暂时无法启动。请更新应用后重试。" +
                         "\n" + cleanLog(error.toString()), error);
-            }
+            } finally { RUNTIME_LOCK.writeLock().unlock(); }
         }
     }
 
@@ -161,12 +168,67 @@ public final class Engine {
     }
 
     public String update() throws Exception {
-        init();
-        RUNTIME_LOCK.writeLock().lockInterruptibly();
+        UPDATE_LOCK.lockInterruptibly();
+        CoreUpdate core = coreUpdate();
         try {
-            YoutubeDL.getInstance().updateYoutubeDL(app, YoutubeDL.UpdateChannel._STABLE);
-            return String.valueOf(YoutubeDL.getInstance().version(app));
-        } finally { RUNTIME_LOCK.writeLock().unlock(); }
+            init();
+            JSONObject release = new JSONObject(AppUpdates.getJson(CoreUpdate.API, 256 * 1024, false));
+            if (release.optBoolean("draft", true) || release.optBoolean("prerelease", true))
+                throw new IOException("下载支持暂时没有可用的稳定更新");
+            JSONObject asset = UpdateOffer.asset(release, "yt-dlp");
+            if (asset == null) throw new IOException("下载支持的官方更新文件缺失");
+            CoreUpdate.Release offered = new CoreUpdate.Release(release.getString("tag_name"),
+                    asset.getString("browser_download_url"), asset.getLong("size"), asset.getString("digest"));
+            RUNTIME_LOCK.readLock().lockInterruptibly();
+            try {
+                String installed = CoreUpdate.archiveVersion(coreBinary());
+                if (!CoreRules.needsBundledCore(installed, offered.version)) return installed;
+            } finally { RUNTIME_LOCK.readLock().unlock(); }
+            // Slow networks leave parsing and active downloads on the current, working core.
+            core.prepare(offered, "StreamPocket/" + BuildConfig.VERSION_NAME);
+            RUNTIME_LOCK.writeLock().lockInterruptibly();
+            try {
+                core.activate(offered, coreMetadata(), this::checkCoreVersion);
+                ResolvedMediaCache.clear();
+                return offered.version;
+            } finally { RUNTIME_LOCK.writeLock().unlock(); }
+        } finally { core.discardDownload(); UPDATE_LOCK.unlock(); }
+    }
+
+    private File coreBinary() {
+        return new File(app.getNoBackupFilesDir(), "youtubedl-android/yt-dlp/yt-dlp");
+    }
+
+    private CoreUpdate coreUpdate() { return new CoreUpdate(coreBinary()); }
+
+    private CoreUpdate.Metadata coreMetadata() {
+        android.content.SharedPreferences preferences = app.getSharedPreferences("youtubedl-android", Context.MODE_PRIVATE);
+        return new CoreUpdate.Metadata() {
+            public String version() { return preferences.getString("dlpVersion", null); }
+            public String name() { return preferences.getString("dlpVersionName", null); }
+            public void write(String version, String name) throws IOException {
+                android.content.SharedPreferences.Editor edit = preferences.edit();
+                if (version == null) edit.remove("dlpVersion"); else edit.putString("dlpVersion", version);
+                if (name == null) edit.remove("dlpVersionName"); else edit.putString("dlpVersionName", name);
+                if (!edit.commit()) throw new IOException("无法保存下载支持的版本信息");
+            }
+        };
+    }
+
+    private void checkCoreVersion(String expectedVersion) throws Exception {
+        String nativeDirectory = app.getApplicationInfo().nativeLibraryDir;
+        File packages = new File(app.getNoBackupFilesDir(), "youtubedl-android/packages");
+        File pythonHome = new File(packages, "python/usr");
+        ProcessBuilder builder = new ProcessBuilder(nativeDirectory + "/libpython.so", coreBinary().getAbsolutePath(),
+                "--ignore-config", "--no-plugin-dirs", "--version");
+        builder.environment().put("LD_LIBRARY_PATH", new File(pythonHome, "lib") + ":"
+                + new File(packages, "ffmpeg/usr/lib") + ":" + new File(packages, "aria2c/usr/lib"));
+        builder.environment().put("SSL_CERT_FILE", new File(pythonHome, "etc/tls/cert.pem").getAbsolutePath());
+        builder.environment().put("PYTHONHOME", pythonHome.getAbsolutePath());
+        builder.environment().put("HOME", pythonHome.getAbsolutePath());
+        builder.environment().put("TMPDIR", app.getCacheDir().getAbsolutePath());
+        builder.environment().put("PATH", builder.environment().get("PATH") + ":" + nativeDirectory);
+        CoreUpdate.checkVersion(builder, expectedVersion, 15_000);
     }
 
     YoutubeDLRequest request(String url, String processId) throws Exception {return request(url,processId,true);}

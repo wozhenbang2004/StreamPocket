@@ -9,6 +9,7 @@ import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.BitmapDrawable;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
@@ -224,12 +225,57 @@ public final class VideoFirstPlayerUiTest {
             assertTrue(field(activity,"status",TextView.class).getText().toString().contains("没有可播放的画面"));assertEquals(View.GONE,field(activity,"transitionCover",ImageView.class).getVisibility());
         }
     }
+    @Test public void retryAfterFirstFrameTimeoutRestoresPlaybackIntentAndKeepsPosition() throws Exception {
+        long position=51250; Bundle retryState=new Bundle();
+        try(Session session=openClockSession()){
+            PlayerActivity activity=session.activity;ExoPlayer clock=field(activity,"player",ExoPlayer.class);
+            clock.seekTo(position);clock.setPlayWhenReady(true);
+            field(activity,"videoStartupCheck",Runnable.class).run();
+            assertFalse("The first-frame watchdog pauses failed playback",clock.getPlayWhenReady());
+            assertTrue(field(activity,"status",TextView.class).getText().toString().contains("视频画面未能启动"));
+            Button retry=field(activity,"retryButton",Button.class);assertEquals(View.VISIBLE,retry.getVisibility());
+            assertTrue("Use the real error-panel retry action",retry.performClick());
+            assertNull("Retry releases the failed player before loading again",field(activity,"player",Object.class));
+            activity.onSaveInstanceState(retryState);
+            assertTrue("An explicit retry requests playback again",retryState.getBoolean("should_play"));
+            assertEquals("Retry retains the failed player's current position",position,retryState.getLong("position_ms"));
+            // Drain only the I/O queue; this clock fixture must not construct a native decoder.
+            LibraryStore store=field(activity,"store",LibraryStore.class);
+            JSONObject saved=field(activity,"io",ExecutorService.class).submit(()->store.video(videoId)).get(10,TimeUnit.SECONDS);
+            assertEquals("The checkpoint also reaches the library",position,saved.optLong("playbackMs"));
+        }
+        try(Session session=openClockSession(retryState)){
+            ExoPlayer clock=field(session.activity,"player",ExoPlayer.class);
+            assertTrue("The retry intent survives Activity restoration",clock.getPlayWhenReady());
+            assertEquals(position,clock.getCurrentPosition());
+        }
+    }
+    @Test public void ordinaryRestorationKeepsUserPausedPlaybackAndPosition() throws Exception {
+        long position=63250;Bundle pausedState=new Bundle();
+        try(Session session=openClockSession()){
+            ExoPlayer clock=field(session.activity,"player",ExoPlayer.class);
+            clock.seekTo(position);clock.setPlayWhenReady(false);
+            session.activity.onSaveInstanceState(pausedState);
+            assertFalse(pausedState.getBoolean("should_play"));
+        }
+        try(Session session=openClockSession(pausedState)){
+            ExoPlayer clock=field(session.activity,"player",ExoPlayer.class);
+            assertFalse("A normal reload must not turn a saved pause into autoplay",clock.getPlayWhenReady());
+            assertEquals(position,clock.getCurrentPosition());
+            Bundle restoredState=new Bundle();session.activity.onSaveInstanceState(restoredState);
+            assertFalse(restoredState.getBoolean("should_play"));assertEquals(position,restoredState.getLong("position_ms"));
+        }
+    }
 
     private Session openClockSession() throws Exception {
+        return openClockSession(null);
+    }
+    private Session openClockSession(Bundle state) throws Exception {
         ActivityController<PlayerActivity> controller=Robolectric.buildActivity(PlayerActivity.class,intent());
-        PlayerActivity activity=controller.create().get(); await(activity);
+        PlayerActivity activity=controller.create(state).get(); await(activity);
         assertNull("No real player before onStart",field(activity,"player",Object.class));
-        Clock clock=new Clock(); ExoPlayer clockPlayer=clock.proxy(); set(activity,"player",clockPlayer);
+        Clock clock=new Clock();if(state!=null)clock.position=field(activity,"positionMs",Long.class);
+        ExoPlayer clockPlayer=clock.proxy(); set(activity,"player",clockPlayer);
         // PlayerView treats a null player as indefinitely visible regardless of auto-show.
         // Attach through the real API, while the fixture denies every surface/decoder command.
         field(activity,"playerView",PlayerView.class).setPlayer(clockPlayer);

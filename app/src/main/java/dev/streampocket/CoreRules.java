@@ -89,10 +89,13 @@ public final class CoreRules {
     }
 
     public static String inspectionMessage(Throwable error) {
-        if(SourceFailure.kind(error)==SourceFailure.Kind.NO_FORMATS)
-            return "暂时没有可下载的画质。请先确认原链接能播放，再重新解析或更新下载支持。失败链接已保留。";
-        if (SourceFailure.kind(error) != SourceFailure.Kind.OTHER) return userMessage(error);
         String text = cleanLog(error == null ? "" : error.toString()).toLowerCase(Locale.ROOT);
+        if (SourceFailure.kind(error) == SourceFailure.Kind.NO_FORMATS) {
+            if (text.contains("no video could be found in this tweet"))
+                return "暂时无法取得这个 X 视频。请先确认原帖能播放，再重新解析。失败链接已保留。";
+            return "暂时没有可下载的画质。请先确认原链接能播放，再重新解析或更新下载支持。失败链接已保留。";
+        }
+        if (SourceFailure.kind(error) != SourceFailure.Kind.OTHER) return userMessage(error);
         if(text.contains("小红书未返回所选笔记"))return "未取得这条小红书笔记。请重新复制完整分享链接，并确认原平台能打开；链接记录已保留。";
         if (text.contains("certificate") || text.contains("ssl")) return "无法安全连接网站，请检查手机时间和网络后重试。";
         if (text.contains("no video could be found in this tweet") || text.contains("tweet is unavailable") || text.contains("tombstone"))

@@ -35,6 +35,9 @@ public final class DownloadPauseTest {
     private ServiceController<DownloadService> controller;
     private ExecutorService worker;
     private final CountDownLatch releaseWorker=new CountDownLatch(1);
+    private final CountDownLatch workerInterrupted=new CountDownLatch(1);
+    private DownloadProcessStopper stopFixture;
+    private CountDownLatch releaseStop;
 
     @Before public void setup() throws Exception {
         app=RuntimeEnvironment.getApplication();
@@ -45,15 +48,18 @@ public final class DownloadPauseTest {
         CountDownLatch workerHeld=new CountDownLatch(1);
         worker.execute(()->{
             workerHeld.countDown();
-            try { releaseWorker.await(); } catch(InterruptedException expected) { Thread.currentThread().interrupt(); }
+            try { releaseWorker.await(); } catch(InterruptedException expected) { workerInterrupted.countDown(); Thread.currentThread().interrupt(); }
         });
         assertTrue(workerHeld.await(5,TimeUnit.SECONDS));
     }
 
     @After public void cleanup() throws Exception {
         // Never release the fixture queue into the real download engine.
-        controller.destroy(); releaseWorker.countDown();
+        controller.destroy();
+        if(releaseStop!=null)releaseStop.countDown();
+        releaseWorker.countDown();
         assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));
+        if(stopFixture!=null)stopFixture.close();
         app.getSharedPreferences("tasks",0).edit().clear().commit(); resetInitialization();
     }
 
@@ -224,6 +230,84 @@ public final class DownloadPauseTest {
                 .putStringArrayListExtra("ids",new java.util.ArrayList<>(Arrays.asList("new-first","new-last"))),0,3);
         assertEquals(Arrays.asList("waiting","new-first","new-last"),Arrays.asList(queue().toArray(new String[0])));
         assertEquals(first,TaskStore.get(app,"new-first").getLong("queuedAt"));
+    }
+
+    @Test public void timeoutStopsTheServiceWithoutWaitingForNativeStopOrReleasingActiveOwnership() throws Exception {
+        seed(task("active","downloading","video").put("downloadedBytes",300),task("waiting","queued","queued"),
+                task("late","queued","queued"),task("saved","completed","completed").put("uri","content://fixture/saved"));
+        own("active");queue().add("waiting");
+        stopFixture=new DownloadProcessStopper(350,80);releaseStop=new CountDownLatch(1);
+        field("processStops").set(service,stopFixture);
+        CountDownLatch entered=new CountDownLatch(1),deadline=new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<Thread> signalThread=new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<String> observedStatus=new java.util.concurrent.atomic.AtomicReference<>();
+        Object serviceLock=field("lock").get(service);
+        DownloadProcessStopper.Attempt attempt=stopFixture.newAttempt("active",processId->{
+            signalThread.set(Thread.currentThread());
+            synchronized(serviceLock){observedStatus.set(TaskStore.get(app,"active").optString("status"));}
+            entered.countDown();
+            // An uncooperative native stop must not make the task retryable.
+            while(true)try{releaseStop.await();break;}catch(InterruptedException ignored){deadline.countDown();}
+            return true;
+        });
+        field("activeAttempt").set(service,attempt);
+        Thread caller=Thread.currentThread();
+        service.onTimeout(1,android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+        assertTrue(org.robolectric.Shadows.shadowOf(service).isStoppedBySelf());
+        assertTrue(entered.await(5,TimeUnit.SECONDS));assertNotSame(caller,signalThread.get());
+        assertEquals("cancelling",observedStatus.get());
+        assertEquals("interrupted",TaskStore.get(app,"waiting").getString("status"));
+        assertEquals("content://fixture/saved",TaskStore.get(app,"saved").getString("uri"));
+        assertEquals(300,TaskStore.get(app,"active").getLong("downloadedBytes"));
+        assertTrue(deadline.await(5,TimeUnit.SECONDS));
+        assertFalse("Signal timeout is not execution completion",TaskStore.markQueued(app,"active"));
+        assertFalse(TaskStore.removeIfInactive(app,"active"));
+        assertFalse("Stopping the service must not unwind execute via Thread.interrupt",workerInterrupted.await(150,TimeUnit.MILLISECONDS));
+        command(DownloadService.ENQUEUE,"late");
+        assertEquals("interrupted",TaskStore.get(app,"late").getString("status"));assertTrue(queue().isEmpty());
+        assertEquals("cancelling",TaskStore.get(app,"active").getString("status"));
+    }
+
+    @Test public void timeoutKeepsDurablePauseIntentUntilExecutionUnwinds() throws Exception {
+        seed(task("a","downloading","video").put("downloadedBytes",300).put("totalBytes",1000));own("a");
+        command(DownloadService.PAUSE,"a");
+        service.onTimeout(1,android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+        JSONObject waiting=TaskStore.get(app,"a");
+        assertEquals("pausing",waiting.getString("status"));assertTrue(waiting.getBoolean("pauseRequested"));
+        assertFalse(TaskStore.markQueued(app,"a"));
+        // The existing terminal transition is invoked only after the simulated execution unwinds.
+        invoke("finishStopped",new Class<?>[]{String.class},"a");
+        JSONObject paused=TaskStore.get(app,"a");
+        assertEquals("paused",paused.getString("status"));assertEquals(300,paused.getLong("downloadedBytes"));
+        assertEquals(1000,paused.getLong("totalBytes"));
+    }
+
+    @Test public void timeoutCannotReopenTerminalTasksWhenActiveBookkeepingLags() throws Exception {
+        seed(task("paused","paused","video").put("pauseRequested",true).put("downloadedBytes",300),
+                task("failed","failed","video"),task("cancelled","cancelled","video"),
+                task("interrupted","interrupted","video"));
+        // execute and cleanup have returned, but drain has not cleared active yet.
+        own("paused");
+        service.onTimeout(1,android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+        assertEquals("paused",TaskStore.get(app,"paused").getString("status"));
+        assertEquals(300,TaskStore.get(app,"paused").getLong("downloadedBytes"));
+        for(String status:Arrays.asList("failed","cancelled","interrupted")) {
+            assertTrue(TaskStore.markServiceStopping(app,status,java.util.Collections.emptyList(),"系统停止"));
+            assertEquals(status,TaskStore.get(app,status).getString("status"));
+            assertTrue("A completed stop remains retryable",TaskStore.canEnqueue(TaskStore.get(app,status)));
+        }
+        assertTrue(TaskStore.canEnqueue(TaskStore.get(app,"paused")));
+    }
+
+    @Test public void lateCancelCannotReopenTerminalTasksBeforeActiveBookkeepingClears() throws Exception {
+        seed(task("paused","paused","video").put("pauseRequested",true),task("failed","failed","video"),
+                task("cancelled","cancelled","video"),task("interrupted","interrupted","video"));
+        for(String status:Arrays.asList("paused","failed","cancelled","interrupted")) {
+            own(status);
+            command(DownloadService.CANCEL,status);
+            assertEquals(status,TaskStore.get(app,status).getString("status"));
+            assertTrue(TaskStore.canEnqueue(TaskStore.get(app,status)));
+        }
     }
 
     private void command(String action,String id) { service.onStartCommand(new Intent(app,DownloadService.class).setAction(action).putExtra("id",id),0,1); }

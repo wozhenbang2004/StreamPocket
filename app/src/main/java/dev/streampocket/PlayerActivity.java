@@ -404,7 +404,7 @@ public final class PlayerActivity extends Activity {
         status=text("正在读取本地视频…",14,WHITE,false); status.setGravity(Gravity.CENTER);
         status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); errorPanel.addView(status,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout actions=row(); actions.setGravity(Gravity.CENTER);
-        retryButton=button("重试",false); retryButton.setOnClickListener(v->loadVideo());
+        retryButton=button("重试",false); retryButton.setOnClickListener(v->{shouldPlay=true;loadVideo();});
         actions.addView(retryButton,new LinearLayout.LayoutParams(dp(96),dp(48)));
         Button back=button("返回视频库",false); back.setOnClickListener(v->finishPlayback());
         actions.addView(back,new LinearLayout.LayoutParams(dp(120),dp(48))); add(errorPanel,actions,12,0);

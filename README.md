@@ -99,7 +99,7 @@ chmod +x gradlew
 
 Windows 使用 `gradlew.bat assembleDebug`。开发包位于 `app/build/outputs/apk/debug/app-debug.apk`；自行签名的包不能覆盖签名不同的发行包。构建器会下载并校验固定版本的 Gradle。
 
-[开发检查](docs/TESTING.md) · [下载行为](docs/DOWNLOAD_FLOW.md) · [播放与剪辑](docs/MEDIA_EXPERIENCE.md) · [历史更新](docs/CHANGELOG.md)
+[开发检查](docs/TESTING.md) · [下载行为](docs/DOWNLOAD_FLOW.md) · [播放与剪辑](docs/MEDIA_EXPERIENCE.md) · [历史更新](docs/CHANGELOG.md) · [升级研究与实施（2026-11-04）](docs/UPGRADE_RESEARCH_2026-11-04.md)
 
 ## 开源许可
 

@@ -23,7 +23,9 @@ public final class CoreRulesSelfTest {
         check(CoreRules.isBilibiliUrl("https://B23.TV/example"), "Bilibili compatibility rule missed a share link");
         for (String value : new String[]{"https://evilbilibili.com/a", "https://bilibili.com.example.org/a", "https://x.com/user/status/1", "https://www.douyin.com/video/1"})
             check(!CoreRules.isBilibiliUrl(value), "Bilibili Range rule leaked to another platform: " + value);
-        check(CoreRules.inspectionMessage(new Exception("No video could be found in this tweet")).contains("当前访问状态"), "Unavailable tweet was reported as an ordinary download failure");
+        String missingTweet = CoreRules.inspectionMessage(new Exception("No video could be found in this tweet"));
+        check(missingTweet.contains("X 视频") && missingTweet.contains("重新解析") && missingTweet.contains("失败链接已保留"),
+                "Unavailable tweet lost its source-specific recovery and retained-link explanation");
         check(!CoreRules.inspectionMessage(new Exception("unknown parse failure")).contains("临时数据"), "Analysis claimed download data existed");
         check(CoreRules.isTwitterAuthCookieLine("#HttpOnly_.x.com\tTRUE\t/\tTRUE\t0\tauth_token\tfixture"), "HttpOnly auth cookie was missed");
         check(!CoreRules.isTwitterAuthCookieLine(".notx.com\tTRUE\t/\tTRUE\t0\tauth_token\tfixture"), "Unrelated host changed X authentication behavior");

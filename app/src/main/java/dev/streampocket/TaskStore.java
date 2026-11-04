@@ -136,6 +136,51 @@ public final class TaskStore {
         return false;
     }
 
+    /** Cancel is durable before the service signals the process, but is not yet retryable. */
+    static synchronized boolean markCancelRequested(Context context, String id) {
+        init(context);
+        JSONArray tasks = read(context);
+        for (int index = 0; index < tasks.length(); index++) {
+            JSONObject task = tasks.optJSONObject(index);
+            if (task == null || !task.optString("id").equals(id) || !canRequestStop(task.optString("status"))) continue;
+            try {
+                stopped(task, "cancelling", "正在取消，等待下载进程退出…");
+                task.put("stageLabel", "正在取消");
+                return context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", tasks.toString()).commit();
+            } catch (Exception invalid) { return false; }
+        }
+        return false;
+    }
+
+    /** A stopping service releases waiting work, while its active process retains ownership. */
+    static synchronized boolean markServiceStopping(Context context, String activeId, List<String> waitingIds, String detail) {
+        init(context);
+        JSONArray tasks = read(context);
+        try {
+            for (int index = 0; index < tasks.length(); index++) {
+                JSONObject task = tasks.optJSONObject(index);
+                if (task == null || "completed".equals(task.optString("status"))) continue;
+                String id = task.optString("id");
+                String status = task.optString("status");
+                if (id.equals(activeId) && canRequestStop(status)) {
+                    // Execution may have finished while the service still holds its bookkeeping ID.
+                    // Never reopen a terminal task after its final cleanup has already returned.
+                    boolean paused = task.optBoolean("pauseRequested");
+                    stopped(task, paused ? "pausing" : "cancelling", detail + "；正在等待下载进程退出");
+                    task.put("stageLabel", paused ? "正在暂停" : "正在停止");
+                } else if (waitingIds.contains(id) && "queued".equals(task.optString("status"))) {
+                    stopped(task, "interrupted", detail);
+                }
+            }
+            return context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", tasks.toString()).commit();
+        } catch (Exception invalid) { return false; }
+    }
+
+    private static boolean canRequestStop(String status) {
+        return "queued".equals(status) || "downloading".equals(status) || "merging".equals(status)
+                || "saving".equals(status) || "pausing".equals(status) || "cancelling".equals(status);
+    }
+
     static synchronized void markStopped(Context context, String id, String status, String detail) {
         init(context);
         JSONArray tasks = read(context);

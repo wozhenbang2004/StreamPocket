@@ -18,6 +18,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Check update recovery and process stopping
+        run: |
+          mkdir -p "$RUNNER_TEMP/streampocket-reliability"
+          javac -Xlint:all -d "$RUNNER_TEMP/streampocket-reliability" \
+            app/src/main/java/dev/streampocket/CoreUpdate.java \
+            app/src/main/java/dev/streampocket/DownloadProcessStopper.java \
+            app/src/test/java/dev/streampocket/CoreUpdateSelfTest.java \
+            app/src/test/java/dev/streampocket/DownloadProcessStopperSelfTest.java
+          java -cp "$RUNNER_TEMP/streampocket-reliability" dev.streampocket.CoreUpdateSelfTest
+          java -cp "$RUNNER_TEMP/streampocket-reliability" dev.streampocket.DownloadProcessStopperSelfTest
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
