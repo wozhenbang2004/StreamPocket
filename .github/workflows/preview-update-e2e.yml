@@ -1,0 +1,141 @@
+name: Preview Update E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/preview-update-channel-20261105
+
+permissions:
+  contents: write
+
+jobs:
+  publish-preview-pair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.6'
+
+      - name: Install Android SDK 36
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+
+      - name: Verify update channel code
+        run: gradle --no-daemon --console=plain testDebugUnitTest lintDebug
+
+      - name: Allocate isolated preview channel and signing identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHANNEL="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          BASE_CODE=$((60000000 + GITHUB_RUN_NUMBER * 2))
+          UPDATE_CODE=$((BASE_CODE + 1))
+          BASE_NAME="0.6.0-preview.${CHANNEL}.1"
+          UPDATE_NAME="0.6.0-preview.${CHANNEL}.2"
+          PREVIEW_KEYSTORE="${RUNNER_TEMP}/streampocket-preview.p12"
+          PREVIEW_STORE_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+          keytool -genkeypair -noprompt -storetype PKCS12             -keystore "${PREVIEW_KEYSTORE}"             -storepass "${PREVIEW_STORE_PASSWORD}"             -keypass "${PREVIEW_STORE_PASSWORD}"             -alias preview             -keyalg RSA -keysize 3072 -validity 3             -dname "CN=StreamPocket Preview Update,O=StreamPocket Preview,C=US"
+          {
+            echo "CHANNEL=${CHANNEL}"
+            echo "BASE_CODE=${BASE_CODE}"
+            echo "UPDATE_CODE=${UPDATE_CODE}"
+            echo "BASE_NAME=${BASE_NAME}"
+            echo "UPDATE_NAME=${UPDATE_NAME}"
+            echo "PREVIEW_KEYSTORE=${PREVIEW_KEYSTORE}"
+            echo "PREVIEW_STORE_PASSWORD=${PREVIEW_STORE_PASSWORD}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Build signed baseline APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gradle --no-daemon --console=plain assembleDebug             -PpreviewInstall=true             -PpreviewUpdateChannel="${CHANNEL}"             -PpreviewVersionCode="${BASE_CODE}"             -PpreviewVersionName="${BASE_NAME}"             -PpreviewKeystore="${PREVIEW_KEYSTORE}"             -PpreviewStorePassword="${PREVIEW_STORE_PASSWORD}"             -PpreviewKeyAlias=preview             -PpreviewKeyPassword="${PREVIEW_STORE_PASSWORD}"
+          cp app/build/outputs/apk/debug/app-debug.apk dist/StreamPocket-preview-update-baseline.apk
+
+      - name: Build signed target APK from the same source and key
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --console=plain --rerun-tasks assembleDebug             -PpreviewInstall=true             -PpreviewUpdateChannel="${CHANNEL}"             -PpreviewVersionCode="${UPDATE_CODE}"             -PpreviewVersionName="${UPDATE_NAME}"             -PpreviewKeystore="${PREVIEW_KEYSTORE}"             -PpreviewStorePassword="${PREVIEW_STORE_PASSWORD}"             -PpreviewKeyAlias=preview             -PpreviewKeyPassword="${PREVIEW_STORE_PASSWORD}"
+          cp app/build/outputs/apk/debug/app-debug.apk dist/StreamPocket-arm64-v8a.apk
+
+      - name: Verify pair identity and create update manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          APKSIGNER="${ANDROID_HOME}/build-tools/35.0.0/apksigner"
+          "${APKSIGNER}" verify --verbose --print-certs dist/StreamPocket-preview-update-baseline.apk
+          "${APKSIGNER}" verify --verbose --print-certs dist/StreamPocket-arm64-v8a.apk
+          BASE_CERT="$("${APKSIGNER}" verify --print-certs dist/StreamPocket-preview-update-baseline.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n1 | tr '[:upper:]' '[:lower:]')"
+          UPDATE_CERT="$("${APKSIGNER}" verify --print-certs dist/StreamPocket-arm64-v8a.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n1 | tr '[:upper:]' '[:lower:]')"
+          test -n "${BASE_CERT}"
+          test "${BASE_CERT}" = "${UPDATE_CERT}"
+          APK_SHA="$(sha256sum dist/StreamPocket-arm64-v8a.apk | awk '{print $1}')"
+          APK_SIZE="$(stat -c%s dist/StreamPocket-arm64-v8a.apk)"
+          export APK_SHA APK_SIZE UPDATE_CERT
+          python3 - <<'PY'
+          import json
+          import os
+          manifest = {
+              "schemaVersion": 1,
+              "versionCode": int(os.environ["UPDATE_CODE"]),
+              "versionName": os.environ["UPDATE_NAME"],
+              "packageName": "dev.streampocket.localtest.preview",
+              "abi": "arm64-v8a",
+              "minSdk": 24,
+              "apkAssetName": "StreamPocket-arm64-v8a.apk",
+              "apkSize": int(os.environ["APK_SIZE"]),
+              "apkSha256": os.environ["APK_SHA"],
+              "signingCertificateSha256": os.environ["UPDATE_CERT"],
+          }
+          with open("dist/update-manifest.json", "w", encoding="utf-8") as handle:
+              json.dump(manifest, handle, ensure_ascii=False, indent=2)
+              handle.write("\n")
+          PY
+          cat dist/update-manifest.json
+
+      - name: Publish paired prerelease update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v0.6.0-preview.${CHANNEL}.2"
+          gh release create "${TAG}"             dist/StreamPocket-arm64-v8a.apk             dist/update-manifest.json             --repo "${GITHUB_REPOSITORY}"             --target "${GITHUB_SHA}"             --prerelease             --title "拾流预览更新验收 ${CHANNEL}"             --notes "仅供应用内覆盖更新验收。基线 ${BASE_NAME} / ${BASE_CODE}，目标 ${UPDATE_NAME} / ${UPDATE_CODE}。该 prerelease 使用本次运行独立的临时测试签名，不属于正式更新通道。"
+          {
+            echo "RELEASE_TAG=${TAG}"
+            echo "RELEASE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Upload install-first baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamPocket-preview-update-baseline
+          path: dist/StreamPocket-preview-update-baseline.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Upload update-pair metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamPocket-preview-update-metadata
+          path: |
+            dist/update-manifest.json
+            dist/StreamPocket-arm64-v8a.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
