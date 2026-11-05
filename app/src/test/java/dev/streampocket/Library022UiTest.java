@@ -180,7 +180,7 @@ public final class Library022UiTest {
             assertEquals(id,store.listVideos("","",0,30,0,"untrusted SQL").get(0).optLong("id"));
         }
         app.getSharedPreferences("config",0).edit().putString("appearance_theme","dark").commit();open();assertTrue(text(library).contains("4.0 MB"));capture("04-grid-dark-bitmap-fixture");
-        assertEquals(0xff0f1215,((android.graphics.drawable.ColorDrawable)library.getBackground()).getColor());
+        assertEquals(UiTheme.darkPalette().bg,((android.graphics.drawable.ColorDrawable)library.getBackground()).getColor());
     }
 
     @Test public void recreatedListRestoresANonzeroViewportAndItsOffset() throws Exception {

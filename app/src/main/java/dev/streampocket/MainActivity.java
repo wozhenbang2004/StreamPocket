@@ -45,6 +45,8 @@ public final class MainActivity extends Activity {
     private String pendingQueueAction;
     private final ArrayList<String> pendingQueueIds=new ArrayList<>();
     private PocketTabs queueTabs;
+    private ScrollView queueScroll;
+    private LinearLayout queueHeader,queueItems;
     private final Runnable commitRemovals=()->commitPendingRemovals(true);
     private static final int COOKIE_REQUEST=51, NOTIFY_REQUEST=52, STORAGE_REQUEST=53, LOGIN_REQUEST=54, DIRECTORY_REQUEST=55, MOVE_STORAGE_REQUEST=56;
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -119,15 +121,15 @@ public final class MainActivity extends Activity {
         body=column();root.addView(body,new LinearLayout.LayoutParams(-1,0,1));
         clipboardNotice=column();clipboardNotice.setVisibility(View.GONE);root.addView(clipboardNotice);
         notice=column();notice.setVisibility(View.GONE);root.addView(notice);
-        navigationFrame=new FrameLayout(this);navigationFrame.setBackgroundColor(SURFACE);
-        navigationPill=new View(this);navigationPill.setBackground(shape(palette.accentSoft,16,0));
+        navigationFrame=new FrameLayout(this);navigationFrame.setBackgroundColor(BG);
+        navigationPill=new View(this);navigationPill.setBackground(shape(palette.raised,16,0));UiTheme.floatingSurface(navigationPill,2);
         FrameLayout.LayoutParams pill=new FrameLayout.LayoutParams(dp(72),dp(54));pill.topMargin=dp(6);navigationFrame.addView(navigationPill,pill);
-        navigation=row();navigation.setPadding(dp(10),dp(4),dp(10),dp(4));navigationFrame.addView(navigation,new FrameLayout.LayoutParams(-1,dp(68)));
+        navigation=row();navigation.setPadding(dp(10),dp(4),dp(10),dp(4));navigation.setElevation(dp(3));navigationFrame.addView(navigation,new FrameLayout.LayoutParams(-1,dp(68)));
         String[] labels={"新建","下载","视频库","设置"},ids={"new","queue","library","settings"};
         for(int i=0;i<ids.length;i++){
             final String id=ids[i];Button b=quietButton(labels[i]);destinations[i]=b;
             b.setTextSize(11);b.setPadding(0,dp(6),0,dp(3));b.setMinWidth(0);b.setSingleLine(true);b.setGravity(Gravity.CENTER);
-            b.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x12397D72),null,null));
+            b.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x0C808080),null,null));
             b.setOnClickListener(v->showTab(id));navigation.addView(b,new LinearLayout.LayoutParams(0,-1,1));
         }
         root.addView(navigationFrame,new LinearLayout.LayoutParams(-1,dp(68)));
@@ -135,6 +137,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showTab(String destination) {
+        boolean changingPage=!destination.equals(tab);
         if(!"queue".equals(destination)){queueSelecting=false;queueSelection.clear();}
         if(input!=null)draft=input.getText().toString();
         if(libraryView!=null){libraryState=libraryView.saveUiState();libraryView.release();libraryView=null;}
@@ -145,20 +148,21 @@ public final class MainActivity extends Activity {
         int chosen=0;
         for(int i=0;i<ids.length;i++){
             boolean selected=ids[i].equals(tab);if(selected)chosen=i;
-            Button b=destinations[i];b.setTextColor(selected?ACCENT:MUTED);b.setTypeface(Typeface.DEFAULT,selected?Typeface.BOLD:Typeface.NORMAL);
+            Button b=destinations[i];b.setTextColor(selected?ACCENT:MUTED);b.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
             b.setSelected(selected);b.setContentDescription(labels[i]+(selected?"，当前页面":""));
-            NavIcon icon=new NavIcon(i,selected?ACCENT:MUTED);icon.setBounds(0,0,dp(22),dp(22));b.setCompoundDrawables(null,icon,null,null);b.setCompoundDrawablePadding(dp(3));
+            PocketIcon icon=new PocketIcon(new String[]{"new","download","library","settings"}[i],selected?ACCENT:MUTED);icon.setBounds(0,0,dp(22),dp(22));b.setCompoundDrawables(null,icon,null,null);b.setCompoundDrawablePadding(dp(3));
         }
         final int index=chosen;
         navigationFrame.post(()->{if(isDestroyed())return;float width=(navigation.getWidth()-navigation.getPaddingLeft()-navigation.getPaddingRight())/4f;
             float x=navigation.getPaddingLeft()+index*width+(width-dp(72))/2;
-            navigationPill.animate().cancel();if(UiTheme.motionEnabled(this)&&navigationPill.isLaidOut())navigationPill.animate().translationX(x).setDuration(220).setInterpolator(new android.view.animation.OvershootInterpolator(.7f)).start();else navigationPill.setTranslationX(x);
+            navigationPill.animate().cancel();if(UiTheme.motionEnabled(this)&&navigationPill.isLaidOut())navigationPill.animate().translationX(x).setDuration(220).setInterpolator(UiTheme.easeOut()).start();else navigationPill.setTranslationX(x);
         });
         if("new".equals(tab))showNew();else if("queue".equals(tab))refreshQueue(true);
         else if("library".equals(tab)){
             libraryView=new VideoLibraryView(this);if(libraryState!=null)libraryView.restoreUiState(libraryState);
             body.addView(libraryView,new LinearLayout.LayoutParams(-1,-1));libraryView.refresh();
         }else showSettings();
+        if(changingPage)UiTheme.enter(body);
     }
 
     private LinearLayout scrollContent() {
@@ -171,7 +175,7 @@ public final class MainActivity extends Activity {
     private void showNew() {
         LinearLayout c=scrollContent();c.addView(text("新建下载",22,INK,true));
         add(c,text("粘贴分享文案，选择视频或音频再保存",13,MUTED,false),6,16);
-        LinearLayout form=column();form.setPadding(dp(16),dp(12),dp(16),dp(16));form.setBackground(shape(SURFACE,16,0));
+        LinearLayout form=column();form.setPadding(dp(14),dp(8),dp(14),dp(14));form.setBackground(shape(SURFACE,18,0));
         addLinkRow=row();Button more=quietButton("＋ 继续添加链接");more.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);more.setTextColor(ACCENT);more.setOnClickListener(v->{linkEditorExpanded=true;updateLinkEditor();input.requestFocus();((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(input,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);});addLinkRow.addView(more,new LinearLayout.LayoutParams(0,dp(48),1));
         Button quickPaste=quietButton("粘贴链接");quickPaste.setTextSize(13);quickPaste.setTextColor(ACCENT);quickPaste.setOnClickListener(v->pasteLink());addLinkRow.addView(quickPaste,new LinearLayout.LayoutParams(dp(88),dp(48)));form.addView(addLinkRow);
         linkEditor=column();form.addView(linkEditor,new LinearLayout.LayoutParams(-1,-2));
@@ -220,6 +224,7 @@ public final class MainActivity extends Activity {
                     :waiting>0?waiting+" 个链接等待解析":failed+" 个链接解析失败",13,INK,true);
             queue.addView(summary,new LinearLayout.LayoutParams(0,-2,1));
             Button inspect=quietButton("查看队列");inspect.setTextSize(12);inspect.setTextColor(ACCENT);inspect.setOnClickListener(v->showInspectionQueue());queue.addView(inspect,new LinearLayout.LayoutParams(dp(88),dp(48)));add(inspectionResults,queue,0,4);
+            if(parsing){PocketProgressBar progress=new PocketProgressBar(this);progress.setIndeterminate(true);progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);add(inspectionResults,progress,0,8);progress.getLayoutParams().height=dp(3);}
             if(activeInspection!=null&&inspectionInbox.jobs.contains(activeInspection)){
                 LinearLayout current=row();TextView source=text(linkLabel(activeInspection.url),12,MUTED,false);source.setMaxLines(2);source.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);current.addView(source,new LinearLayout.LayoutParams(0,-2,1));
                 Button stop=quietButton(activeInspection.cancelled?"正在取消":"取消");stop.setTextSize(12);stop.setEnabled(!activeInspection.cancelled);stop.setOnClickListener(v->cancelAnalysis());current.addView(stop,new LinearLayout.LayoutParams(dp(64),dp(48)));add(inspectionResults,current,0,8);
@@ -242,19 +247,20 @@ public final class MainActivity extends Activity {
         LinearLayout readyTools=row();readyTools.addView(text("保存到 "+DownloadLocation.label(this),12,MUTED,false),new LinearLayout.LayoutParams(0,-2,1));
         if(inspectedMedia.size()>1){Button batch=quietButton("批量设置");batch.setTextSize(12);batch.setTextColor(ACCENT);batch.setOnClickListener(v->showBatchSettings());readyTools.addView(batch,new LinearLayout.LayoutParams(dp(88),dp(48)));}add(inspectionResults,readyTools,0,8);
         for(Engine.Media m:inspectedMedia){
-            LinearLayout item=row();item.setGravity(Gravity.TOP);item.setPadding(dp(12),dp(12),dp(12),dp(12));item.setBackground(shape(SURFACE,14,0));
-            item.addView(cover(m.thumbnail,"inspect:"+m.url+":"+m.id,72,96),new LinearLayout.LayoutParams(dp(72),dp(96)));
+            LinearLayout item=column();item.setPadding(dp(12),dp(12),dp(12),dp(10));item.setBackground(shape(SURFACE,16,0));
+            LinearLayout mediaHeader=row();mediaHeader.setGravity(Gravity.TOP);item.addView(mediaHeader);
+            mediaHeader.addView(cover(m.thumbnail,"inspect:"+m.url+":"+m.id,88,64),new LinearLayout.LayoutParams(dp(88),dp(64)));
             LinearLayout words=column();TextView name=text(m.title==null||m.title.isEmpty()?"未命名视频":m.title,14,INK,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            LinearLayout readyTitle=row();readyTitle.setGravity(Gravity.TOP);readyTitle.addView(name,new LinearLayout.LayoutParams(0,-2,1));Button remove=quietButton("×");remove.setTextSize(20);remove.setMinWidth(0);remove.setPadding(0,0,0,0);remove.setContentDescription("删除解析结果："+m.title);remove.setOnClickListener(v->{inspectedMedia.remove(m);qualitySelections.remove(InspectionBatch.key(m));persistInspectionInbox();renderInspection();});readyTitle.addView(remove,new LinearLayout.LayoutParams(dp(40),dp(40)));words.addView(readyTitle);
-            TextView metadata=text(m.platform+(m.duration>0?" · "+duration(m.duration):"")+(m.uploader!=null&&!m.uploader.isEmpty()?" · "+m.uploader:""),12,MUTED,false);metadata.setMaxLines(2);metadata.setEllipsize(android.text.TextUtils.TruncateAt.END);add(words,metadata,4,0);LinearLayout.LayoutParams info=new LinearLayout.LayoutParams(0,-2,1);info.leftMargin=dp(12);item.addView(words,info);
+            LinearLayout readyTitle=row();readyTitle.setBaselineAligned(false);readyTitle.setGravity(Gravity.TOP);readyTitle.addView(name,new LinearLayout.LayoutParams(0,-2,1));Button remove=quietButton("×");remove.setTextSize(20);remove.setMinWidth(0);remove.setPadding(0,0,0,0);remove.setContentDescription("删除解析结果："+m.title);remove.setOnClickListener(v->{inspectedMedia.remove(m);qualitySelections.remove(InspectionBatch.key(m));persistInspectionInbox();renderInspection();});readyTitle.addView(remove,new LinearLayout.LayoutParams(dp(40),dp(40)));words.addView(readyTitle);
+            TextView metadata=text(m.platform+(m.duration>0?" · "+duration(m.duration):"")+(m.uploader!=null&&!m.uploader.isEmpty()?" · "+m.uploader:""),12,MUTED,false);metadata.setMaxLines(2);metadata.setEllipsize(android.text.TextUtils.TruncateAt.END);add(words,metadata,4,0);LinearLayout.LayoutParams info=new LinearLayout.LayoutParams(0,-2,1);info.leftMargin=dp(12);mediaHeader.addView(words,info);
             String key=InspectionBatch.key(m);List<Engine.Quality> choices=m.downloadChoices();int chosen=Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),choices.size()-1));
-            TextView details=text(mediaSummary(m,chosen),12,MUTED,false);add(words,details,4,0);
-            LinearLayout actions=row();Button quality=quietButton((m.album?"图片："+m.imageCount+" 张":choices.get(chosen).audioOnly()?"音频："+choices.get(chosen).audioFormat.toUpperCase(Locale.ROOT):"画质："+choices.get(chosen).label)+"  ▾");quality.setTextSize(12);quality.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);quality.setMinWidth(0);
+            TextView details=text(mediaSummary(m,chosen),12,MUTED,false);details.setMaxLines(1);details.setEllipsize(android.text.TextUtils.TruncateAt.END);add(words,details,3,0);
+            LinearLayout actions=row();Button quality=button((m.album?"图片："+m.imageCount+" 张":choices.get(chosen).audioOnly()?"音频："+choices.get(chosen).audioFormat.toUpperCase(Locale.ROOT):"画质："+choices.get(chosen).label)+"  ▾",false);quality.setTextSize(12);quality.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);quality.setMinWidth(0);
             quality.setOnClickListener(v->{String[] options=new String[choices.size()];for(int n=0;n<options.length;n++)options[n]=choices.get(n).label;
                 PocketDialog panel=new PocketDialog.Builder(this).setTitle(m.hasAudio?"保存视频或音频":"选择画质").setSingleChoiceItems(options,chosen,(d,which)->{qualitySelections.put(key,which);persistInspectionInbox();d.dismiss();renderInspection();}).setNegativeButton("返回",null).show();bottom(panel);});
-            quality.setPadding(0,0,dp(4),0);quality.setSingleLine(true);quality.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            actions.addView(quality,new LinearLayout.LayoutParams(0,dp(48),1));Button save=button(m.album?"保存图集":choices.get(chosen).audioOnly()?"下载音频":"下载视频",true);save.setTextSize(12);save.setPadding(dp(10),0,dp(10),0);save.setOnClickListener(v->enqueue(m,choices.get(Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),choices.size()-1)))));actions.addView(save,new LinearLayout.LayoutParams(dp(88),dp(48)));add(words,actions,4,0);
-            if(!m.album){Button extras=quietButton(attachmentLabel(m));extras.setTextSize(12);extras.setTextColor(MUTED);extras.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);extras.setPadding(0,0,0,0);extras.setOnClickListener(v->showAttachments(m));words.addView(extras,new LinearLayout.LayoutParams(-1,dp(40)));}
+            quality.setPadding(dp(12),0,dp(10),0);quality.setSingleLine(true);quality.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(0,dp(48),1);qp.rightMargin=dp(8);actions.addView(quality,qp);Button save=button(m.album?"保存图集":choices.get(chosen).audioOnly()?"下载音频":"下载视频",true);save.setTextSize(12);save.setPadding(dp(10),0,dp(10),0);save.setOnClickListener(v->enqueue(m,choices.get(Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),choices.size()-1)))));actions.addView(save,new LinearLayout.LayoutParams(dp(100),dp(48)));add(item,actions,10,0);
+            if(!m.album){Button extras=quietButton(attachmentLabel(m));extras.setTextSize(12);extras.setTextColor(MUTED);extras.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);extras.setPadding(0,0,0,0);extras.setOnClickListener(v->showAttachments(m));item.addView(extras,new LinearLayout.LayoutParams(-1,dp(40)));}
             add(inspectionResults,item,0,8);
         }
     }
@@ -519,13 +525,18 @@ public final class MainActivity extends Activity {
         Set<String> liveIds=new HashSet<>();for(JSONObject task:tasks)if(!pendingRemoval.containsKey(task.optString("id")))liveIds.add(task.optString("id"));queueSelection.retainAll(liveIds);
         String signature=tasks.toString()+queueFilter+pendingRemoval.keySet()+held+queueSelecting+queueSelection;
         if(!force&&signature.equals(lastQueueSignature))return;lastQueueSignature=signature;
-        int previousScroll=body.getChildCount()>0&&body.getChildAt(0) instanceof ScrollView?((ScrollView)body.getChildAt(0)).getScrollY():0;
-        clearArtwork(body);body.removeAllViews();LinearLayout c=scrollContent();LinearLayout heading=row();heading.addView(text("下载",22,INK,true),new LinearLayout.LayoutParams(0,-2,1));
-        if(!tasks.isEmpty()){Button manage=quietButton(queueSelecting?"完成":"选择");manage.setContentDescription(queueSelecting?"退出任务选择":"选择多个下载任务");manage.setOnClickListener(v->{queueSelecting=!queueSelecting;queueSelection.clear();refreshQueue(true);});heading.addView(manage,new LinearLayout.LayoutParams(dp(64),dp(48)));}else heading.addView(text("本机任务",12,MUTED,false));c.addView(heading);
-        renderQueueControls(c,tasks,held);
         String[] labels={"全部","进行中","已完成","失败"},keys={"all","active","completed","failed"};int selected=0;for(int n=0;n<keys.length;n++)if(keys[n].equals(queueFilter))selected=n;
-        if(queueTabs==null)queueTabs=new PocketTabs(this,labels,selected,index->{queueFilter=keys[index];queueSelection.clear();refreshQueue(true);});
-        if(queueTabs.getParent() instanceof ViewGroup)((ViewGroup)queueTabs.getParent()).removeView(queueTabs);queueTabs.selection(selected);add(c,queueTabs,14,16);
+        if(queueScroll==null||queueScroll.getParent()!=body){
+            clearArtwork(body);body.removeAllViews();LinearLayout page=scrollContent();queueScroll=(ScrollView)page.getParent();
+            queueHeader=column();page.addView(queueHeader,new LinearLayout.LayoutParams(-1,-2));
+            queueTabs=new PocketTabs(this,labels,selected,index->{queueFilter=keys[index];queueSelection.clear();refreshQueue(true);});add(page,queueTabs,14,16);
+            queueItems=column();page.addView(queueItems,new LinearLayout.LayoutParams(-1,-2));
+        }
+        int previousScroll=queueScroll.getScrollY();
+        clearArtwork(queueItems);queueItems.removeAllViews();queueHeader.removeAllViews();
+        LinearLayout c=queueItems,heading=row();heading.addView(text("下载",22,INK,true),new LinearLayout.LayoutParams(0,-2,1));
+        if(!tasks.isEmpty()){Button manage=quietButton(queueSelecting?"完成":"选择");manage.setContentDescription(queueSelecting?"退出任务选择":"选择多个下载任务");manage.setOnClickListener(v->{queueSelecting=!queueSelecting;queueSelection.clear();refreshQueue(true);});heading.addView(manage,new LinearLayout.LayoutParams(dp(64),dp(48)));}else heading.addView(text("本机任务",12,MUTED,false));queueHeader.addView(heading);
+        renderQueueControls(queueHeader,tasks,held);queueTabs.selection(selected);
         Map<String,Integer> groupCounts=new HashMap<>();for(JSONObject task:tasks)if(!pendingRemoval.containsKey(task.optString("id"))&&matchesFilter(task.optString("status"))){String group=queueGroup(task,held);groupCounts.put(group,groupCounts.getOrDefault(group,0)+1);}
         int queuePosition=0,shown=0;String previousGroup="";
         for(JSONObject task:tasks){
@@ -534,7 +545,7 @@ public final class MainActivity extends Activity {
             String group=queueGroup(task,held);if(("all".equals(queueFilter)||"active".equals(queueFilter))&&!group.equals(previousGroup)){add(c,text(group+" · "+groupCounts.get(group)+" 项",12,MUTED,true),shown==1?0:12,8);previousGroup=group;}
             boolean active=isActive(status),pauseable=DownloadService.canPause(task);
             LinearLayout item=row();item.setGravity(Gravity.TOP);item.setPadding(dp(12),dp(12),dp(4),dp(12));item.setBackground(shape(queueSelection.contains(id)?palette.accentSoft:SURFACE,12,0));
-            if(queueSelecting){CheckBox choice=new CheckBox(this);choice.setButtonTintList(android.content.res.ColorStateList.valueOf(ACCENT));choice.setChecked(queueSelection.contains(id));choice.setContentDescription("选择任务："+task.optString("title"));choice.setOnCheckedChangeListener((v,checked)->toggleQueueSelection(id));item.addView(choice,new LinearLayout.LayoutParams(dp(40),dp(48)));}
+            if(queueSelecting){CheckBox choice=new PocketCheckBox(this);choice.setChecked(queueSelection.contains(id));choice.setContentDescription("选择任务："+task.optString("title"));choice.setOnCheckedChangeListener((v,checked)->toggleQueueSelection(id));item.addView(choice,new LinearLayout.LayoutParams(dp(40),dp(48)));}
             JSONObject media=task.optJSONObject("media");String poster=media==null?"":media.optString("thumbnail");if(poster.isEmpty()&&"completed".equals(status))poster=task.optString("uri");
             FrameLayout thumbnail=new FrameLayout(this);thumbnail.setBackground(shape(palette.control,10,0));thumbnail.setClipToOutline(true);
             ImageView cover=cover(poster,id,64,64);thumbnail.addView(cover,new FrameLayout.LayoutParams(-1,-1));
@@ -568,7 +579,7 @@ public final class MainActivity extends Activity {
             }else add(c,item,0,8);
         }
         if(shown==0){add(c,text(tasks.isEmpty()?"还没有下载任务":"没有这类任务",18,INK,true),30,8);add(c,text(tasks.isEmpty()?"分享或粘贴一条链接，开始保存视频。":"切换筛选即可查看其他任务。",13,MUTED,false),0,16);Button first=button(tasks.isEmpty()?"新建下载":"查看全部任务",true);first.setOnClickListener(v->{if(tasks.isEmpty())showTab("new");else{queueFilter="all";refreshQueue(true);}});add(c,first,0,0);}
-        ScrollView scroll=(ScrollView)c.getParent();scroll.post(()->scroll.scrollTo(0,previousScroll));
+        ScrollView scroll=queueScroll;scroll.post(()->scroll.scrollTo(0,previousScroll));
     }
 
     private void renderQueueControls(LinearLayout content,List<JSONObject> tasks,boolean held){
@@ -800,7 +811,7 @@ public final class MainActivity extends Activity {
         showMessage("支持的平台","YouTube、X / Twitter、哔哩哔哩、抖音\n\n试用渠道\n小红书、快手、TikTok、Instagram、Facebook、Pinterest、Pornhub、小黑盒\n\n复制单个视频的分享链接即可尝试。部分内容需要登录或源站验证，可能受地区和网络限制；图文、整批频道和进行中的直播暂不支持。\n\n有声音的视频可在画质选项中选择 MP3 或 M4A。音频保存在下载记录中，可打开或分享。");
     }
     private void section(LinearLayout c,String title){add(c,text(title,12,MUTED,true),22,8);}
-    private LinearLayout settingsGroup(LinearLayout c){LinearLayout group=column();group.setPadding(dp(14),0,dp(14),0);group.setBackground(shape(SURFACE,16,0));c.addView(group,new LinearLayout.LayoutParams(-1,-2));return group;}
+    private LinearLayout settingsGroup(LinearLayout c){LinearLayout group=column();group.setPadding(dp(14),0,dp(14),0);group.setBackground(shape(SURFACE,18,0));c.addView(group,new LinearLayout.LayoutParams(-1,-2));return group;}
     private void switchRow(LinearLayout parent,String title,String key,boolean fallback){
         LinearLayout r=row();r.setMinimumHeight(dp(56));r.addView(text(title,14,INK,false),new LinearLayout.LayoutParams(0,-2,1));PocketSwitch control=new PocketSwitch(this);control.setMinHeight(dp(48));control.setContentDescription(title);control.setChecked(getSharedPreferences("config",0).getBoolean(key,fallback));control.setOnCheckedChangeListener((v,checked)->{getSharedPreferences("config",0).edit().putBoolean(key,checked).apply();if(key.equals("clipboard_suggestions")&&!checked)hideClipboardOffer();});r.addView(control);parent.addView(r);
     }
@@ -1258,12 +1269,12 @@ public final class MainActivity extends Activity {
     }
 
     private TextView settingRow(LinearLayout parent,String title,String subtitle,String actionLabel,Runnable click) {
-        LinearLayout r=row();r.setPadding(0,dp(8),0,dp(8));r.setMinimumHeight(dp(56));boolean arrowOnly="›".equals(actionLabel);
+        LinearLayout r=row();r.setPadding(0,dp(12),0,dp(12));r.setMinimumHeight(dp(64));boolean arrowOnly="›".equals(actionLabel);
         TextView summary=text(subtitle,12,MUTED,false);summary.setMaxLines(2);summary.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        if(arrowOnly){r.addView(text(title,14,INK,false),new LinearLayout.LayoutParams(0,-2,1));summary.setGravity(Gravity.END);LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(dp(142),-2);vp.leftMargin=dp(8);r.addView(summary,vp);}
-        else{LinearLayout labels=column();labels.addView(text(title,14,INK,true));add(labels,summary,4,0);r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));}
-        TextView arrow=text(actionLabel,arrowOnly?20:13,arrowOnly?MUTED:ACCENT,false);arrow.setGravity(Gravity.CENTER);r.addView(arrow,new LinearLayout.LayoutParams(dp(arrowOnly?22:48),dp(40)));
-        r.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x14397D72),shape(SURFACE,10,0),null));r.setFocusable(true);r.setClickable(true);r.setContentDescription(title+"，"+subtitle+(arrowOnly?"":"，"+actionLabel));r.setOnClickListener(v->click.run());UiTheme.press(r);parent.addView(r,new LinearLayout.LayoutParams(-1,-2));return summary;
+        LinearLayout labels=column();labels.addView(text(title,14,INK,true));add(labels,summary,3,0);r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
+        if(arrowOnly){ImageView arrow=new ImageView(this);arrow.setImageDrawable(new PocketIcon("chevron",MUTED));arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);arrow.setPadding(dp(3),0,dp(3),0);r.addView(arrow,new LinearLayout.LayoutParams(dp(24),dp(24)));}
+        else{TextView arrow=text(actionLabel,13,ACCENT,false);arrow.setGravity(Gravity.CENTER);r.addView(arrow,new LinearLayout.LayoutParams(dp(48),dp(40)));}
+        r.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x0C808080),shape(SURFACE,10,0),null));r.setFocusable(true);r.setClickable(true);r.setContentDescription(title+"，"+subtitle+(arrowOnly?"":"，"+actionLabel));r.setOnClickListener(v->click.run());UiTheme.press(r);parent.addView(r,new LinearLayout.LayoutParams(-1,-2));return summary;
     }
 
     private PocketDialog settingsPanel(String title,LinearLayout content) {
@@ -1375,7 +1386,7 @@ public final class MainActivity extends Activity {
     private TextView text(String s,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);t.setLineSpacing(dp(3),1);if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);return t;}
     private Button button(String title,boolean primary){return PocketButton.of(this,title,primary?PocketButton.Role.PRIMARY:PocketButton.Role.SECONDARY);}
     private Button quietButton(String label){return PocketButton.of(this,label,PocketButton.Role.QUIET);}
-    private StateListDrawable fieldBackground(){StateListDrawable states=new StateListDrawable();GradientDrawable focused=shape(palette.control,12,ACCENT);focused.setStroke(dp(2),ACCENT);states.addState(new int[]{android.R.attr.state_focused},focused);states.addState(new int[]{},shape(palette.control,12,0));return states;}
+    private StateListDrawable fieldBackground(){StateListDrawable states=new StateListDrawable();GradientDrawable focused=shape(palette.raised,12,ACCENT);focused.setStroke(dp(2),ACCENT);states.addState(new int[]{android.R.attr.state_focused},focused);states.addState(new int[]{},shape(palette.control,12,0));return states;}
     private GradientDrawable shape(int color,int radius,int border){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));if(border!=0)d.setStroke(dp(1),border);return d;}
     private void add(LinearLayout parent,View child,int top,int bottom){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(top);p.bottomMargin=dp(bottom);parent.addView(child,p);}
     private static String mediaSummary(Engine.Media media,int selection){
@@ -1390,16 +1401,5 @@ public final class MainActivity extends Activity {
     private static String duration(long seconds){return String.format(Locale.ROOT,"%d:%02d",Math.max(0,seconds)/60,Math.max(0,seconds)%60);}
     private ImageView cover(String source,String key,int width,int height){ImageView image=new ImageView(this);image.setBackground(shape(palette.control,12,0));image.setClipToOutline(true);image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setContentDescription("视频封面");artwork.load(image,source,key);return image;}
     private void clearArtwork(View view){if(artwork==null||view==null)return;if(view instanceof ImageView)artwork.cancel((ImageView)view);if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)clearArtwork(group.getChildAt(i));}}
-    private final class NavIcon extends android.graphics.drawable.Drawable {
-        private final int kind,color;private final android.graphics.Paint paint=new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
-        NavIcon(int kind,int color){this.kind=kind;this.color=color;}
-        @Override public void draw(android.graphics.Canvas canvas){android.graphics.Rect b=getBounds();canvas.save();canvas.translate(b.left,b.top);canvas.scale(b.width()/24f,b.height()/24f);paint.setColor(color);paint.setStyle(android.graphics.Paint.Style.STROKE);paint.setStrokeWidth(1.7f);paint.setStrokeCap(android.graphics.Paint.Cap.ROUND);paint.setStrokeJoin(android.graphics.Paint.Join.ROUND);
-            if(kind==0){canvas.drawRoundRect(3,3,21,21,5,5,paint);canvas.drawLine(12,7,12,17,paint);canvas.drawLine(7,12,17,12,paint);}
-            else if(kind==1){canvas.drawLine(12,3,12,15,paint);canvas.drawLine(7,10,12,15,paint);canvas.drawLine(17,10,12,15,paint);android.graphics.Path p=new android.graphics.Path();p.moveTo(4,16);p.lineTo(4,21);p.lineTo(20,21);p.lineTo(20,16);canvas.drawPath(p,paint);}
-            else if(kind==2){canvas.drawRoundRect(3,4,21,20,3,3,paint);android.graphics.Path p=new android.graphics.Path();p.moveTo(10,8);p.lineTo(16,12);p.lineTo(10,16);p.close();canvas.drawPath(p,paint);}
-            else{canvas.drawCircle(12,12,8,paint);canvas.drawCircle(12,12,3,paint);for(int i=0;i<8;i++){double a=Math.PI*i/4;canvas.drawLine(12+(float)Math.cos(a)*8,12+(float)Math.sin(a)*8,12+(float)Math.cos(a)*10,12+(float)Math.sin(a)*10,paint);}}
-            canvas.restore();}
-        @Override public void setAlpha(int a){paint.setAlpha(a);}@Override public void setColorFilter(android.graphics.ColorFilter f){paint.setColorFilter(f);}@Override public int getOpacity(){return android.graphics.PixelFormat.TRANSLUCENT;}
-    }
 
 }

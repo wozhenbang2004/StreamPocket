@@ -63,6 +63,7 @@ jobs:
           name: StreamPocket-verification
           path: |
             app/build/reports/view-fixtures/
+            app/build/ui-render/
             app/build/test-results/testDebugUnitTest/
             app/build/reports/lint-results-debug.html
           retention-days: 7

@@ -4,10 +4,6 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.Intent;
 import android.graphics.Color;
-import android.graphics.Canvas;
-import android.graphics.Paint;
-import android.graphics.ColorFilter;
-import android.graphics.PixelFormat;
 import android.graphics.drawable.Drawable;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -149,7 +145,7 @@ public final class VideoLibraryView extends LinearLayout {
     }
     private void setListMode(boolean list) {
         listMode=list; activity.getSharedPreferences("config",0).edit().putString("library_view",list?"list":"grid").putInt("library_columns",gridColumns).apply();
-        viewToggle.setContentDescription("选择视频库视图"); ((ImageView)viewToggle).setImageDrawable(new LibraryIcon(list?"list":"grid",INK));
+        viewToggle.setContentDescription("选择视频库视图"); ((ImageView)viewToggle).setImageDrawable(new PocketIcon(list?"list":"grid",INK));
         int first=grid.getFirstVisiblePosition(); configureColumns(); adapter.notifyDataSetChanged(); grid.setSelection(first);
     }
     private void showLibraryMenu() {
@@ -177,7 +173,7 @@ public final class VideoLibraryView extends LinearLayout {
         search.setText(query); main.removeCallbacks(searchChanged); search.setVisibility(state.getBoolean("search_open")||!query.isEmpty()?VISIBLE:GONE);
         updateCollectionLabel();
         restoreFirst=Math.max(0,state.getInt("first",0));restoreTop=state.getInt("top",0);
-        viewToggle.setContentDescription("选择视频库视图"); ((ImageView)viewToggle).setImageDrawable(new LibraryIcon(listMode?"list":"grid",INK));
+        viewToggle.setContentDescription("选择视频库视图"); ((ImageView)viewToggle).setImageDrawable(new PocketIcon(listMode?"list":"grid",INK));
     }
 
     public void refresh() { if (!released && !loading && !writing) load(true, true); }
@@ -572,9 +568,9 @@ public final class VideoLibraryView extends LinearLayout {
     private TextView text(String value, int size, int color, boolean bold) {
         TextView v = new TextView(activity); v.setText(value); v.setTextSize(size); v.setTextColor(color); v.setGravity(Gravity.CENTER_VERTICAL); if (bold) v.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return v;
     }
-    private TextView filterChip(String value,String icon){TextView v=control(value,true);v.setTextSize(12);v.setPadding(dp(12),0,dp(10),0);v.setBackground(new android.graphics.drawable.InsetDrawable(shape(palette.surface,true,18),0,dp(7),0,dp(7)));v.setPadding(dp(12),0,dp(10),0);Drawable left="watch".equals(icon)?new LibraryIcon("watch",MUTED):new PocketIcon(icon,MUTED),down=new PocketIcon("down",MUTED);left.setBounds(0,0,dp(16),dp(16));down.setBounds(0,0,dp(13),dp(13));v.setCompoundDrawables(left,null,down,null);v.setCompoundDrawablePadding(dp(6));return v;}
+    private TextView filterChip(String value,String icon){TextView v=control(value,true);v.setTextSize(12);v.setPadding(dp(12),0,dp(10),0);v.setBackground(new android.graphics.drawable.InsetDrawable(shape(palette.surface,false,18),0,dp(7),0,dp(7)));v.setPadding(dp(12),0,dp(10),0);Drawable left="watch".equals(icon)?new PocketIcon("watch",MUTED):new PocketIcon(icon,MUTED),down=new PocketIcon("down",MUTED);left.setBounds(0,0,dp(16),dp(16));down.setBounds(0,0,dp(13),dp(13));v.setCompoundDrawables(left,null,down,null);v.setCompoundDrawablePadding(dp(6));return v;}
     private TextView control(String value, boolean border) {
-        TextView v = text(value, 14, INK, false); v.setGravity(Gravity.CENTER); v.setPadding(dp(8), 0, dp(8), 0); v.setSingleLine(true); v.setEllipsize(TextUtils.TruncateAt.END); v.setBackground(shape(palette.control, border, 16)); UiTheme.press(v); return v;
+        TextView v = text(value, 14, INK, false); v.setGravity(Gravity.CENTER); v.setPadding(dp(8), 0, dp(8), 0); v.setSingleLine(true); v.setEllipsize(TextUtils.TruncateAt.END); v.setBackground(shape(palette.control, false, 16)); UiTheme.press(v); return v;
     }
     private static String sourceLabel(String value) {
         VideoPlatform platform=VideoPlatform.fromId(value); if(platform!=null)return platform==VideoPlatform.X?"X":platform==VideoPlatform.BILIBILI?"B站":platform.title; if (value.equals("youtube")) return "YouTube"; if (value.equals("x")) return "X"; if (value.equals("bilibili")) return "B站"; if (value.equals("douyin")) return "抖音"; if (value.equals("export")) return "我的导出"; return "其他平台";
@@ -582,7 +578,7 @@ public final class VideoLibraryView extends LinearLayout {
     private static String duration(long ms) { long seconds = Math.max(0, ms / 1000); return seconds >= 3600 ? String.format(Locale.ROOT, "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60) : String.format(Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60); }
 
     private View iconControl(String type,String description) {
-        ImageView view=new ImageView(activity);view.setImageDrawable(new LibraryIcon(type,INK));view.setContentDescription(description);view.setPadding(dp(13),dp(13),dp(13),dp(13));view.setFocusable(true);
+        ImageView view=new ImageView(activity);view.setImageDrawable(new PocketIcon(type,INK));view.setContentDescription(description);view.setPadding(dp(13),dp(13),dp(13),dp(13));view.setFocusable(true);
         view.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(palette.accentSoft),null,shape(Color.WHITE,false,12)));UiTheme.press(view);return view;
     }
     private final class VideoAdapter extends BaseAdapter {
@@ -600,7 +596,7 @@ public final class VideoLibraryView extends LinearLayout {
             Holder holder;
             if (recycled == null || !(recycled.getTag() instanceof Holder) || ((Holder)recycled.getTag()).list!=listMode) {
                 LinearLayout cell=new LinearLayout(activity);cell.setOrientation(listMode?HORIZONTAL:VERTICAL);cell.setGravity(Gravity.CENTER_VERTICAL);cell.setPadding(dp(3),dp(3),dp(3),dp(3));
-                FrameLayout media=new FrameLayout(activity);media.setBackground(shape(palette.dark?0xff232b2d:0xffe6eae6,false,12));media.setClipToOutline(true);
+                FrameLayout media=new FrameLayout(activity);media.setBackground(shape(palette.dark?0xff242424:0xffe8e8e8,false,12));media.setClipToOutline(true);
                 ImageView cover=new LibraryCoverView(activity);cover.setScaleType(ImageView.ScaleType.FIT_CENTER);cover.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);media.addView(cover,new FrameLayout.LayoutParams(-1,-1));
                 ProgressBar progress=new PocketProgressBar(activity,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);progress.setPadding(0,0,0,0);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(palette.accent));progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x66383E3C));progress.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
                 media.addView(progress,new FrameLayout.LayoutParams(-1,dp(3),Gravity.BOTTOM));
@@ -617,7 +613,7 @@ public final class VideoLibraryView extends LinearLayout {
                 top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
                 ImageView menu=(ImageView)iconControl("more","视频更多操作");menu.setPadding(dp(18),dp(18),dp(18),dp(18));
                 if(listMode)top.addView(menu,new LinearLayout.LayoutParams(dp(48),dp(48)));
-                else {menu.setImageDrawable(new LibraryIcon("more",Color.WHITE));menu.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x44ffffff),new android.graphics.drawable.InsetDrawable(shape(0x68171a1c,false,12),dp(22),dp(2),dp(2),dp(22)),null));FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.END);media.addView(menu,mp);menu.setPadding(dp(28),dp(8),dp(8),dp(28));}
+                else {menu.setImageDrawable(new PocketIcon("more",Color.WHITE));menu.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x44ffffff),new android.graphics.drawable.InsetDrawable(shape(0x68171a1c,false,12),dp(22),dp(2),dp(2),dp(22)),null));FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP|Gravity.END);media.addView(menu,mp);menu.setPadding(dp(28),dp(8),dp(8),dp(28));}
                 body.addView(top,new LinearLayout.LayoutParams(-1,-2));
                 TextView meta=text("",12,MUTED,false);meta.setMaxLines(1);meta.setEllipsize(TextUtils.TruncateAt.END);body.addView(meta,new LinearLayout.LayoutParams(-1,-2));
                 TextView context=text("",11,palette.accent,false);context.setSingleLine(true);context.setEllipsize(TextUtils.TruncateAt.END);context.setPadding(dp(6),dp(3),dp(6),dp(3));context.setBackground(shape(palette.accentSoft,false,6));LinearLayout.LayoutParams badge=new LinearLayout.LayoutParams(-2,-2);badge.topMargin=dp(5);body.addView(context,badge);
@@ -651,21 +647,5 @@ public final class VideoLibraryView extends LinearLayout {
     private static final class Holder {
         final ImageView cover,menu;final ProgressBar progress;final TextView time,title,meta,context,checked;final boolean list;
         Holder(ImageView cover,ProgressBar progress,TextView time,TextView title,TextView meta,TextView context,ImageView menu,TextView checked,boolean list){this.cover=cover;this.progress=progress;this.time=time;this.title=title;this.meta=meta;this.context=context;this.menu=menu;this.checked=checked;this.list=list;}
-    }
-    /** Small native line icons; glyph rendering never depends on an emoji font. */
-    private static final class LibraryIcon extends Drawable {
-        final String type;final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
-        LibraryIcon(String type,int color){this.type=type;paint.setColor(color);paint.setStrokeWidth(1.7f);paint.setStrokeCap(Paint.Cap.ROUND);paint.setStyle(Paint.Style.STROKE);}
-        @Override public void draw(Canvas canvas){int saved=canvas.save();canvas.translate(getBounds().left,getBounds().top);canvas.scale(getBounds().width()/24f,getBounds().height()/24f);
-            if(type.equals("play")){paint.setStyle(Paint.Style.FILL);android.graphics.Path triangle=new android.graphics.Path();triangle.moveTo(8,4);triangle.lineTo(21,12);triangle.lineTo(8,20);triangle.close();canvas.drawPath(triangle,paint);paint.setStyle(Paint.Style.STROKE);}
-            else if(type.equals("search")){canvas.drawCircle(10,10,6.5f,paint);canvas.drawLine(15,15,21,21,paint);}
-            else if(type.equals("watch")){canvas.drawCircle(12,12,8,paint);canvas.drawLine(12,7,12,12,paint);canvas.drawLine(12,12,16,14,paint);}
-            else if(type.equals("list")){for(int i=0;i<3;i++){float y=5+i*7;canvas.drawRoundRect(3,y,7,y+3,1,1,paint);canvas.drawLine(11,y+1.5f,21,y+1.5f,paint);}}
-            else if(type.equals("sort")){canvas.drawLine(4,5,20,5,paint);canvas.drawLine(4,12,15,12,paint);canvas.drawLine(4,19,10,19,paint);}
-            else if(type.equals("grid")){for(int y=0;y<2;y++)for(int x=0;x<2;x++)canvas.drawRoundRect(3+x*11,3+y*11,10+x*11,10+y*11,1.5f,1.5f,paint);}
-            else{paint.setStyle(Paint.Style.FILL);for(int i=0;i<3;i++)canvas.drawCircle(5+i*7,12,1.4f,paint);paint.setStyle(Paint.Style.STROKE);}canvas.restoreToCount(saved);}
-        @Override public void setAlpha(int value){paint.setAlpha(value);invalidateSelf();}
-        @Override public void setColorFilter(ColorFilter filter){paint.setColorFilter(filter);invalidateSelf();}
-        @Override public int getOpacity(){return PixelFormat.TRANSLUCENT;}
     }
 }

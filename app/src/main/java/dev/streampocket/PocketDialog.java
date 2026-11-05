@@ -44,9 +44,11 @@ public final class PocketDialog extends Dialog {
     @Override protected void onCreate(Bundle saved){
         super.onCreate(saved);UiTheme.Palette p=spec.dark?UiTheme.darkPalette():UiTheme.get(getContext());
         surface=new LinearLayout(getContext()){@Override protected void onMeasure(int w,int h){android.graphics.Rect visible=new android.graphics.Rect();getWindow().getDecorView().getWindowVisibleDisplayFrame(visible);int available=visible.height()>0?visible.height():getResources().getDisplayMetrics().heightPixels;int limit=Math.min(MeasureSpec.getSize(h)>0?MeasureSpec.getSize(h):available,available-dp(20));super.onMeasure(w,MeasureSpec.makeMeasureSpec(Math.max(dp(120),limit),MeasureSpec.AT_MOST));}};surface.setOrientation(LinearLayout.VERTICAL);surface.setPadding(dp(20),dp(10),dp(20),dp(18));
-        GradientDrawable panel=new GradientDrawable();panel.setColor(p.surface);panel.setCornerRadius(dp(24));panel.setStroke(dp(1),p.line);surface.setBackground(panel);
+        boolean wide=getContext().getResources().getConfiguration().screenWidthDp>=600;
+        GradientDrawable panel=new GradientDrawable();panel.setColor(p.dark?p.surface:p.bg);
+        if(wide)panel.setCornerRadius(dp(24));else panel.setCornerRadii(new float[]{dp(24),dp(24),dp(24),dp(24),0,0,0,0});surface.setBackground(panel);
         LinearLayout header=new LinearLayout(getContext());header.setOrientation(LinearLayout.VERTICAL);
-        View handle=new View(getContext());GradientDrawable grip=new GradientDrawable();grip.setColor(p.line);grip.setCornerRadius(dp(2));handle.setBackground(grip);LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(dp(32),dp(4));hp.gravity=Gravity.CENTER_HORIZONTAL;hp.bottomMargin=dp(8);header.addView(handle,hp);
+        View handle=new View(getContext());GradientDrawable grip=new GradientDrawable();grip.setColor(p.dark?0xFF555555:0xFFD8D8D8);grip.setCornerRadius(dp(4));handle.setBackground(grip);LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(dp(35),dp(4));hp.gravity=Gravity.CENTER_HORIZONTAL;hp.bottomMargin=dp(12);header.addView(handle,hp);
         LinearLayout titleRow=new LinearLayout(getContext());titleRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView title=text(spec.title==null?"":spec.title,18,p.ink,true);title.setMaxLines(2);title.setPadding(0,dp(8),dp(8),dp(12));titleRow.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         Button close=spec.dark?PocketButton.dark(getContext(),"",PocketButton.Role.QUIET):PocketButton.of(getContext(),"",PocketButton.Role.QUIET);PocketIcon icon=new PocketIcon("close",p.muted);icon.setBounds(0,0,dp(20),dp(20));close.setCompoundDrawables(icon,null,null,null);close.setPadding(dp(14),0,dp(14),0);close.setContentDescription("关闭面板");close.setOnClickListener(v->{if(cancellable)cancel();});titleRow.addView(close,new LinearLayout.LayoutParams(dp(48),dp(48)));header.addView(titleRow);
@@ -75,14 +77,14 @@ public final class PocketDialog extends Dialog {
         }
         if(count>0)surface.addView(actions,new LinearLayout.LayoutParams(-1,-2));setContentView(surface);
         setCancelable(spec.cancelable);setCanceledOnTouchOutside(spec.cancelable);if(spec.onCancel!=null)setOnCancelListener(spec.onCancel);
-        Window window=getWindow();if(window!=null){window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));window.setGravity(Gravity.BOTTOM);window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);window.setDimAmount(.32f);window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);window.setWindowAnimations(0);}
+        Window window=getWindow();if(window!=null){window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));window.setGravity(Gravity.BOTTOM);window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);window.setDimAmount(.22f);window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);window.setWindowAnimations(UiTheme.motionEnabled(getContext())?R.style.PocketSheetAnimation:0);}
     }
-    @Override public void show(){super.show();Window w=getWindow();if(w!=null)w.setLayout(Math.min(getContext().getResources().getDisplayMetrics().widthPixels-dp(20),dp(560)),WindowManager.LayoutParams.WRAP_CONTENT);if(surface!=null)UiTheme.enter(surface);}
+    @Override public void show(){super.show();Window w=getWindow();if(w!=null){boolean wide=getContext().getResources().getConfiguration().screenWidthDp>=600;w.setLayout(wide?Math.min(getContext().getResources().getDisplayMetrics().widthPixels-dp(20),dp(580)):WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.WRAP_CONTENT);if(wide){WindowManager.LayoutParams attrs=w.getAttributes();attrs.y=dp(10);w.setAttributes(attrs);}}if(surface!=null){surface.animate().cancel();surface.setTranslationY(0);surface.setAlpha(1);}}
     private boolean drag(MotionEvent e){
         if(!cancellable)return false;
         if(e.getActionMasked()==MotionEvent.ACTION_DOWN){downY=e.getRawY();surface.animate().cancel();return true;}
-        if(e.getActionMasked()==MotionEvent.ACTION_MOVE){float dy=Math.max(0,e.getRawY()-downY);surface.setTranslationY(dy);if(getWindow()!=null)getWindow().setDimAmount(.32f*(1-Math.min(1,dy/Math.max(1,surface.getHeight()))));return true;}
-        if(e.getActionMasked()==MotionEvent.ACTION_UP||e.getActionMasked()==MotionEvent.ACTION_CANCEL){if(e.getActionMasked()==MotionEvent.ACTION_UP&&surface.getTranslationY()>dp(80)){cancel();return true;}surface.animate().translationY(0).setDuration(UiTheme.motionEnabled(getContext())?180:0).start();if(getWindow()!=null)getWindow().setDimAmount(.32f);return true;}return true;
+        if(e.getActionMasked()==MotionEvent.ACTION_MOVE){float dy=Math.max(0,e.getRawY()-downY);surface.setTranslationY(dy);if(getWindow()!=null)getWindow().setDimAmount(.22f*(1-Math.min(1,dy/Math.max(1,surface.getHeight()))));return true;}
+        if(e.getActionMasked()==MotionEvent.ACTION_UP||e.getActionMasked()==MotionEvent.ACTION_CANCEL){if(e.getActionMasked()==MotionEvent.ACTION_UP&&surface.getTranslationY()>Math.min(dp(80),surface.getHeight()*.25f)){cancel();return true;}if(UiTheme.motionEnabled(getContext()))surface.animate().translationY(0).setDuration(500).setInterpolator(new android.view.animation.PathInterpolator(.32f,.72f,0,1)).start();else surface.setTranslationY(0);if(getWindow()!=null)getWindow().setDimAmount(.22f);return true;}return true;
     }
     private void buildList(UiTheme.Palette p){
         list=new BoundedList(getContext());list.setDivider(null);list.setSelector(new ColorDrawable(Color.TRANSPARENT));
