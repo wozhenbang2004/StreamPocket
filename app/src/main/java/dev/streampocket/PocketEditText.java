@@ -26,8 +26,8 @@ public final class PocketEditText extends EditText {
         errorPaint.setTextSize(12*getResources().getDisplayMetrics().scaledDensity);
     }
     void dark(){skin(UiTheme.darkPalette());}
-    private void skin(UiTheme.Palette p){setTextColor(p.ink);setHintTextColor(p.muted);StateListDrawable states=new StateListDrawable();states.addState(new int[]{android.R.attr.state_focused},shape(p.control,p.accent));states.addState(new int[]{},shape(p.control,p.line));setBackground(states);if(errorPaint!=null)errorPaint.setColor(p.danger);}
-    private GradientDrawable shape(int fill,int line){GradientDrawable d=new GradientDrawable();d.setColor(fill);d.setCornerRadius(dp(12));d.setStroke(dp(1),line);return d;}
+    private void skin(UiTheme.Palette p){setTextColor(p.ink);setHintTextColor(p.muted);StateListDrawable states=new StateListDrawable();states.addState(new int[]{android.R.attr.state_focused},shape(p.raised,p.accent));states.addState(new int[]{},shape(p.control,0));setBackground(states);if(errorPaint!=null)errorPaint.setColor(p.danger);}
+    private GradientDrawable shape(int fill,int line){GradientDrawable d=new GradientDrawable();d.setColor(fill);d.setCornerRadius(dp(12));if(line!=0)d.setStroke(dp(1),line);return d;}
     @Override public void setBackgroundTintList(ColorStateList ignored){/* The field states own their colors. */}
     @Override public void setError(CharSequence error){setError(error,null);}
     @Override public void setError(CharSequence error,Drawable ignored){

@@ -1,5 +1,6 @@
 package dev.streampocket;
 
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -144,6 +145,58 @@ public final class TaskQueueUiTest {
             assertFalse(joinedText(decor).contains("速度测算中"));
             capture(decor, "020-queue-live-speed-fixture");
         } finally { controller.pause().stop().destroy(); }
+    }
+
+    @Test public void filterClicksRefreshRowsWithoutDetachingTabsOrCancellingTheirMotion() throws Exception {
+        ActivityController<MainActivity> controller=Robolectric.buildActivity(MainActivity.class);
+        SharedPreferences config=app.getSharedPreferences("config",0);
+        boolean hadMotionPreference=config.contains("motion_enabled"),previousMotion=config.getBoolean("motion_enabled",true);
+        config.edit().putBoolean("motion_enabled",true).commit();
+        try {
+            MainActivity activity=controller.create(initialState()).start().resume().visible().get();
+            seed(new JSONArray().put(task("filter-waiting","样例 · 等待筛选","queued",1,1))
+                    .put(task("filter-completed","样例 · 已完成筛选","completed",2,2).put("progress",100))
+                    .put(task("filter-failed","样例 · 失败筛选","failed",3,3)));
+            showQueue(activity);
+            View decor=activity.getWindow().getDecorView();
+            int width=Math.round(decor.getResources().getConfiguration().screenWidthDp*decor.getResources().getDisplayMetrics().density);
+            int height=Math.round(decor.getResources().getConfiguration().screenHeightDp*decor.getResources().getDisplayMetrics().density);
+            Runnable layout=()->{decor.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY));decor.layout(0,0,width,height);};
+            layout.run();
+            PocketTabs tabs=(PocketTabs)field(activity,"queueTabs");ViewGroup body=(ViewGroup)field(activity,"body");
+            View scroll=body.getChildAt(0);Object tabParent=tabs.getParent();
+            assertTrue(tabs.isAttachedToWindow());assertTrue("The fixture must exercise an actual selection animation",UiTheme.motionEnabled(activity));
+            for(String title:new String[]{"样例 · 等待筛选","样例 · 已完成筛选","样例 · 失败筛选"})assertNotNull(findText(decor,title));
+            int[] attachments={0},detachments={0};
+            tabs.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){
+                @Override public void onViewAttachedToWindow(View view){attachments[0]++;}
+                @Override public void onViewDetachedFromWindow(View view){detachments[0]++;}
+            });
+            TextView completed=findText(tabs,"已完成");assertNotNull(completed);assertTrue(completed.performClick());
+            assertEquals("completed",field(activity,"queueFilter"));assertTrue(completed.isSelected());
+            assertSame(tabs,field(activity,"queueTabs"));assertSame(tabParent,tabs.getParent());assertSame(scroll,body.getChildAt(0));
+            assertTrue(tabs.isAttachedToWindow());assertEquals(0,detachments[0]);assertEquals(0,attachments[0]);
+            assertNotNull(findText(decor,"样例 · 已完成筛选"));assertNull(findText(decor,"样例 · 等待筛选"));assertNull(findText(decor,"样例 · 失败筛选"));
+            Field movement=PocketTabs.class.getDeclaredField("movement");movement.setAccessible(true);
+            ValueAnimator animation=(ValueAnimator)movement.get(tabs);
+            assertNotNull("The filter callback must not discard the in-flight selection",animation);assertTrue(animation.isStarted());
+            View face=tabs.getChildAt(0);int beforeLeft=face.getLeft(),beforeRight=face.getRight();
+            assertTrue("Selection must move toward the new filter instead of teleporting",beforeRight<=completed.getLeft());
+            tabs.requestLayout();layout.run();
+            assertSame("Refreshing the host layout must retain the running animation",animation,movement.get(tabs));assertTrue(animation.isStarted());
+            assertEquals(beforeLeft,face.getLeft());assertEquals(beforeRight,face.getRight());
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(260));
+            assertFalse(animation.isStarted());assertTrue(tabs.isAttachedToWindow());assertEquals(0,detachments[0]);assertEquals(0,attachments[0]);
+            assertEquals((completed.getLeft()+completed.getRight())/2f,(face.getLeft()+face.getRight())/2f,1f);
+            TextView failed=findText(tabs,"失败");assertNotNull(failed);assertTrue(failed.performClick());
+            assertEquals("failed",field(activity,"queueFilter"));assertNotNull(findText(decor,"样例 · 失败筛选"));
+            assertNull(findText(decor,"样例 · 等待筛选"));assertNull(findText(decor,"样例 · 已完成筛选"));
+            assertSame(tabs,field(activity,"queueTabs"));assertSame(tabParent,tabs.getParent());assertSame(scroll,body.getChildAt(0));
+            assertTrue(tabs.isAttachedToWindow());assertEquals(0,detachments[0]);assertEquals(0,attachments[0]);
+        } finally {
+            controller.pause().stop().destroy();
+            if(hadMotionPreference)config.edit().putBoolean("motion_enabled",previousMotion).commit();else config.edit().remove("motion_enabled").commit();
+        }
     }
 
     @Test public void globalHoldShowsWaitingOrderManualPausesAndARealStoppingState() throws Exception {

@@ -80,8 +80,8 @@ import java.util.concurrent.Executors;
 /** Full video canvas, a window-composited Media3 player, and tools disclosed in dark overlays. */
 @androidx.annotation.OptIn(markerClass=androidx.media3.common.util.UnstableApi.class)
 public final class PlayerActivity extends Activity {
-    private static final int BLACK=0xFF0A0C0F, WHITE=0xFFFAFAFA, MUTED=0xFFA1A1AA, ACCENT=0xFF70B8A8,
-            PANEL=0xFF17191D, LINE=0xFF343E43;
+    private static final int BLACK=0xFF0A0A0A, WHITE=0xFFFAFAFA, MUTED=0xFFAAAAAA, ACCENT=0xFFF0F0F0,
+            PANEL=0xFF202020, LINE=0xFF3A3A3A;
     private static final float[] SPEEDS={.5f,.75f,1f,1.25f,1.5f,2f};
     private static final String MODE_ONCE="once",MODE_LOOP="loop",MODE_CONTINUOUS="continuous";
     private static final String PIP_CONTROL="dev.streampocket.PLAYER_PIP_CONTROL";
@@ -695,10 +695,10 @@ public final class PlayerActivity extends Activity {
         if(fresh)setSheetOffset(sheetTravel());
         if(!dragging)settleSheet(true,fresh||interrupted);
     }
-    private LinearLayout actionGroup(LinearLayout parent){LinearLayout group=column();group.setBackground(shape(0xFF24282D,16));add(parent,group,12,0);return group;}
+    private LinearLayout actionGroup(LinearLayout parent){LinearLayout group=column();group.setBackground(shape(0xFF242424,16));add(parent,group,12,0);return group;}
     private Button actionRow(LinearLayout parent,String label,String subtitle,String icon,Runnable run){
         FrameLayout row=new FrameLayout(this);Button hit=PocketButton.dark(this,label,PocketButton.Role.QUIET);hit.setGravity(Gravity.TOP|Gravity.START);hit.setPadding(dp(58),dp(14),dp(36),dp(30));hit.setTextSize(14);hit.setContentDescription(label+"，"+subtitle);hit.setOnClickListener(v->run.run());row.addView(hit,new FrameLayout.LayoutParams(-1,-1));
-        ImageView glyph=new ImageView(this);glyph.setImageDrawable(PlayerMenuIcon.create(icon,0xFFD8DFE2));glyph.setPadding(dp(8),dp(8),dp(8),dp(8));glyph.setBackground(shape(0xFF30363B,10));glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams gp=new FrameLayout.LayoutParams(dp(34),dp(34),Gravity.CENTER_VERTICAL|Gravity.START);gp.leftMargin=dp(12);row.addView(glyph,gp);
+        ImageView glyph=new ImageView(this);glyph.setImageDrawable(PlayerMenuIcon.create(icon,0xFFDADADA));glyph.setPadding(dp(8),dp(8),dp(8),dp(8));glyph.setBackground(shape(0xFF303030,10));glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams gp=new FrameLayout.LayoutParams(dp(34),dp(34),Gravity.CENTER_VERTICAL|Gravity.START);gp.leftMargin=dp(12);row.addView(glyph,gp);
         TextView hint=text(subtitle,12,MUTED,false);hint.setSingleLine(true);hint.setEllipsize(TextUtils.TruncateAt.END);hint.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams hp=new FrameLayout.LayoutParams(-1,dp(24),Gravity.BOTTOM);hp.leftMargin=dp(58);hp.rightMargin=dp(32);hp.bottomMargin=dp(9);row.addView(hint,hp);
         ImageView arrow=new ImageView(this);arrow.setImageDrawable(new PocketIcon("chevron",MUTED));arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);FrameLayout.LayoutParams ap=new FrameLayout.LayoutParams(dp(16),dp(16),Gravity.END|Gravity.CENTER_VERTICAL);ap.rightMargin=dp(14);row.addView(arrow,ap);parent.addView(row,new LinearLayout.LayoutParams(-1,dp(72)));return hit;
     }
@@ -968,7 +968,7 @@ public final class PlayerActivity extends Activity {
             labels.setFocusable(true);labels.setContentDescription("跳转到 "+preciseTime(at)+(name.isEmpty()?"":", "+name));UiTheme.press(labels);UiTheme.press(poster);
             ImageButton more=new ImageButton(this);more.setImageResource(R.drawable.sp_player_more);more.setPadding(dp(10),dp(10),dp(10),dp(10));more.setBackgroundColor(android.graphics.Color.TRANSPARENT);
             more.setContentDescription("管理 "+location+" 的精彩标记");more.setOnClickListener(v->markerMenu(marker));line.addView(more,new LinearLayout.LayoutParams(dp(48),dp(56)));markerList.addView(line);
-            View divider=new View(this);divider.setBackgroundColor(0xFF30363B);markerList.addView(divider,new LinearLayout.LayoutParams(-1,dp(1)));
+            View divider=new View(this);divider.setBackgroundColor(0xFF303030);markerList.addView(divider,new LinearLayout.LayoutParams(-1,dp(1)));
         }
         if(markers.size()>visibleMarkers)action(markerList,"显示更多标记",()->{visibleMarkers+=40;renderMarkers();});
         if(!markers.isEmpty())add(markerList,text("点画面或文字回到这个时刻",11,MUTED,false),12,4);
