@@ -55,6 +55,21 @@ public final class AppUpdatesTest {
         assertFalse(UpdateOffer.allowedRedirect("https://release-assets.githubusercontent.com.evil.test/file"));
         assertTrue(UpdateOffer.allowedRedirect("https://release-assets.githubusercontent.com/file?sig=public-download"));
     }
+    @Test public void stableAndPreviewReleaseFeedsStaySeparated()throws Exception{
+        JSONObject stable=new JSONObject().put("draft",false).put("prerelease",false).put("tag_name","v0.6.1");
+        JSONObject previewMine=new JSONObject().put("draft",false).put("prerelease",true).put("tag_name","v0.6.0-preview.run-42.2");
+        JSONObject previewOther=new JSONObject().put("draft",false).put("prerelease",true).put("tag_name","v0.6.0-preview.other.9");
+        JSONObject draftMine=new JSONObject().put("draft",true).put("prerelease",true).put("tag_name","v0.6.0-preview.run-42.3");
+        org.json.JSONArray feed=new org.json.JSONArray().put(draftMine).put(previewOther).put(stable).put(previewMine);
+        assertEquals("v0.6.1",UpdateOffer.release(stable.toString(),false,"").getString("tag_name"));
+        assertNull(UpdateOffer.release(previewMine.toString(),false,""));
+        assertEquals("v0.6.0-preview.run-42.2",UpdateOffer.release(feed.toString(),true,"run-42").getString("tag_name"));
+        assertNull(UpdateOffer.release(feed.toString(),true,"missing"));
+        assertNull(UpdateOffer.release(feed.toString(),true,""));
+        assertTrue(UpdateOffer.previewTag("v0.6.0-preview.run-42.2","run-42"));
+        assertFalse(UpdateOffer.previewTag("v0.6.0-preview.other.2","run-42"));
+    }
+
     @Test public void malformedOrOversizedManifestCannotCreateAnOffer()throws Exception{
         rejects(()->new UpdateOffer(manifest().put("schemaVersion",2),"v9.0","",URL));
         rejects(()->new UpdateOffer(manifest().put("apkSize",UpdateOffer.MAX_APK_BYTES+1),"v9.0","",URL));
