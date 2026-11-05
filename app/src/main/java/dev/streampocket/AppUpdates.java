@@ -197,8 +197,8 @@ final class AppUpdates {
             try {
                 String json=metadata.read(UpdateOffer.API,256*1024,true);
                 if(json==null){finishCheck(token,new Snapshot(Phase.NONE,null,"暂无可用更新",0),true);return;}
-                JSONObject release=new JSONObject(json);
-                if(release.optBoolean("draft",true)||release.optBoolean("prerelease",true)){finishCheck(token,new Snapshot(Phase.NONE,null,"暂无可用更新",0),true);return;}
+                JSONObject release=UpdateOffer.release(json);
+                if(release==null){finishCheck(token,new Snapshot(Phase.NONE,null,"暂无可用更新",0),true);return;}
                 JSONObject asset=UpdateOffer.asset(release,UpdateOffer.APK),manifestAsset=UpdateOffer.asset(release,UpdateOffer.MANIFEST);
                 if(asset==null||manifestAsset==null)throw new IOException("更新尚未准备好，请稍后重试");
                 String tag=release.getString("tag_name"),manifestUrl=manifestAsset.getString("browser_download_url");
