@@ -290,7 +290,7 @@ public final class VideoFirstPlayerUiTest {
     private Intent intent() { return new Intent(app,PlayerActivity.class).putExtra("video_id",videoId); }
     private static View controller(PlayerView surface) { return surface.findViewById(androidx.media3.ui.R.id.exo_controller); }
     private static void assertFullCanvas(FrameLayout root,PlayerView surface) {
-        assertTrue(root.getBackground() instanceof ColorDrawable); assertEquals(0xFF0A0C0F,((ColorDrawable)root.getBackground()).getColor());
+        assertTrue(root.getBackground() instanceof ColorDrawable); assertEquals(0xFF0A0A0A,((ColorDrawable)root.getBackground()).getColor());
         assertEquals(root.getWidth()-root.getPaddingLeft()-root.getPaddingRight(),surface.getWidth());
         assertEquals(root.getHeight()-root.getPaddingTop()-root.getPaddingBottom(),surface.getHeight());
         assertEquals(root.getPaddingLeft(),surface.getLeft()); assertEquals(root.getPaddingTop(),surface.getTop());
