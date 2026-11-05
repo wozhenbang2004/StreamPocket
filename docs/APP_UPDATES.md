@@ -18,7 +18,9 @@
 
 ## 发行资产约定
 
-客户端从 `https://api.github.com/repos/wozhenbang2004/StreamPocket/releases/latest` 读取非 draft、非 prerelease 的发布，要求同时存在：
+正式客户端从 `https://api.github.com/repos/wozhenbang2004/StreamPocket/releases/latest` 读取非 draft、非 prerelease 的发布。用于覆盖安装验收的 `.preview` 测试包使用独立 prerelease 通道：只扫描最新 20 个 Release，并且只接受构建时写入的精确测试 channel；不会消费正式 stable Release，也不会消费另一轮测试使用不同签名生成的 prerelease。
+
+两种通道都要求同时存在：
 
 - `StreamPocket-arm64-v8a.apk`
 - `update-manifest.json`
@@ -28,6 +30,12 @@
 包名保持 `dev.streampocket.localtest`，ARM64，minSdk24；版本号必须严格递增，并使用与已安装应用相同的证书。客户端核对大小、SHA-256、包名、版本、最低系统与签名身份；每个版本使用 versionCode 与完整 SHA-256 组成的独立私有文件名。0.3.0 起，复核通过的文件写入独立 PackageInstaller Session，fsync 后回读暂存大小和摘要，再提交系统安装。回调绑定当前发布、会话与一次性身份；旧会话、重复结果和取消后的回调不会替换新状态。系统最终验签与用户确认不可省略。
 
 发行时应同时保留 [应用源码与第三方对应源码入口](THIRD_PARTY_SOURCES.md)。签名私钥不进入仓库或发布资产。
+
+### Preview 覆盖更新验收
+
+`preview-update-e2e.yml` 会在一次工作流中生成一把临时测试签名，同时构建同包名 `dev.streampocket.localtest.preview` 的基线包和高一个 versionCode 的更新包。更新包作为 GitHub prerelease 发布，基线包只认本次工作流的 channel。这样可以真实验证“检查更新 → 下载 → SHA-256/包名/版本/签名校验 → PackageInstaller 覆盖安装”，同时完全不接触正式发行私钥。
+
+临时测试签名不会复用于其他工作流运行，因此基线包和目标更新包必须来自同一次运行。正式版仍只接受 stable Release 与正式签名。
 
 ## 旧版安装未升级
 
