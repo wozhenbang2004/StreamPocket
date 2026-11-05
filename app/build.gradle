@@ -1,6 +1,26 @@
 plugins { id 'com.android.application' }
 
+def previewInstall = providers.gradleProperty('previewInstall').orNull == 'true'
+def previewVersionCode = providers.gradleProperty('previewVersionCode').orNull
+def previewVersionName = providers.gradleProperty('previewVersionName').orNull
+def previewUpdateChannel = providers.gradleProperty('previewUpdateChannel').orNull ?: ''
+def previewKeystore = providers.gradleProperty('previewKeystore').orNull
+def previewStorePassword = providers.gradleProperty('previewStorePassword').orNull
+def previewKeyAlias = providers.gradleProperty('previewKeyAlias').orNull
+def previewKeyPassword = providers.gradleProperty('previewKeyPassword').orNull
+def escapedPreviewChannel = previewUpdateChannel.replace('\\', '\\\\').replace('"', '\\"')
+
 android {
+    signingConfigs {
+        preview {
+            if (previewKeystore != null) {
+                storeFile file(previewKeystore)
+                storePassword previewStorePassword
+                keyAlias previewKeyAlias
+                keyPassword previewKeyPassword
+            }
+        }
+    }
     namespace 'dev.streampocket'
     compileSdk 36
     buildToolsVersion '35.0.0'
@@ -9,8 +29,9 @@ android {
         applicationId 'dev.streampocket.localtest'
         minSdk 24
         targetSdk 35
-        versionCode 33
-        versionName '0.6.0'
+        versionCode previewVersionCode != null ? previewVersionCode.toInteger() : 33
+        versionName previewVersionName != null ? previewVersionName : '0.6.0'
+        buildConfigField 'String', 'PREVIEW_UPDATE_CHANNEL', '"' + escapedPreviewChannel + '"'
         manifestPlaceholders = [appLabel: '拾流']
         ndk { abiFilters 'arm64-v8a' }
     }
@@ -24,10 +45,11 @@ android {
     buildTypes {
         debug {
             manifestPlaceholders = [appLabel: '拾流测试版']
-            // An optional side-by-side build for device trials without the release signing key.
-            if (providers.gradleProperty('previewInstall').orNull == 'true') {
+            // Side-by-side preview builds can use an isolated update channel and a caller-provided test key.
+            if (previewInstall) {
                 applicationIdSuffix '.preview'
-                versionNameSuffix '-preview'
+                if (previewVersionName == null) versionNameSuffix '-preview'
+                if (previewKeystore != null) signingConfig signingConfigs.preview
             }
         }
         release { minifyEnabled false; debuggable false }

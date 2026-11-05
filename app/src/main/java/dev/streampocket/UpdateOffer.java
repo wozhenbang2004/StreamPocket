@@ -8,7 +8,9 @@ import org.json.JSONObject;
 /** Versioned public Release contract. No remote field can choose a different repository or package. */
 final class UpdateOffer {
     static final String REPO = "https://github.com/wozhenbang2004/StreamPocket";
-    static final String API = "https://api.github.com/repos/wozhenbang2004/StreamPocket/releases/latest";
+    static final String STABLE_API = "https://api.github.com/repos/wozhenbang2004/StreamPocket/releases/latest";
+    static final String PREVIEW_API = "https://api.github.com/repos/wozhenbang2004/StreamPocket/releases?per_page=20";
+    static final String API = previewBuild() ? PREVIEW_API : STABLE_API;
     static final String APK = "StreamPocket-arm64-v8a.apk", MANIFEST = "update-manifest.json";
     static final long MAX_APK_BYTES = 300L * 1024 * 1024;
     final long code, size;
@@ -44,6 +46,34 @@ final class UpdateOffer {
     static UpdateOffer saved(String json) throws Exception {
         JSONObject data=new JSONObject(json);return new UpdateOffer(data,data.getString("tag"),data.optString("notes"),data.getString("url"));
     }
+    static boolean previewBuild() { return BuildConfig.APPLICATION_ID.endsWith(".preview"); }
+
+    static JSONObject release(String json) throws Exception {
+        return release(json,previewBuild(),BuildConfig.PREVIEW_UPDATE_CHANNEL);
+    }
+
+    static JSONObject release(String json,boolean preview,String channel) throws Exception {
+        if(!preview){
+            JSONObject release=new JSONObject(json);
+            return release.optBoolean("draft",true)||release.optBoolean("prerelease",true)?null:release;
+        }
+        if(channel==null||!channel.matches("[A-Za-z0-9_-]{1,64}"))return null;
+        JSONArray releases=new JSONArray(json);
+        for(int i=0;i<releases.length();i++){
+            JSONObject release=releases.optJSONObject(i);
+            if(release==null||release.optBoolean("draft",true)||!release.optBoolean("prerelease",false))continue;
+            String tag=release.optString("tag_name");
+            if(previewTag(tag,channel))return release;
+        }
+        return null;
+    }
+
+    static boolean previewTag(String tag,String channel) {
+        return tag!=null&&channel!=null&&channel.matches("[A-Za-z0-9_-]{1,64}")
+                &&tag.matches("v[0-9][A-Za-z0-9._-]{0,79}")
+                &&tag.contains("-preview."+channel+".");
+    }
+
     static JSONObject asset(JSONObject release,String name) {
         JSONArray assets=release.optJSONArray("assets");if(assets==null)return null;
         for(int i=0;i<assets.length();i++){JSONObject item=assets.optJSONObject(i);if(item!=null&&name.equals(item.optString("name"))&&"uploaded".equals(item.optString("state")))return item;}
