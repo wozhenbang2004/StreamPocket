@@ -86,34 +86,44 @@ public final class DirectFileDownloader {
                 return recoverIntegrity(directory, selected, attempt, progress);
             }
 
-            YoutubeDL.getInstance().init(context.getApplicationContext());
-            Aria2c.getInstance().init(context.getApplicationContext());
-            File nativeDir = new File(context.getApplicationInfo().nativeLibraryDir);
-            File binary = new File(nativeDir, "libaria2c.so");
-            File packages = new File(context.getNoBackupFilesDir(), "youtubedl-android/packages");
-            File certificate = new File(packages, "python/usr/etc/tls/cert.pem");
-            if (!binary.isFile() || !certificate.isFile()) throw new IOException("内置文件下载组件或安全证书缺失，请更新应用后重试");
-            int connections = DownloadTuning.connections(context.getSharedPreferences("config", Context.MODE_PRIVATE)
-                    .getInt(DownloadTuning.PREFERENCE, DownloadTuning.DEFAULT_CONNECTIONS));
-            String proxy = proxy(context);
-            List<String> args = arguments(binary, directory, certificate, current.url, current.spec, connections, proxy);
-            args.add(1, "--stop-with-process=" + android.os.Process.myPid());
-            ProcessBuilder builder = new ProcessBuilder(args).directory(directory).redirectErrorStream(true);
-            Map<String, String> environment = builder.environment();
-            environment.put("LD_LIBRARY_PATH", new File(packages, "python/usr/lib") + ":"
-                    + new File(packages, "ffmpeg/usr/lib") + ":" + new File(packages, "aria2c/usr/lib"));
-            environment.put("SSL_CERT_FILE", certificate.getAbsolutePath());
-            environment.put("HOME", context.getFilesDir().getAbsolutePath());
-            environment.put("TMPDIR", context.getCacheDir().getAbsolutePath());
-            environment.put("PATH", nativeDir + ":" + environment.getOrDefault("PATH", ""));
-            // Do not inherit a shell/user proxy different from the app's explicit configuration.
-            for (String key : new String[]{"http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "no_proxy", "NO_PROXY"})
-                environment.remove(key);
-            Process process = builder.start();
-            synchronized (attempt) {
-                attempt.process = process;
-                if (attempt.stopped || cancelled.getAsBoolean()) process.destroy();
-            }
+            Process process;
+            // Protect component preparation and process registration, not a whole network transfer.
+            // A first video inspection needs Engine.init's write lock while this file is downloading.
+            Engine.RUNTIME_LOCK.readLock().lockInterruptibly();
+            try {
+                attempt.check();
+                YoutubeDL.getInstance().init(context.getApplicationContext());
+                Aria2c.getInstance().init(context.getApplicationContext());
+                File nativeDir = new File(context.getApplicationInfo().nativeLibraryDir);
+                File binary = new File(nativeDir, "libaria2c.so");
+                File packages = new File(context.getNoBackupFilesDir(), "youtubedl-android/packages");
+                File certificate = new File(packages, "python/usr/etc/tls/cert.pem");
+                if (!binary.isFile() || !certificate.isFile()) throw new IOException("内置文件下载组件或安全证书缺失，请更新应用后重试");
+                int connections = DownloadTuning.connections(context.getSharedPreferences("config", Context.MODE_PRIVATE)
+                        .getInt(DownloadTuning.PREFERENCE, DownloadTuning.DEFAULT_CONNECTIONS));
+                String proxy = proxy(context);
+                List<String> args = arguments(binary, directory, certificate, current.url, current.spec, connections, proxy);
+                args.add(1, "--stop-with-process=" + android.os.Process.myPid());
+                ProcessBuilder builder = new ProcessBuilder(args).directory(directory).redirectErrorStream(true);
+                Map<String, String> environment = builder.environment();
+                // The packaged Python + aria2 libraries form the complete dependency closure.
+                // Exclude FFmpeg: its first extraction may proceed after this short lock is released.
+                environment.put("LD_LIBRARY_PATH", new File(packages, "python/usr/lib") + ":"
+                        + new File(packages, "aria2c/usr/lib"));
+                environment.put("SSL_CERT_FILE", certificate.getAbsolutePath());
+                environment.put("HOME", context.getFilesDir().getAbsolutePath());
+                environment.put("TMPDIR", context.getCacheDir().getAbsolutePath());
+                environment.put("PATH", nativeDir + ":" + environment.getOrDefault("PATH", ""));
+                // Do not inherit a shell/user proxy different from the app's explicit configuration.
+                for (String key : new String[]{"http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "no_proxy", "NO_PROXY"})
+                    environment.remove(key);
+                attempt.check();
+                process = builder.start();
+                synchronized (attempt) {
+                    attempt.process = process;
+                    if (attempt.stopped || cancelled.getAsBoolean()) process.destroy();
+                }
+            } finally { Engine.RUNTIME_LOCK.readLock().unlock(); }
             emit(progress, -1, current.spec.size, -1, -1, "正在下载文件");
             StringBuilder diagnostics = new StringBuilder();
             Thread reader = new Thread(() -> readOutput(process, attempt, progress, diagnostics), "direct-file-output");

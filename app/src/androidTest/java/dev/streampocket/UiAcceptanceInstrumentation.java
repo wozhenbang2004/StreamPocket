@@ -169,10 +169,26 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             evidence.put("inspection",media.file.toJson());
 
             AtomicInteger nativeStarts=new AtomicInteger();
+            AtomicInteger transferReadHolds=new AtomicInteger(-1);
+            java.util.concurrent.atomic.AtomicBoolean runtimeWriteAvailable=new java.util.concurrent.atomic.AtomicBoolean();
+            long transferCallerThread=Thread.currentThread().getId();
             File downloaded=DirectFileDownloader.download(app,source,media.file,work,"qa-directfile-"+runId,expired,patch->{
-                if("正在下载文件".equals(patch.optString("stageLabel")))nativeStarts.incrementAndGet();
+                if("正在下载文件".equals(patch.optString("stageLabel"))&&nativeStarts.getAndIncrement()==0){
+                    // This first emit is the actual download caller, immediately
+                    // after ProcessBuilder.start(), before the output reader starts.
+                    check(Thread.currentThread().getId()==transferCallerThread,"native startup callback runs on the actual transfer caller");
+                    int holds=Engine.RUNTIME_LOCK.getReadHoldCount();transferReadHolds.set(holds);
+                    boolean writer=Engine.RUNTIME_LOCK.writeLock().tryLock();
+                    if(writer)Engine.RUNTIME_LOCK.writeLock().unlock();
+                    runtimeWriteAvailable.set(writer);
+                    check(holds==0,"the actual transfer caller releases its runtime read lock after native startup; holds="+holds);
+                    check(writer,"a runtime writer can start immediately while the real native transfer is active");
+                }
             });
             check(nativeStarts.get()>0,"first transfer reaches the real native-process execution path");
+            check(runtimeWriteAvailable.get(),"the first cold native transfer demonstrated runtime write-lock availability");
+            evidence.put("runtimeWriteAvailableDuringTransfer",runtimeWriteAvailable.get())
+                    .put("runtimeReadHoldsAtNativeStartup",transferReadHolds.get());
             evidence.put("nativeAria2Version",nativeAria2Version(app));
             FileDigest transfer=readDigest(new java.io.FileInputStream(downloaded));
             check(transfer.bytes==expectedBytes&&expectedSha.equals(transfer.sha256),"native output matches the pinned complete file bytes and SHA-256");
@@ -275,10 +291,13 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
         },Math.max(1,serviceDeadline-SystemClock.elapsedRealtime()),"archive-check I/O leads to a genuinely created download task");
         report.put("serviceTaskId",taskId.get());writeDirectFileEvidence(report);
         java.util.Set<String> seenStates=new java.util.LinkedHashSet<>();
+        java.util.List<Integer> observedTransferReadLocks=new java.util.ArrayList<>();
         waitUntil(()->{
             JSONObject task=TaskStore.get(app,taskId.get());
             check(task!=null,"the submitted service task remains present until verification");
             String status=task.optString("status");seenStates.add(status+":"+task.optString("phase"));
+            String phase=task.optString("phase");
+            if("media".equals(phase)||"processing".equals(phase))observedTransferReadLocks.add(Engine.RUNTIME_LOCK.getReadLockCount());
             if("failed".equals(status)||"cancelled".equals(status)||"interrupted".equals(status))
                 throw new AssertionError("Real DownloadService did not complete: "+task);
             try{return "completed".equals(status)&&!task.optBoolean("publicationBusy")&&!serviceOwns(taskId.get());}
@@ -315,6 +334,7 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
         return new JSONObject().put("taskId",taskId.get()).put("clickedProductionButton",true).put("kind",task.optString("kind"))
                 .put("mediaKind",metadata.optString("kind")).put("quality",quality.optString("id"))
                 .put("observedStates",new JSONArray(seenStates)).put("status",task.optString("status"))
+                .put("observedMediaOrProcessingReadLockCounts",new JSONArray(observedTransferReadLocks))
                 .put("transferMode",task.optString("transferMode")).put("publicationBusy",task.optBoolean("publicationBusy"))
                 .put("nativeOwnershipReleased",true).put("bytes",actual.bytes).put("sha256",actual.sha256)
                 .put("publicOutput",publicMetadata.put("uri",uri.toString())).put("archive",archive);
@@ -492,6 +512,11 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             try(FileOutputStream out=new FileOutputStream(new File(output,"startup-fixture.txt"))){
                 out.write(("Real Android Activity/foreground lifecycle. Only GitHub metadata is a fixture: first request throws IOException, later requests return no release. Requests="+requests.get()+". Startup check pending when leaving MainActivity="+pendingWhenLeavingMain+". No update package was downloaded or installed.\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
             }
+        }catch(Exception|AssertionError failure){
+            // Capture the failed focus/lifecycle state before finally closes either Activity.
+            try{captureStartupFailure(main,updatePage,requests.get(),updates.snapshot().phase.toString(),failure);}
+            catch(Exception|AssertionError diagnostic){android.util.Log.w("StreamPocketQA","Startup failure diagnostics could not finish: "+failureStack(diagnostic));}
+            throw failure;
         }finally{
             UpdateActivity page=updatePage;MainActivity home=main;
             onMain(()->{if(page!=null&&!page.isFinishing())page.finish();if(home!=null&&!home.isFinishing())home.finish();});
@@ -499,6 +524,84 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             ExecutorService worker=field(updates,"worker",ExecutorService.class);worker.shutdownNow();
             check(worker.awaitTermination(5,TimeUnit.SECONDS),"fixture update worker stops");
         }
+    }
+    private void captureStartupFailure(MainActivity home,UpdateActivity page,int requests,String updatePhase,Throwable failure)throws Exception{
+        JSONObject state=new JSONObject().put("capturedBeforeCleanup",true).put("elapsedRealtime",SystemClock.elapsedRealtime())
+                .put("uptimeMillis",SystemClock.uptimeMillis()).put("requests",requests).put("updatePhase",updatePhase)
+                .put("failure",failureStack(failure));
+        try{
+            state.put("activities",onMainValue(()->new JSONObject().put("home",startupActivityState(home))
+                    .put("page",startupActivityState(page)).put("startedActivities",field(getTargetContext().getApplicationContext(),"startedActivities",Integer.class))));
+        }catch(Exception|AssertionError diagnostic){state.put("activityStateError",failureStack(diagnostic));}
+        try{
+            // Do not wait for idle or navigate away from the actual failed window state.
+            Bitmap bitmap=getUiAutomation().takeScreenshot();
+            check(bitmap!=null,"startup failure screenshot is available");
+            try(FileOutputStream image=new FileOutputStream(new File(output,"startup-failure-before-cleanup.png"))){
+                check(bitmap.compress(Bitmap.CompressFormat.PNG,100,image),"startup failure screenshot encodes");
+            }finally{bitmap.recycle();}
+            state.put("screenshot","startup-failure-before-cleanup.png");
+        }catch(Exception|AssertionError diagnostic){state.put("screenshotError",failureStack(diagnostic));}
+        JSONArray dumps=new JSONArray();
+        dumps.put(readStartupDump("dumpsys activity activities","startup-failure-activity-activities.txt"));
+        dumps.put(readStartupDump("dumpsys window windows","startup-failure-window-windows.txt"));
+        state.put("readOnlyShellDumps",dumps);
+        try(FileOutputStream report=new FileOutputStream(new File(output,"startup-failure-state.json"))){
+            report.write(state.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));report.getFD().sync();
+        }
+    }
+    private static JSONObject startupActivityState(Activity activity)throws Exception{
+        JSONObject state=new JSONObject().put("present",activity!=null);
+        if(activity==null)return state;
+        try{
+            state.put("class",activity.getClass().getName()).put("isFinishing",activity.isFinishing()).put("isDestroyed",activity.isDestroyed())
+                    .put("taskId",activity.getTaskId()).put("isTaskRoot",activity.isTaskRoot()).put("activityWindowFocus",activity.hasWindowFocus());
+            if(activity instanceof MainActivity)state.put("foreground",field(activity,"foreground",Boolean.class));
+            else if(activity instanceof UpdateActivity)state.put("foreground",field(activity,"visible",Boolean.class));
+            android.view.Window window=activity.getWindow();state.put("windowPresent",window!=null);
+            if(window!=null){
+                View decor=window.getDecorView();state.put("windowFlags",window.getAttributes().flags)
+                        .put("softInputMode",window.getAttributes().softInputMode).put("decorPresent",decor!=null);
+                if(decor!=null)state.put("decorShown",decor.isShown()).put("decorVisibility",decor.getVisibility())
+                        .put("windowVisibility",decor.getWindowVisibility()).put("decorWindowFocus",decor.hasWindowFocus())
+                        .put("decorAttached",decor.isAttachedToWindow()).put("decorWidth",decor.getWidth()).put("decorHeight",decor.getHeight());
+            }
+        }catch(Exception diagnostic){state.put("stateError",failureStack(diagnostic));}
+        return state;
+    }
+    private JSONObject readStartupDump(String command,String name)throws Exception{
+        JSONObject result=new JSONObject().put("command",command).put("file",name).put("maxBytes",2097152).put("timeoutMillis",4000)
+                .put("startedElapsedRealtime",SystemClock.elapsedRealtime());
+        AtomicReference<Throwable> error=new AtomicReference<>();AtomicInteger bytes=new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean capped=new java.util.concurrent.atomic.AtomicBoolean();
+        android.os.ParcelFileDescriptor descriptor=null;InputStream input=null;
+        try{
+            descriptor=getUiAutomation().executeShellCommand(command);
+            if(descriptor==null)throw new IOException("UiAutomation returned no read-only dump pipe");
+            input=new android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor);InputStream source=input;
+            Thread reader=new Thread(()->{
+                try(InputStream pipe=source;FileOutputStream target=new FileOutputStream(new File(output,name))){
+                    byte[] buffer=new byte[16384];int count;
+                    while((count=pipe.read(buffer))!=-1){
+                        int remaining=2097152-bytes.get();int accepted=Math.min(count,remaining);
+                        if(accepted>0){target.write(buffer,0,accepted);bytes.addAndGet(accepted);}
+                        if(count>accepted||bytes.get()>=2097152){capped.set(true);break;}
+                    }
+                    target.flush();
+                }catch(Throwable diagnostic){error.set(diagnostic);}
+            },"startup-read-only-dump");
+            reader.setDaemon(true);reader.start();reader.join(4000);
+            boolean timedOut=reader.isAlive();
+            if(timedOut){source.close();reader.interrupt();reader.join(250);}
+            result.put("timedOut",timedOut).put("readerStillAlive",reader.isAlive());
+        }catch(Exception|AssertionError diagnostic){error.compareAndSet(null,diagnostic);}
+        finally{
+            if(input!=null)try{input.close();}catch(Exception diagnostic){error.compareAndSet(null,diagnostic);}
+            else if(descriptor!=null)try{descriptor.close();}catch(Exception diagnostic){error.compareAndSet(null,diagnostic);}
+        }
+        result.put("bytes",bytes.get()).put("sizeLimited",capped.get()).put("finishedElapsedRealtime",SystemClock.elapsedRealtime());
+        if(error.get()!=null)result.put("diagnosticError",failureStack(error.get()));
+        return result;
     }
     private UpdateActivity openUpdatePage(MainActivity home)throws Exception{
         ActivityMonitor monitor=addMonitor(UpdateActivity.class.getName(),null,false);

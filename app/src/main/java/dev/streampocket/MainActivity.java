@@ -1368,7 +1368,7 @@ public final class MainActivity extends Activity {
                     String[] rules={"最高可用画质","1080p 以内","720p 以内","仅音频 · M4A","仅音频 · MP3"};
                     new PocketDialog.Builder(this).setTitle("应用到 "+selected.size()+" 项").setItems(rules,(dialog,rule)->{
                         int applied=0;for(Engine.Media media:selected){
-                            if(media.album||!inspectedMedia.contains(media)||(rule>=3&&!media.hasAudio))continue;
+                            if(media.directFile()||media.album||!inspectedMedia.contains(media)||(rule>=3&&!media.hasAudio))continue;
                             String target=rule==0?"best":rule==1?"cap-1080":rule==2?"cap-720":rule==3?"audio-m4a":"audio-mp3";
                             if(rule==1||rule==2){int height=rule==1?1080:720;if(media.qualities.stream().noneMatch(q->q.id.equals(target)))media.qualities.add(new Engine.Quality(target,height+"p 以内","bv*[height<="+height+"]+ba/b[height<="+height+"]"));}
                             List<Engine.Quality> choices=media.downloadChoices();for(int n=0;n<choices.size();n++)if(choices.get(n).id.equals(target)){qualitySelections.put(InspectionBatch.key(media),n);applied++;break;}

@@ -332,19 +332,16 @@ public final class DownloadService extends Service {
             if (media.directFile()) {
                 if (media.file == null) throw new IOException("文件信息缺失，请重新检查链接");
                 workingDirectory = new File(directory, "direct-http");
-                Engine.RUNTIME_LOCK.readLock().lockInterruptibly();
-                try {
-                    admission[0].close();
-                    complete = DirectFileDownloader.download(this, media.url, media.file, directory, processId,
-                            () -> isCancelled(id), state -> {
-                                synchronized (lock) {
-                                    if (isCancelled(id)) return;
-                                    try { TaskStore.update(this, id, state); } catch (Exception ignored) {}
-                                    if (state.optLong("downloadedBytes", -1) >= 0) awaitingResumeProgress.remove(id);
-                                    updateNotification(media.title + " · " + state.optString("stageLabel"), id, state.optDouble("progress", -1));
-                                }
-                            });
-                } finally { Engine.RUNTIME_LOCK.readLock().unlock(); }
+                admission[0].close();
+                complete = DirectFileDownloader.download(this, media.url, media.file, directory, processId,
+                        () -> isCancelled(id), state -> {
+                            synchronized (lock) {
+                                if (isCancelled(id)) return;
+                                try { TaskStore.update(this, id, state); } catch (Exception ignored) {}
+                                if (state.optLong("downloadedBytes", -1) >= 0) awaitingResumeProgress.remove(id);
+                                updateNotification(media.title + " · " + state.optString("stageLabel"), id, state.optDouble("progress", -1));
+                            }
+                        });
                 if (isCancelled(id)) throw new IOException("cancelled");
                 SourceScheduler.SHARED.outcomeForUrl(media.url, null);
             } else {
