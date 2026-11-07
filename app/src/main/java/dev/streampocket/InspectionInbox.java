@@ -12,21 +12,29 @@ import org.json.JSONObject;
 final class InspectionInbox {
     static final class Job {
         final String id, url;
+        String kind = "media";
         String state = "queued", message = "", details = "";
         volatile boolean cancelled;
         Job(String id, String url) { this.id = id; this.url = url; }
-        JSONObject json() throws Exception { return new JSONObject().put("id", id).put("url", url).put("state", state)
+        JSONObject json() throws Exception { return new JSONObject().put("id", id).put("url", url).put("kind", kind).put("state", state)
                 .put("message", message).put("details", details); }
     }
     final List<Job> jobs = new ArrayList<>();
     final List<Engine.Media> media = new ArrayList<>();
 
     int add(List<String> urls) {
+        return add(urls, "media");
+    }
+    int add(List<String> urls, String kind) {
+        boolean file = "direct-file".equals(kind);
         Set<String> known = new LinkedHashSet<>();
-        for (Job job : jobs) known.add(LinkBatch.identity(job.url));
-        for (Engine.Media item : media) known.add(LinkBatch.identity(item.url));
+        for (Job job : jobs) if (file == "direct-file".equals(job.kind)) known.add(file ? job.url : LinkBatch.identity(job.url));
+        for (Engine.Media item : media) if (file == item.directFile()) known.add(file ? item.url : LinkBatch.identity(item.url));
         int added = 0;
-        for (String url : urls) if (known.add(LinkBatch.identity(url))) { jobs.add(new Job(UUID.randomUUID().toString(), url)); added++; }
+        for (String url : urls) if (known.add(file ? url : LinkBatch.identity(url))) {
+            Job job = new Job(UUID.randomUUID().toString(), url); job.kind = file ? "direct-file" : "media";
+            jobs.add(job); added++;
+        }
         return added;
     }
     Job next() { for (Job job : jobs) if (job.state.equals("queued")) return job; return null; }
@@ -65,6 +73,7 @@ final class InspectionInbox {
             if (pending != null) for (int n = 0; n < pending.length(); n++) {
                 JSONObject item = pending.getJSONObject(n); String url = CoreRules.normalizeUrl(item.getString("url"));
                 Job job = new Job(item.getString("id"), url);
+                job.kind = "direct-file".equals(item.optString("kind")) ? "direct-file" : "media";
                 job.state = item.optString("state").equals("failed") || item.optString("state").equals("cancelling") ? "failed" : "queued";
                 job.message = item.optString("message"); job.details = item.optString("details"); restored.add(job);
             }

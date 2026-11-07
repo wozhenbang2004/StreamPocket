@@ -40,9 +40,25 @@ public final class MediaExporter {
         return copyFrom(context, Uri.fromFile(source), name, mime, target, cancelled, created -> {});
     }
 
+    /** A verified ordinary file may be empty and keeps its response name and MIME. */
+    static Result saveFile(Context context, File source, String name, String mime,
+                           BooleanSupplier cancelled, DownloadLocation.Target target) throws Exception {
+        if (!source.isFile()) throw new IOException("完整文件不存在，请重试下载");
+        if (mime == null || mime.isEmpty() || "application/octet-stream".equals(mime)) {
+            int dot = name.lastIndexOf('.');
+            mime = mimeForExtension(dot >= 0 ? name.substring(dot + 1) : "");
+        }
+        return copyFrom(context, Uri.fromFile(source), name, mime, target, cancelled, created -> {}, true);
+    }
+
     /** The callback durably records an allocated destination before any destructive step. */
     static Result copyFrom(Context context, Uri source, String name, String mime, DownloadLocation.Target target,
                            BooleanSupplier cancelled, java.util.function.Consumer<Uri> onCreated) throws Exception {
+        return copyFrom(context, source, name, mime, target, cancelled, onCreated, false);
+    }
+
+    private static Result copyFrom(Context context, Uri source, String name, String mime, DownloadLocation.Target target,
+                           BooleanSupplier cancelled, java.util.function.Consumer<Uri> onCreated, boolean allowEmpty) throws Exception {
         DownloadLocation.validate(context, target.tree);
         checkCancelled(cancelled);
         String safeName = name.replaceAll("[\\p{Cntrl}/\\\\]", "_").trim();
@@ -76,7 +92,7 @@ public final class MediaExporter {
                 if(input==null||output==null)throw new IOException("无法读取原文件或写入目标文件");
                 copied=copyDigest(input,output,cancelled);
             }
-            if(copied.bytes<=0)throw new IOException("原文件为空，未保存空文件");
+            if(copied.bytes<=0&&!allowEmpty)throw new IOException("原文件为空，未保存空文件");
             Digest stored=digest(context,destination,cancelled);
             if(copied.bytes!=stored.bytes||!copied.sha256.equals(stored.sha256))throw new IOException("目标文件回读校验失败，原文件已保留");
             checkCancelled(cancelled);

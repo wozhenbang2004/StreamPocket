@@ -9,5 +9,5 @@ final class InspectionBatch {
     interface Inspector {
         List<Engine.Media> inspect(String url, Consumer<String> progress, BooleanSupplier cancelled) throws Exception;
     }
-    static String key(Engine.Media media) { return LinkBatch.identity(media.url) + ":" + media.id + ":" + media.playlistIndex; }
+    static String key(Engine.Media media) { return (media.directFile() ? "direct-file:" + media.url : LinkBatch.identity(media.url)) + ":" + media.id + ":" + media.playlistIndex; }
 }

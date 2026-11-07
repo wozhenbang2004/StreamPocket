@@ -8,7 +8,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
 
-/** Small durable queue; active work is explicitly resumable after process death. */
+/** Small durable queue; foreground recovery honors the last durable user intent. */
 public final class TaskStore {
     private static boolean initialized;
     private TaskStore() {}
@@ -21,17 +21,20 @@ public final class TaskStore {
             JSONObject task = tasks.optJSONObject(i); if (task == null) continue;
             String status = task.optString("status");
             if (status.equals("completed")) try { task.put("publicationBusy", false); } catch (Exception ignored) {}
-            if (held && status.equals("queued")) {
-                try { stopped(task, "paused", "队列已暂停，继续队列后开始"); task.put("pauseOrigin", DownloadQueuePolicy.QUEUE); }
-                catch (Exception ignored) {}
-            } else if (status.equals("pausing") && task.optBoolean("pauseRequested")) {
-                try { stopped(task, "paused", "已暂停，点击继续可复用已下载数据"); } catch (Exception ignored) {}
-            } else if (status.equals("queued") || status.equals("downloading") || status.equals("merging")
-                    || status.equals("saving") || status.equals("cancelling") || status.equals("pausing")) {
-                try { stopped(task, "interrupted", "任务已中断，点击重试可继续。"); } catch (Exception ignored) {}
-            }
+            String recovered = DownloadRecovery.restartStatus(status, task.optString(DownloadRecovery.INTENT),
+                    task.optBoolean("pauseRequested"), held);
+            if (!recovered.equals(status)) try {
+                // A legacy cancelling record is ambiguous. It has no RUN intent,
+                // so it remains available only for an explicit retry.
+                if ("interrupted".equals(recovered)) task.put("recoveryPhase", task.optString("phase"));
+                stopped(task, recovered, "cancelled".equals(recovered) ? "已取消；可重试继续"
+                        : "paused".equals(recovered) ? "已暂停，点击继续可复用已下载数据" : "任务已中断，点击重试可继续。");
+                if (held && status.equals("queued")) task.put("pauseOrigin", DownloadQueuePolicy.QUEUE);
+            } catch (Exception ignored) {}
+            task.remove("recoveryQueued");
         }
-        write(context, tasks); initialized = true;
+        // Recovery must not start from a transition that only exists in memory.
+        initialized = context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", tasks.toString()).commit();
     }
 
     public static synchronized String create(Context context, Engine.Media media, Engine.Quality quality) throws Exception {
@@ -52,9 +55,16 @@ public final class TaskStore {
         for (int n = 0; n < media.size(); n++) {
             Engine.Media item = media.get(n);
             String id = UUID.randomUUID().toString(); ids.add(id);
+            String outputPattern = "%(title).100B [%(id)s].%(ext)s";
+            if (!item.directFile() && !item.namingTemplate.isEmpty())
+                outputPattern = NamingTemplate.outputPattern(NamingTemplate.fields(item.title, item.id,
+                        item.uploader, item.platform, item.playlistIndex), item.namingTemplate);
             tasks.put(new JSONObject().put("id", id).put("title", item.title).put("url", item.url)
                     .put("media", item.toJson()).put("quality", qualities.get(n).toJson()).put("status", "queued")
+                    .put("kind", item.kind).put("presetId", item.presetId).put("presetName", item.presetName)
+                    .put("namingTemplate", item.namingTemplate).put("outputPattern", outputPattern)
                     .put("progress", -1).put("detail", "等待下载").put("userError", "").put("uri", "").put("mime", "")
+                    .put("phase", "queued").put(DownloadRecovery.INTENT, DownloadRecovery.RUN)
                     .put("createdAt", System.currentTimeMillis()).put("queuedAt", queuedAt));
             last = queuedAt; queuedAt = Math.addExact(queuedAt, 1);
         }
@@ -68,6 +78,94 @@ public final class TaskStore {
         JSONArray tasks = read(context); List<JSONObject> values = new ArrayList<>();
         for (int index = 0; index < tasks.length(); index++) { JSONObject task = tasks.optJSONObject(index); if (task != null) values.add(task); }
         return DownloadQueueOrder.sorted(values);
+    }
+
+    /** Requeue only a known interrupted transfer, retaining its original target, bytes and FIFO position. */
+    static synchronized List<String> recoverPending(Context context, java.util.Set<String> owned) {
+        init(context);
+        if (!initialized || isQueuePaused(context)) return java.util.Collections.emptyList();
+        JSONArray tasks = read(context);
+        String previous = tasks.toString();
+        List<JSONObject> eligible = new ArrayList<>();
+        try {
+            for (int i = 0; i < tasks.length(); i++) {
+                JSONObject task = tasks.optJSONObject(i);
+                if (task == null || !recoverable(task, owned.contains(task.optString("id")))) continue;
+                task.put("status", "queued").put("phase", "queued").put("stageLabel", "等待恢复下载")
+                        .put("detail", "等待恢复下载，保留原保存位置和已下载数据").put("userError", "")
+                        .put("stageProgress", -1).put("speedBytesPerSecond", -1).put("etaSeconds", -1)
+                        .put("activeConnections", -1).put("pauseRequested", false).put("recoveryQueued", true);
+                eligible.add(task);
+            }
+            if (eligible.isEmpty()) return java.util.Collections.emptyList();
+            if (!context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", tasks.toString()).commit()) {
+                context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", previous).commit();
+                return java.util.Collections.emptyList();
+            }
+            List<String> ids = new ArrayList<>();
+            for (JSONObject task : DownloadQueueOrder.sorted(eligible)) ids.add(task.optString("id"));
+            return ids;
+        } catch (Exception invalid) { return java.util.Collections.emptyList(); }
+    }
+
+    private static boolean recoverable(JSONObject task, boolean owned) {
+        return DownloadRecovery.canRecover(task.optString("status"), task.optString(DownloadRecovery.INTENT),
+                task.optString("recoveryPhase", task.optString("phase")), task.optBoolean("transferComplete"),
+                task.optBoolean("publicationStarted"), !task.optString("uri").isEmpty()
+                        || (task.optJSONArray("attachments") != null && task.optJSONArray("attachments").length() > 0), false, owned);
+    }
+
+    /** Service acceptance is separate from recovery selection and cannot release a later pause/cancel. */
+    static synchronized List<String> acceptRecovered(Context context, List<String> ids) {
+        init(context);
+        if (!initialized || isQueuePaused(context)) return java.util.Collections.emptyList();
+        JSONArray tasks = read(context); String previous = tasks.toString(); List<String> accepted = new ArrayList<>();
+        try {
+            for (int i = 0; i < tasks.length(); i++) {
+                JSONObject task = tasks.optJSONObject(i);
+                if (task == null || !ids.contains(task.optString("id")) || !task.optBoolean("recoveryQueued")
+                        || !"queued".equals(task.optString("status")) || !DownloadRecovery.RUN.equals(task.optString(DownloadRecovery.INTENT))) continue;
+                task.remove("recoveryQueued"); task.remove("recoveryPhase"); accepted.add(task.optString("id"));
+            }
+            if (!accepted.isEmpty() && !context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit()
+                    .putString("items", tasks.toString()).commit()) {
+                context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", previous).commit();
+                return java.util.Collections.emptyList();
+            }
+            List<String> ordered = new ArrayList<>();
+            for (String id : ids) if (accepted.contains(id) && !ordered.contains(id)) ordered.add(id);
+            return ordered;
+        } catch (Exception invalid) { return java.util.Collections.emptyList(); }
+    }
+
+    static synchronized void recoveryStartFailed(Context context, List<String> ids) {
+        JSONArray tasks = read(context);
+        try {
+            for (int i = 0; i < tasks.length(); i++) {
+                JSONObject task = tasks.optJSONObject(i);
+                if (task != null && ids.contains(task.optString("id")) && task.optBoolean("recoveryQueued")
+                        && "queued".equals(task.optString("status"))) {
+                    stopped(task, "interrupted", "暂时无法恢复下载，回到应用后重试"); task.remove("recoveryQueued");
+                }
+            }
+            context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", tasks.toString()).commit();
+        } catch (Exception ignored) { /* The next cold start will retain this RUN intent. */ }
+    }
+
+    /** Commit a replay barrier before a public file can be created. */
+    static synchronized boolean beginPublication(Context context, String id) {
+        JSONArray tasks = read(context);
+        try {
+            for (int i = 0; i < tasks.length(); i++) {
+                JSONObject task = tasks.optJSONObject(i);
+                if (task == null || !id.equals(task.optString("id")) || "completed".equals(task.optString("status"))) continue;
+                if (!DownloadRecovery.RUN.equals(task.optString(DownloadRecovery.INTENT))
+                        || task.optBoolean("pauseRequested") || "cancelling".equals(task.optString("status"))) return false;
+                task.put("publicationStarted", true);
+                return context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", tasks.toString()).commit();
+            }
+        } catch (Exception ignored) { /* Never publish without the durable replay barrier. */ }
+        return false;
     }
 
     /** Called only when the worker actually accepts an enqueue, including a retry. */
@@ -139,7 +237,9 @@ public final class TaskStore {
                         .put("stageLabel", held ? "等待继续队列" : "等待下载")
                         .put("stageProgress", -1).put("detail", held ? "队列已暂停，继续队列后开始" : resume ? "等待继续下载，保留已下载数据" : "等待下载")
                         .put("userError", "").put("log", "").put("pauseRequested", held)
-                        .put("speedBytesPerSecond", -1).put("etaSeconds", -1).put("activeConnections", -1).put("transferComplete", false);
+                        .put("speedBytesPerSecond", -1).put("etaSeconds", -1).put("activeConnections", -1).put("transferComplete", false)
+                        .put(DownloadRecovery.INTENT, held ? DownloadRecovery.PAUSE : DownloadRecovery.RUN);
+                selected.remove("recoveryQueued"); selected.remove("recoveryPhase"); selected.remove("publicationStarted");
                 if (held) selected.put("pauseOrigin", DownloadQueuePolicy.QUEUE); else selected.remove("pauseOrigin");
                 if (!resume) selected.put("progress", -1).put("downloadedBytes", 0).put("totalBytes", -1)
                         .put("completedStreams", 0).put("totalStreams", 0).put("progressEstimated", false)
@@ -179,6 +279,13 @@ public final class TaskStore {
         init(context);
         JSONArray tasks = read(context);
         java.util.Set<String> selected = new java.util.HashSet<>(ids);
+        if (wholeQueue) for (int i = 0; i < tasks.length(); i++) {
+            JSONObject task = tasks.optJSONObject(i);
+            // A foreground recovery may have committed before its start Intent
+            // reaches the service. The global pause also owns these waiters.
+            if (task != null && task.optBoolean("recoveryQueued") && "queued".equals(task.optString("status")))
+                selected.add(task.optString("id"));
+        }
         for (int index = 0; index < tasks.length(); index++) {
             JSONObject task = tasks.optJSONObject(index);
             if (task == null || !selected.contains(task.optString("id"))) continue;
@@ -232,7 +339,7 @@ public final class TaskStore {
             if (task == null || !task.optString("id").equals(id) || !canRequestStop(task.optString("status"))) continue;
             try {
                 stopped(task, "cancelling", "正在取消，等待下载进程退出…");
-                task.put("stageLabel", "正在取消");
+                task.put("stageLabel", "正在取消").put(DownloadRecovery.INTENT, DownloadRecovery.CANCEL);
                 return context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", tasks.toString()).commit();
             } catch (Exception invalid) { return false; }
         }
@@ -269,17 +376,25 @@ public final class TaskStore {
     }
 
     static synchronized void markStopped(Context context, String id, String status, String detail) {
+        markStoppedCommitted(context, id, status, detail);
+    }
+
+    static synchronized boolean markStoppedCommitted(Context context, String id, String status, String detail) {
         init(context);
         JSONArray tasks = read(context);
         for (int index = 0; index < tasks.length(); index++) {
             JSONObject task = tasks.optJSONObject(index);
             if (task == null || !task.optString("id").equals(id) || task.optString("status").equals("completed")) continue;
             try { stopped(task, status, detail); } catch (Exception invalid) { throw new IllegalArgumentException(invalid); }
-            write(context, tasks); return;
+            return context.getSharedPreferences("tasks", Context.MODE_PRIVATE).edit().putString("items", tasks.toString()).commit();
         }
+        return false;
     }
 
     private static void stopped(JSONObject task, String status, String detail) throws Exception {
+        if ("paused".equals(status) || "pausing".equals(status)) task.put(DownloadRecovery.INTENT, DownloadRecovery.PAUSE);
+        else if ("cancelled".equals(status)) task.put(DownloadRecovery.INTENT, DownloadRecovery.CANCEL);
+        task.remove("recoveryQueued");
         task.put("status", status).put("stageLabel", status.equals("pausing") ? "正在暂停"
                         : status.equals("paused") ? "已暂停" : status.equals("cancelled") ? "已取消" : "已中断")
                 .put("detail", detail).put("userError", "").put("speedBytesPerSecond", -1).put("etaSeconds", -1)
