@@ -104,7 +104,7 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             Engine.Media parsed=new Engine.Media();parsed.url="https://peach.blender.org/";parsed.id="qa-inline";parsed.platform="合法测试媒体";parsed.title=a.optString("title");parsed.uploader="Blender Foundation";parsed.duration=20;parsed.width=320;parsed.height=180;parsed.thumbnail=Uri.fromFile(wide).toString();parsed.filesize=wide.length();parsed.qualities.add(new Engine.Quality("best","原片画质","best"));
             onMain(()->{field(main,"input",android.widget.EditText.class).setText(parsed.url);invoke(main,"showMedia",new Class<?>[]{java.util.List.class},java.util.Collections.singletonList(parsed));});SystemClock.sleep(1000);capture("10-inline-real-artwork-metadata-fixture");
             result.putString("stream","PASS: "+phase+"; real horizontal/portrait decode, first frame, library return"+("before".equals(phase)?"":"; real scrub bitmap, sheet drag/cancel/back, non-executing swipe")+("upgrade050".equals(phase)?"; system PiP retains playback, next media keeps playback and audio focus, returns to fullscreen, releases on exit":"")+"; captures="+output.getAbsolutePath());finish(Activity.RESULT_OK,result);
-        }catch(Throwable failure){result.putString("stream","FAIL at "+phase+": "+android.util.Log.getStackTraceString(failure));finish(Activity.RESULT_CANCELED,result);}
+        }catch(Throwable failure){result.putString("stream","FAIL at "+phase+": "+failureStack(failure));finish(Activity.RESULT_CANCELED,result);}
     }
     /** No network fixture: production inspection, native transfer, cache validation and publication APIs. */
     private void verifyDirectFile()throws Exception{
@@ -125,13 +125,43 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
         Uri saved=null;MainActivity main=null;boolean verified=false;
         AtomicReference<String> serviceTaskId=new AtomicReference<>();
         java.util.Set<String> tasksBeforeClick=new java.util.HashSet<>();
+        android.content.SharedPreferences updatePreferences=app.getSharedPreferences("app_updates",0);
+        boolean hadAutomatic=updatePreferences.contains("automatic"),automaticBefore=updatePreferences.getBoolean("automatic",true);
+        boolean updatePreferenceTouched=false;
         try{
             check(java.util.Arrays.asList(android.os.Build.SUPPORTED_ABIS).contains("x86_64"),"directfile scenario requires the isolated CI x86_64 APK/emulator");
+            updatePreferenceTouched=true;
+            check(updatePreferences.edit().putBoolean("automatic",false).commit(),"disable only unrelated automatic update checks during this QA scenario");
+            app.getSharedPreferences("config",0).edit().putString("appearance_theme","light").commit();
+            main=(MainActivity)startActivitySync(new Intent(app,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            MainActivity screen=main;
+            waitUntil(()->{
+                try{return screen.hasWindowFocus()&&screen.getWindow().getDecorView().isShown()
+                        &&screen.getWindow().getDecorView().getWindowVisibility()==View.VISIBLE
+                        &&field(screen,"foreground",Boolean.class)&&field(app,"startedActivities",Integer.class)>0;}
+                catch(Exception failure){throw new IllegalStateException("Cannot verify the actual foreground Activity lifecycle",failure);}
+            },10000,"real resumed and visible MainActivity has window focus before the first network request");
+            onMain(()->{
+                Field mode=MainActivity.class.getDeclaredField("fileIntake");mode.setAccessible(true);mode.setBoolean(screen,true);
+                invoke(screen,"showTab",new Class<?>[]{String.class},"new");
+                field(screen,"input",android.widget.EditText.class).setText("合法 QA 媒体 · Big Buck Bunny / CC BY 3.0\n"+source);
+            });
+            check(onMainValue(()->field(screen,"input",android.widget.EditText.class).getContentDescription().toString().startsWith("文件链接")),
+                    "ordinary-file input is the real production mode before any inspection");
+            android.app.ActivityManager.RunningAppProcessInfo processState=new android.app.ActivityManager.RunningAppProcessInfo();
+            android.app.ActivityManager.getMyMemoryState(processState);
+            evidence.put("foregroundLifecycle",onMainValue(()->new JSONObject().put("beforeFirstInspection",true)
+                    .put("hasWindowFocus",screen.hasWindowFocus()).put("decorVisible",screen.getWindow().getDecorView().isShown())
+                    .put("resumed",field(screen,"foreground",Boolean.class)).put("startedActivities",field(app,"startedActivities",Integer.class))
+                    .put("processImportance",processState.importance).put("automaticUpdateChecksDisabledForQa",true)));
             File packages=new File(app.getNoBackupFilesDir(),"youtubedl-android/packages");
-            check(!new File(packages,"python").exists()&&!new File(packages,"aria2c").exists(),
-                    "fresh installation has no pre-extracted Python/aria2 runtime; file download must initialize its own dependencies");
-            evidence.put("freshFileFirstRuntime",true);
-            Engine.Media media=new Engine(app).inspectFile(source,expired);
+            check(!new File(packages,"python").exists()&&!new File(packages,"aria2c").exists()&&!new File(packages,"ffmpeg").exists(),
+                    "visible MainActivity has not pre-extracted Python/aria2/FFmpeg; first file download must initialize its own dependencies");
+            evidence.put("freshFileFirstRuntime",true).put("runtimeBeforeFirstTransfer",new JSONObject()
+                    .put("pythonExtracted",new File(packages,"python").exists()).put("aria2Extracted",new File(packages,"aria2c").exists())
+                    .put("ffmpegExtracted",new File(packages,"ffmpeg").exists()));
+            writeDirectFileEvidence(evidence);SystemClock.sleep(500);capture("01-ordinary-file-mode-licensed-qa-link");
+            Engine.Media media=onMainValue(()->field(screen,"engine",Engine.class)).inspectFile(source,expired);
             check(media.directFile()&&media.file!=null,"real Engine inspection selects ordinary-file mode");
             check(source.equals(media.url)&&source.equals(media.file.url),"the selected file retains the pinned source URL");
             check("bbb-licensed-20s.mp4".equals(media.file.name),"the real response resolves the expected file name");
@@ -172,18 +202,6 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
                     "ordinary file is actually published in default Downloads/StreamPocket");
             evidence.put("publicOutput",publicMetadata.put("uri",saved.toString()).put("readBackSha256",publicRead.sha256));
 
-            app.getSharedPreferences("config",0).edit().putString("appearance_theme","light").commit();
-            main=(MainActivity)startActivitySync(new Intent(app,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            MainActivity screen=main;
-            waitUntil(screen::hasWindowFocus,10000,"real main activity has focus for the file-mode capture");
-            onMain(()->{
-                Field mode=MainActivity.class.getDeclaredField("fileIntake");mode.setAccessible(true);mode.setBoolean(screen,true);
-                invoke(screen,"showTab",new Class<?>[]{String.class},"new");
-                field(screen,"input",android.widget.EditText.class).setText("合法 QA 媒体 · Big Buck Bunny / CC BY 3.0\n"+source);
-            });
-            check(onMainValue(()->field(screen,"input",android.widget.EditText.class).getContentDescription().toString().startsWith("文件链接")),
-                    "ordinary-file input is the real production mode");
-            SystemClock.sleep(500);capture("01-ordinary-file-mode-licensed-qa-link");
             onMain(()->invoke(screen,"showMedia",new Class<?>[]{java.util.List.class},java.util.Collections.singletonList(media)));
             SystemClock.sleep(600);capture("02-real-network-inspected-file");
             DownloadPresets.Preset sample=new DownloadPresets.Preset("qa-directfile","合法 QA 媒体样例（未保存）","best",false,false,
@@ -197,7 +215,7 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             check(!expired.getAsBoolean(),"directfile verification completes within the bounded scenario");
             verified=true;evidence.put("verified",true);
         }catch(Exception|AssertionError failure){
-            evidence.put("verified",false).put("failure",android.util.Log.getStackTraceString(failure));throw failure;
+            evidence.put("verified",false).put("failure",failureStack(failure));throw failure;
         }finally{
             boolean serviceRemoved=true;
             try{
@@ -214,7 +232,7 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
                     evidence.put("serviceTaskId",serviceTaskId.get());writeDirectFileEvidence(evidence);
                     evidence.put("serviceCleanup",cleanupServiceFile(app,serviceTaskId.get(),source));
                 }
-            }catch(Exception|AssertionError cleanup){serviceRemoved=false;evidence.put("serviceCleanupError",android.util.Log.getStackTraceString(cleanup));}
+            }catch(Exception|AssertionError cleanup){serviceRemoved=false;evidence.put("serviceCleanupError",failureStack(cleanup));}
             boolean publicRemoved=saved==null;
             if(saved!=null)try{publicRemoved=MediaExporter.delete(app,saved);}catch(Exception cleanup){evidence.put("publicCleanupError",cleanup.toString());}
             boolean cacheRemoved=deleteQaTree(work);
@@ -222,9 +240,16 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             boolean uiClosed=true;MainActivity screen=main;
             if(screen!=null)try{onMain(()->{if(!screen.isFinishing())screen.finish();});}
             catch(Exception cleanup){uiClosed=false;evidence.put("uiCleanupError",cleanup.toString());}
-            evidence.put("passed",verified&&serviceRemoved&&publicRemoved&&cacheRemoved&&uiClosed);
+            boolean updatesRestored=true;
+            if(updatePreferenceTouched){
+                android.content.SharedPreferences.Editor restore=updatePreferences.edit();
+                if(hadAutomatic)restore.putBoolean("automatic",automaticBefore);else restore.remove("automatic");
+                updatesRestored=restore.commit();
+            }
+            evidence.put("automaticUpdatePreferenceRestored",updatesRestored);
+            evidence.put("passed",verified&&serviceRemoved&&publicRemoved&&cacheRemoved&&uiClosed&&updatesRestored);
             writeDirectFileEvidence(evidence);
-            if(verified)check(serviceRemoved&&publicRemoved&&cacheRemoved&&uiClosed,"only this run's task, archive, library, public output and cache are cleaned up after execution finishes");
+            if(verified)check(serviceRemoved&&publicRemoved&&cacheRemoved&&uiClosed&&updatesRestored,"only this run's QA data is cleaned up after execution finishes, and the update preference is restored");
         }
     }
     /** Starts only by clicking the production row action; no Service entry point or worker is invoked here. */
@@ -368,6 +393,13 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
     }
     private void writeDirectFileEvidence(JSONObject evidence)throws Exception{
         try(FileOutputStream report=new FileOutputStream(new File(output,"directfile-evidence.json"))){report.write(evidence.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));report.getFD().sync();}
+    }
+    private static String failureStack(Throwable failure){
+        // Android Log.getStackTraceString suppresses UnknownHostException chains.
+        // Network acceptance must retain the real exception, causes and frames.
+        java.io.StringWriter text=new java.io.StringWriter();
+        java.io.PrintWriter writer=new java.io.PrintWriter(text);
+        failure.printStackTrace(writer);writer.flush();return text.toString();
     }
     private String nativeAria2Version(Context app)throws Exception{
         // Inspect only after production download performed first-use extraction.

@@ -330,7 +330,7 @@ public final class BatchDownloadUiTest {
             assertEquals(1,inbox(a).count("failed"));assertEquals("https://b23.tv/failure",inbox(a).jobs.get(0).url);
             assertNotNull(find(a.getWindow().getDecorView(),"全部下载"));assertEquals("Only the current page may occupy the content area",1,field(a,"body",ViewGroup.class).getChildCount());capture(a,"batch-partial-fixture.png");
             field(a,"input",EditText.class).setText("https://x.com/u/status/next");
-            find(a.getWindow().getDecorView(),"全部下载").performClick();
+            find(a.getWindow().getDecorView(),"全部下载").performClick();drain(a);
             List<JSONObject> tasks=TaskStore.all(a);assertEquals(2,tasks.size());assertEquals("first",tasks.get(0).getString("title"));assertEquals("last",tasks.get(1).getString("title"));
             Intent request=Shadows.shadowOf(a).getNextStartedService();assertNotNull(request);assertEquals(2,request.getStringArrayListExtra("ids").size());
             invoke(a,"showTab",new Class<?>[]{String.class},"new");

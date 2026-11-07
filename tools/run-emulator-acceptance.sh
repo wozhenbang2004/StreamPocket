@@ -10,7 +10,7 @@ capture_evidence() {
   adb -s "$qa_serial" logcat -d > "$qa_output/logcat.txt" 2>&1 || true
   adb -s "$qa_serial" shell dumpsys audio > "$qa_output/audio-focus.txt" 2>&1 || true
   adb -s "$qa_serial" exec-out run-as dev.streampocket.localtest \
-    tar -C files/qa-captures -cf - upgrade050 startup051 directfile > "$qa_output/captures.tar" 2> "$qa_output/capture-errors.txt" || true
+    tar -C files/qa-captures -cf - . > "$qa_output/captures.tar" 2> "$qa_output/capture-errors.txt" || true
   if [ -s "$qa_output/captures.tar" ]; then
     tar -xf "$qa_output/captures.tar" -C "$qa_output" || true
   fi
