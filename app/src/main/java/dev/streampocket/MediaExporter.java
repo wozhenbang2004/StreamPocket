@@ -181,7 +181,7 @@ public final class MediaExporter {
             case "lrc": return "text/plain";
             case "ttml": return "application/ttml+xml";
             default:
-                String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+                String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.toLowerCase(Locale.ROOT));
                 return mime == null ? "application/octet-stream" : mime;
         }
     }

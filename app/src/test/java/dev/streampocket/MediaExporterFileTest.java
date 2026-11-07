@@ -75,6 +75,13 @@ public final class MediaExporterFileTest {
         assertArrayEquals(expected,Files.readAllBytes(source.toPath()));
     }
 
+    @Test public void genericResponseMimeUsesTheChosenUppercaseExtension() throws Exception {
+        MediaExporter.Result saved=MediaExporter.saveFile(app,source(new byte[]{1,2,3}),"报告.PDF","application/octet-stream",()->false,target);
+        assertEquals("application/pdf",saved.mime);
+        assertEquals("报告.PDF",provider.names.get(DocumentsContract.getDocumentId(saved.uri)));
+        assertEquals("application/pdf",provider.mimes.get(DocumentsContract.getDocumentId(saved.uri)));
+    }
+
     @Test public void cancellingAfterDestinationAllocationRemovesTheCopyAndKeepsSource() throws Exception {
         byte[] expected=new byte[256*1024];java.util.Arrays.fill(expected,(byte)37);
         File source=source(expected);AtomicBoolean cancelled=new AtomicBoolean();

@@ -27,6 +27,7 @@ jobs:
             app/src/main/java/dev/streampocket/DirectFileRules.java \
             app/src/main/java/dev/streampocket/NamingTemplate.java \
             app/src/main/java/dev/streampocket/DownloadRecovery.java \
+            app/src/main/java/dev/streampocket/DownloadQueuePolicy.java \
             app/src/test/java/dev/streampocket/DirectFileRulesSelfTest.java \
             app/src/test/java/dev/streampocket/NamingTemplateSelfTest.java \
             app/src/test/java/dev/streampocket/DownloadRecoverySelfTest.java \

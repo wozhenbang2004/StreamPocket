@@ -23,12 +23,14 @@ if adb -s "$qa_serial" shell pm path dev.streampocket.localtest | tr -d '\r' | g
 fi
 adb -s "$qa_serial" install -r app/build/outputs/apk/debug/app-debug.apk
 adb -s "$qa_serial" install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+# This fresh CI-only package declared the permission; avoid a system dialog hiding the Service UI.
+adb -s "$qa_serial" shell pm grant dev.streampocket.localtest android.permission.POST_NOTIFICATIONS
 # Acknowledge the emulator's one-time system navigation tutorial before UI capture.
 adb -s "$qa_serial" shell settings put secure immersive_mode_confirmations confirmed
 adb -s "$qa_serial" logcat -c
 # Ordinary files run first: no media scenario may warm up FFmpeg/Python/aria2.
 adb -s "$qa_serial" shell am force-stop dev.streampocket.localtest
-timeout 150s adb -s "$qa_serial" shell am instrument -w -r -e scenario directfile \
+timeout 180s adb -s "$qa_serial" shell am instrument -w -r -e scenario directfile \
   dev.streampocket.localtest.test/dev.streampocket.UiAcceptanceInstrumentation \
   | tee "$qa_output/directfile-instrumentation.txt"
 
@@ -38,7 +40,7 @@ import sys
 result = Path(sys.argv[1]).read_text()
 if 'PASS: directfile;' not in result or 'INSTRUMENTATION_CODE: -1' not in result or 'FAIL at directfile:' in result:
     raise SystemExit('Real Android/native aria2 file acceptance did not report success; inspect the uploaded evidence.')
-print('Real Android native aria2 HTTPS download, verified cache reuse and public-file read-back acceptance passed.')
+print('Real Android native aria2 HTTPS download, cache reuse, production file-button/Service/archive path and public-file read-back acceptance passed.')
 PY
 
 adb -s "$qa_serial" shell am force-stop dev.streampocket.localtest

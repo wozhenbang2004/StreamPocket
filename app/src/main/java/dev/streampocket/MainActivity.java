@@ -186,7 +186,7 @@ public final class MainActivity extends Activity {
         LinearLayout form=column();form.setPadding(dp(14),dp(8),dp(14),dp(14));form.setBackground(shape(SURFACE,18,0));
         PocketTabs intake=new PocketTabs(this,new String[]{"视频与音频","普通文件"},fileIntake?1:0,which->{
             if(input!=null)draft=input.getText().toString();fileIntake=which==1;
-            getPreferences(0).edit().putBoolean("file_intake",fileIntake).apply();showTab("new");
+            getPreferences(0).edit().putBoolean("file_intake",fileIntake).apply();hideClipboardOffer();clipboardCheckPending=true;showTab("new");main.post(checkClipboard);
         });add(form,intake,4,10);
         addLinkRow=row();Button more=quietButton("＋ 继续添加链接");more.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);more.setTextColor(ACCENT);more.setOnClickListener(v->{linkEditorExpanded=true;updateLinkEditor();input.requestFocus();((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(input,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);});addLinkRow.addView(more,new LinearLayout.LayoutParams(0,dp(48),1));
         Button quickPaste=quietButton("粘贴链接");quickPaste.setTextSize(13);quickPaste.setTextColor(ACCENT);quickPaste.setOnClickListener(v->pasteLink());addLinkRow.addView(quickPaste,new LinearLayout.LayoutParams(dp(88),dp(48)));form.addView(addLinkRow);
@@ -321,11 +321,11 @@ public final class MainActivity extends Activity {
                 if(text!=null){if(content.length()+text.length()>65536)return;content.append(text).append('\n');}
             }
             List<String> urls=parseIntakeLinks(content.toString()).urls;
-            String digest=ClipboardOffer.fingerprint(urls);
-            if(digest.equals(getPreferences(0).getString("clipboard_seen",""))||ClipboardOffer.alreadyInDraft(urls,draft))return;
-            Set<String> known=new HashSet<>();for(InspectionInbox.Job job:inspectionInbox.jobs)known.add(LinkBatch.identity(job.url));for(Engine.Media media:inspectedMedia)known.add(LinkBatch.identity(media.url));
-            try{for(String url:parseIntakeLinks(draft).urls)known.add(LinkBatch.identity(url));}catch(IllegalArgumentException ignored){}
-            List<String> fresh=new ArrayList<>();for(String url:urls)if(!known.contains(LinkBatch.identity(url)))fresh.add(url);
+            String digest=ClipboardOffer.fingerprint(urls,fileIntake);
+            if(digest.equals(getPreferences(0).getString("clipboard_seen",""))||ClipboardOffer.alreadyInDraft(urls,draft,fileIntake))return;
+            Set<String> known=new HashSet<>();for(InspectionInbox.Job job:inspectionInbox.jobs)known.add(intakeKey(job.url,"direct-file".equals(job.kind)));for(Engine.Media media:inspectedMedia)known.add(intakeKey(media.url,media.directFile()));
+            try{for(String url:parseIntakeLinks(draft).urls)known.add(intakeKey(url,fileIntake));}catch(IllegalArgumentException ignored){}
+            List<String> fresh=new ArrayList<>();for(String url:urls)if(!known.contains(intakeKey(url,fileIntake)))fresh.add(url);
             if(fresh.isEmpty())return;
             clipboardSourceDigest=digest;clipboardUrls=new ArrayList<>(fresh);renderClipboardOffer();
         }catch(IllegalArgumentException ignored){ /* Ordinary clipboard text is not a video task. */ }
@@ -338,14 +338,14 @@ public final class MainActivity extends Activity {
         LinearLayout card=row();card.setPadding(dp(14),dp(8),dp(4),dp(8));card.setBackground(shape(SURFACE,14,LINE));
         LinearLayout labels=column();labels.addView(text("发现 "+clipboardUrls.size()+" 个新链接",14,INK,true));TextView preview=text(linkLabel(clipboardUrls.get(0)).replace('\n',' '),12,MUTED,false);preview.setMaxLines(1);preview.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);add(labels,preview,4,0);card.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
         Button open=button("查看链接",true);open.setTextSize(12);open.setMinWidth(0);open.setOnClickListener(v->showClipboardReview());card.addView(open,new LinearLayout.LayoutParams(dp(88),dp(48)));
-        Button dismiss=quietButton("×");dismiss.setTextSize(20);dismiss.setMinWidth(0);dismiss.setContentDescription("忽略剪贴板链接提醒");dismiss.setOnClickListener(v->{rememberClipboardDigest(clipboardSourceDigest.isEmpty()?ClipboardOffer.fingerprint(clipboardUrls):clipboardSourceDigest);hideClipboardOffer();});card.addView(dismiss,new LinearLayout.LayoutParams(dp(44),dp(48)));
+        Button dismiss=quietButton("×");dismiss.setTextSize(20);dismiss.setMinWidth(0);dismiss.setContentDescription("忽略剪贴板链接提醒");dismiss.setOnClickListener(v->{rememberClipboardDigest(clipboardSourceDigest.isEmpty()?ClipboardOffer.fingerprint(clipboardUrls,fileIntake):clipboardSourceDigest);hideClipboardOffer();});card.addView(dismiss,new LinearLayout.LayoutParams(dp(44),dp(48)));
         clipboardNotice.addView(card);clipboardNotice.setVisibility(View.VISIBLE);clipboardNotice.announceForAccessibility("发现 "+clipboardUrls.size()+" 个新链接，查看后选择要解析的链接");
     }
 
     private void showClipboardReview() {
         if(clipboardUrls.isEmpty()||clipboardReview!=null&&clipboardReview.isShowing())return;
         hideLinkKeyboard();
-        List<String> snapshot=new ArrayList<>(clipboardUrls);String sourceDigest=clipboardSourceDigest.isEmpty()?ClipboardOffer.fingerprint(snapshot):clipboardSourceDigest;boolean[] selected=new boolean[snapshot.size()];Arrays.fill(selected,true);
+        List<String> snapshot=new ArrayList<>(clipboardUrls);String sourceDigest=clipboardSourceDigest.isEmpty()?ClipboardOffer.fingerprint(snapshot,fileIntake):clipboardSourceDigest;boolean[] selected=new boolean[snapshot.size()];Arrays.fill(selected,true);
         String[] labels=new String[snapshot.size()];for(int n=0;n<labels.length;n++)labels[n]=linkLabel(snapshot.get(n));
         clipboardReview=new PocketDialog.Builder(this).setTitle("剪贴板 · "+snapshot.size()+" 个链接").setMultiChoiceBulkActions(snapshot.size()>1)
                 .setMultiChoiceItems(labels,selected,(d,which,checked)->{
@@ -364,7 +364,7 @@ public final class MainActivity extends Activity {
         if(clipboardUrls.isEmpty())return;
         List<String> accepted=new ArrayList<>(clipboardUrls);rememberClipboard(accepted);hideClipboardOffer();queueInspections(accepted);showTab("new");
     }
-    private void rememberClipboard(List<String> urls){rememberClipboardDigest(ClipboardOffer.fingerprint(urls));}
+    private void rememberClipboard(List<String> urls){rememberClipboardDigest(ClipboardOffer.fingerprint(urls,fileIntake));}
     private void rememberClipboardDigest(String digest){getPreferences(0).edit().putString("clipboard_seen",digest).apply();}
     private void hideClipboardOffer(){clipboardUrls=Collections.emptyList();clipboardSourceDigest="";if(clipboardNotice!=null){clipboardNotice.setVisibility(View.GONE);clipboardNotice.removeAllViews();}}
 
@@ -379,8 +379,8 @@ public final class MainActivity extends Activity {
                 if(value!=null){if(content.length()+value.length()+1>65536)throw new IllegalArgumentException("剪贴板内容太长，请分批粘贴");content.append(value).append('\n');}
             }
             LinkBatch.Result links=parseIntakeLinks(content.toString());
-            Set<String> known=new HashSet<>();try{for(String url:parseIntakeLinks(draft).urls)known.add(LinkBatch.identity(url));}catch(IllegalArgumentException ignored){}
-            List<String> fresh=new ArrayList<>();for(String url:links.urls)if(known.add(LinkBatch.identity(url)))fresh.add(url);
+            Set<String> known=new HashSet<>();try{for(String url:parseIntakeLinks(draft).urls)known.add(intakeKey(url,fileIntake));}catch(IllegalArgumentException ignored){}
+            List<String> fresh=new ArrayList<>();for(String url:links.urls)if(known.add(intakeKey(url,fileIntake)))fresh.add(url);
             if(fresh.isEmpty()){showLinkMessage("这些链接已在输入中，可直接解析",false);return;}
             String next=draft.trim().isEmpty()?LinkBatch.join(fresh,"\n"):draft+(draft.endsWith("\n")?"":"\n")+LinkBatch.join(fresh,"\n");
             // Validate before updating, so a full batch keeps its existing editable contents.
@@ -409,6 +409,10 @@ public final class MainActivity extends Activity {
         int added=inspectionInbox.add(urls,fileIntake?"direct-file":"media");persistInspectionInbox();
         toast(added>0?"已添加 "+added+" 个链接，按顺序解析":"链接已在解析队列或待下载列表中");startNextInspection();renderInspection();
     }
+    private static String intakeKey(String url,boolean files) {
+        return (files?"file:":"media:")+(files?url:LinkBatch.identity(url));
+    }
+
     private LinkBatch.Result parseIntakeLinks(String text) {
         return fileIntake ? LinkBatch.parseFiles(text) : LinkBatch.parse(text);
     }
@@ -1337,7 +1341,9 @@ public final class MainActivity extends Activity {
         PocketSwitch cover=new PocketSwitch(this);cover.setText("保存源站可用的封面");cover.setTextColor(INK);cover.setChecked(original!=null&&original.saveCover);add(c,cover,0,4);
         PocketSwitch subtitles=new PocketSwitch(this);subtitles.setText("保存源站可用的字幕");subtitles.setTextColor(INK);subtitles.setChecked(original!=null&&original.saveSubtitles);add(c,subtitles,0,12);
         TextView error=text("",12,palette.danger,false);error.setVisibility(View.GONE);add(c,error,0,8);Button save=button("保存预设",true);add(c,save,4,0);
-        PocketDialog panel=settingsPanel(original==null?"新建下载预设":"编辑下载预设",c);
+        c.setPadding(0,dp(8),0,dp(8));ScrollView scroll=new ScrollView(this);scroll.addView(c);
+        PocketDialog panel=new PocketDialog.Builder(this).setTitle(original==null?"新建下载预设":"编辑下载预设")
+                .setView(scroll).setNegativeButton("取消",null).show();bottom(panel);
         save.setOnClickListener(v->{try{
             DownloadPresets.Preset preset=new DownloadPresets.Preset(original==null?"":original.id,name.getText().toString(),rule[0],cover.isChecked(),subtitles.isChecked(),
                     original==null?SubtitleChoices.PREFER_ORIGINAL:original.subtitleMode,original==null?Collections.emptyList():original.subtitleLanguages,template.getText().toString());
@@ -1572,7 +1578,7 @@ public final class MainActivity extends Activity {
     private GradientDrawable shape(int color,int radius,int border){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));if(border!=0)d.setStroke(dp(1),border);return d;}
     private void add(LinearLayout parent,View child,int top,int bottom){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(top);p.bottomMargin=dp(bottom);parent.addView(child,p);}
     private static String mediaSummary(Engine.Media media,int selection){
-        if(media.directFile())return (media.file==null?"文件信息需重新检查":media.file.mime)+" · "+MediaSize.format(media.filesize);
+        if(media.directFile())return fileTypeLabel(media)+" · "+MediaSize.format(media.filesize);
         Engine.Quality choice=media.downloadChoices().get(Math.max(0,Math.min(selection,media.downloadChoices().size()-1)));
         if(media.album)return media.imageCount+" 张图片 · 打包为 ZIP，解压后查看";
         if(choice.audioOnly())return choice.details;
@@ -1581,6 +1587,15 @@ public final class MainActivity extends Activity {
         if(media.filesize>0)value+=(value.isEmpty()?"":" · ")+(media.filesizeEstimated?"预计 ":"")+MediaSize.format(media.filesize);
         return value.isEmpty()?"实际大小在开始下载后确定":value;
     }
+    private static String fileTypeLabel(Engine.Media media) {
+        if(media.file==null)return "文件信息需重新检查";
+        String name=media.file.name;int dot=name.lastIndexOf('.');
+        String extension=dot<0?"":name.substring(dot+1);
+        if(extension.matches("[A-Za-z0-9]{1,12}"))return extension.toUpperCase(Locale.ROOT)+" 文件";
+        String mime=media.file.mime;
+        return mime.startsWith("video/")?"视频文件":mime.startsWith("audio/")?"音频文件":mime.startsWith("image/")?"图片":mime.startsWith("text/")?"文本文件":"文件";
+    }
+
     private static String duration(long seconds){return String.format(Locale.ROOT,"%d:%02d",Math.max(0,seconds)/60,Math.max(0,seconds)%60);}
     private ImageView cover(String source,String key,int width,int height){ImageView image=new ImageView(this);image.setBackground(shape(palette.control,12,0));image.setClipToOutline(true);image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setContentDescription("视频封面");artwork.load(image,source,key);return image;}
     private void clearArtwork(View view){if(artwork==null||view==null)return;if(view instanceof ImageView)artwork.cancel((ImageView)view);if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)clearArtwork(group.getChildAt(i));}}

@@ -1,5 +1,7 @@
 package dev.streampocket;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Looper;
@@ -129,6 +131,52 @@ public final class DirectFileIntakeUiTest {
         }
     }
 
+    @Test public void manualFilePasteRetainsSignedYoutubeAndBilibiliRequestsWithoutStartingInspection() throws Exception {
+        String first="https://www.youtube.com/watch?v=BaW_jenozKc&signature=first%2Bvalue&download=1";
+        String second="https://www.youtube.com/watch?v=BaW_jenozKc&signature=second%2Bvalue&download=1";
+        String third="https://www.bilibili.com/video/BV1nx411u79K?timestamp=100&sign=fixture%2Bvalue";
+        String fourth="https://www.bilibili.com/video/BV1nx411u79K?timestamp=101&sign=fixture%2Bvalue";
+        List<String> urls=Arrays.asList(first,second,third,fourth);
+        ClipboardManager clipboard=(ClipboardManager)app.getSystemService(Context.CLIPBOARD_SERVICE);
+        ClipData data=ClipData.newPlainText("fixture",first);for(String url:urls.subList(1,urls.size()))data.addItem(new ClipData.Item(url));clipboard.setPrimaryClip(data);
+        AtomicInteger inspected=new AtomicInteger();
+        try(ActivityController<MainActivity> c=activity()) {
+            MainActivity a=c.get();click(a.getWindow().getDecorView(),"普通文件");
+            set(a,"inspector",(InspectionBatch.Inspector)(url,p,k)->{inspected.incrementAndGet();throw new AssertionError("Paste must wait for confirmation");});
+            set(a,"fileInspector",(InspectionBatch.Inspector)(url,p,k)->{inspected.incrementAndGet();throw new AssertionError("Paste must wait for confirmation");});
+            field(a,"input",EditText.class).setText(first);click(a.getWindow().getDecorView(),"粘贴");
+            String expected=first+"\n"+second+"\n"+third+"\n"+fourth;
+            assertEquals(expected,field(a,"input",EditText.class).getText().toString());
+            click(a.getWindow().getDecorView(),"粘贴");Shadows.shadowOf(Looper.getMainLooper()).idle();
+            assertEquals(expected,field(a,"input",EditText.class).getText().toString());
+            assertEquals(ClipboardOffer.fingerprint(urls,true),a.getPreferences(0).getString("clipboard_seen",""));
+            assertEquals(0,inspected.get());assertTrue(inbox(a).jobs.isEmpty());assertTrue(TaskStore.all(a).isEmpty());
+        } finally {clipboard.clearPrimaryClip();}
+    }
+
+    @Test public void dismissingAMediaOfferDoesNotHideTheSameFileOfferOrAnOfferAfterModeSwitch() throws Exception {
+        ClipboardManager clipboard=(ClipboardManager)app.getSystemService(Context.CLIPBOARD_SERVICE);
+        clipboard.setPrimaryClip(ClipData.newPlainText("fixture",FILE_URL));
+        try(ActivityController<MainActivity> c=activity()) {
+            MainActivity a=c.get();c.windowFocusChanged(true);Shadows.shadowOf(Looper.getMainLooper()).idle();
+            assertNotNull(find(a.getWindow().getDecorView(),"查看链接"));
+            dismissClipboard(a);
+            String mediaDigest=a.getPreferences(0).getString("clipboard_seen","");
+            assertEquals(ClipboardOffer.fingerprint(Collections.singletonList(FILE_URL)),mediaDigest);
+            inbox(a).media.add(video(FILE_URL));call(a,"persistInspectionInbox",new Class<?>[0]);
+            click(a.getWindow().getDecorView(),"普通文件");Shadows.shadowOf(Looper.getMainLooper()).idle();
+            assertEquals(View.VISIBLE,field(a,"clipboardNotice",View.class).getVisibility());
+            assertEquals(Collections.singletonList(FILE_URL),field(a,"clipboardUrls",List.class));
+            assertNotNull(find(a.getWindow().getDecorView(),"查看链接"));assertEquals(mediaDigest,a.getPreferences(0).getString("clipboard_seen",""));
+            dismissClipboard(a);
+            assertEquals(ClipboardOffer.fingerprint(Collections.singletonList(FILE_URL),true),a.getPreferences(0).getString("clipboard_seen",""));
+            assertNotEquals(mediaDigest,a.getPreferences(0).getString("clipboard_seen",""));
+            c.pause().resume().windowFocusChanged(true);Shadows.shadowOf(Looper.getMainLooper()).idle();
+            assertEquals(View.GONE,field(a,"clipboardNotice",View.class).getVisibility());
+            assertTrue(inbox(a).jobs.isEmpty());assertTrue(TaskStore.all(a).isEmpty());
+        } finally {clipboard.clearPrimaryClip();}
+    }
+
     @Test public void namedPresetEditorPreviewsPersistsAndAppliesOnlyToEligibleMedia() throws Exception {
         String template="{uploader}-{title}-{id}";
         try(ActivityController<MainActivity> c=activity()) {
@@ -171,6 +219,11 @@ public final class DirectFileIntakeUiTest {
         View content=a.getWindow().getDecorView();TextView original=find(content,"原文件");assertNotNull(original);assertFalse(original.isEnabled());
         assertNotNull(find(content,"下载文件"));assertNull(find(content,"下载视频"));assertNull(find(content,"下载音频"));
         assertNull(find(content,"字幕与封面  ›"));assertNull(contains(content,"画质："));
+        assertNotNull(contains(content,"PDF 文件"));assertNull(contains(content,"application/pdf"));
+    }
+    private static void dismissClipboard(MainActivity a) {
+        Button dismiss=description(a.getWindow().getDecorView(),"忽略剪贴板链接提醒",Button.class);
+        assertNotNull(dismiss);assertTrue(dismiss.performClick());
     }
     private static InspectionInbox inbox(MainActivity a) throws Exception {return field(a,"inspectionInbox",InspectionInbox.class);}
     private static void drain(MainActivity a) throws Exception {

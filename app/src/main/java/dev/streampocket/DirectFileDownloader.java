@@ -64,6 +64,8 @@ public final class DirectFileDownloader {
             attempt.check();
             File completed = completedFile(directory, selected, attempt::cancelled);
             if (completed != null) return completed;
+            File verified = recoverIntegrity(directory, selected, attempt, progress);
+            if (verified != null) return verified;
             File payload = new File(directory, "payload"), control = new File(directory, "payload.aria2");
             File resume = new File(directory, "resume.json");
             boolean partial = payload.exists() || control.exists();
@@ -80,8 +82,8 @@ public final class DirectFileDownloader {
             attempt.check();
             if (current.spec.size == 0) {
                 if (!payload.createNewFile()) throw new IOException("无法创建空文件");
-                markCompleted(directory, selected, payload, attempt);
-                return payload;
+                recordTransferComplete(directory, current.spec, payload, attempt.id, "empty-response");
+                return recoverIntegrity(directory, selected, attempt, progress);
             }
 
             YoutubeDL.getInstance().init(context.getApplicationContext());
@@ -119,27 +121,34 @@ public final class DirectFileDownloader {
             int exit;
             try {
                 for (;;) {
-                    if (attempt.cancelled()) { attempt.stop(); throw new InterruptedIOException("文件下载已停止，断点已保留"); }
+                    // A completed native process is evidence even if Stop arrived in the same tick.
                     try { exit = process.exitValue(); break; }
-                    catch (IllegalThreadStateException running) { Thread.sleep(80); }
+                    catch (IllegalThreadStateException running) {
+                        if (attempt.cancelled()) {
+                            attempt.stop(); terminate(attempt);
+                            // A process that completed before the signal may still have exited successfully.
+                            exit = process.exitValue(); break;
+                        }
+                        Thread.sleep(80);
+                    }
+                }
+                if (exit == 0) {
+                    // No cancellation check or interruptible join may intervene between observing
+                    // successful native exit and recording the still-private verification checkpoint.
+                    recordTransferComplete(directory, current.spec, payload, attempt.id, "aria2-exit-0");
                 }
             } finally {
                 if (attempt.cancelled()) attempt.stop();
                 if (attempt.cancelled() || attempt.running()) terminate(attempt);
                 reader.join(1000);
             }
-            attempt.check();
             if (exit != 0) {
+                attempt.check();
                 String detail;
                 synchronized (diagnostics) { detail = diagnostics.toString(); }
                 throw new IOException("文件下载未完成（内核退出码 " + exit + "），已有数据已保留\n" + CoreRules.cleanLog(detail));
             }
-            if (!payload.isFile() || control.exists()) throw new IOException("下载内核尚未确认文件完整，断点已保留");
-            if (current.spec.size >= 0 && payload.length() != current.spec.size)
-                throw new IOException("完整文件大小与源站信息不一致，原有数据已保留");
-            rejectHtml(payload);
-            markCompleted(directory, selected, payload, attempt);
-            return payload;
+            return recoverIntegrity(directory, selected, attempt, progress);
         } finally {
             attempt.finished = true; attempt.disconnect(); watcher.interrupt();
             if (attempt.running()) terminate(attempt);
@@ -374,6 +383,81 @@ public final class DirectFileDownloader {
             throw new IOException("完整缓存校验失败，文件已保留，未重新发布");
         rejectHtml(payload);
         return payload;
+    }
+
+    /** Only call after this attempt confirms native exit-0 (or an actual empty HTTP response). */
+    static void recordTransferComplete(File directory, DirectFileSpec observed, File payload,
+                                       String attemptId, String confirmation) throws Exception {
+        if (!payload.isFile() || new File(directory, "payload.aria2").exists()
+                || (observed.size >= 0 && payload.length() != observed.size))
+            throw new IOException("下载内核尚未确认文件完整，已有数据已保留");
+        if (!(confirmation.equals("aria2-exit-0") || (confirmation.equals("empty-response")
+                && observed.size == 0 && payload.length() == 0))) throw new IOException("文件完成证明无效");
+        long bytes = payload.length();
+        JSONObject proof = new JSONObject().put("schema", 1).put("confirmation", confirmation)
+                .put("attempt", attemptId).put("source", observed.toJson()).put("bytes", bytes)
+                .put("recordSha256", integrityRecordHash(observed, bytes, attemptId, confirmation));
+        File destination = new File(directory, "integrity-pending.json");
+        File staged = new File(directory, "integrity-pending.json.tmp");
+        try {
+            try (FileOutputStream output = new FileOutputStream(staged)) {
+                output.write(proof.toString().getBytes(StandardCharsets.UTF_8)); output.getFD().sync();
+            }
+            if (!staged.renameTo(destination)) throw new IOException("无法提交待校验记录");
+        } catch (Exception failure) {
+            // A fully written staging record can be read and checked on retry after a rename/crash failure.
+            // Partial or missing records are never enough to bless a bare payload as complete.
+            throw new IOException("传输已结束，但待校验记录未能提交；原文件已保留，恢复存储后可重试核对", failure);
+        }
+    }
+
+    /** Resume verification, without another network request or native transfer. */
+    static File recoverIntegrity(File directory, DirectFileSpec selected, Attempt attempt,
+                                 Consumer<JSONObject> progress) throws Exception {
+        File proof = new File(directory, "integrity-pending.json");
+        File staged = new File(directory, "integrity-pending.json.tmp");
+        if (!proof.exists() && !staged.exists()) return null;
+        File payload = new File(directory, "payload");
+        long bytes;
+        try {
+            File record = proof.exists() ? proof : staged;
+            if (!record.isFile()) throw new IOException("待校验记录不是文件");
+            JSONObject state = readJson(record);
+            DirectFileSpec observed = DirectFileSpec.fromJson(state.optJSONObject("source"));
+            bytes = state.optLong("bytes", -1);
+            String confirmation = state.optString("confirmation"), owner = state.optString("attempt");
+            if (state.optInt("schema") != 1 || owner.isEmpty() || !observed.url.equals(selected.url) || bytes < 0
+                    || !(confirmation.equals("aria2-exit-0") || (confirmation.equals("empty-response") && bytes == 0 && observed.size == 0))
+                    || !integrityRecordHash(observed, bytes, owner, confirmation).equals(state.optString("recordSha256"))
+                    || !payload.isFile() || new File(directory, "payload.aria2").exists()
+                    || payload.length() != bytes || (observed.size >= 0 && bytes != observed.size))
+                throw new IOException("文件身份、大小或完成证明不一致");
+        } catch (Exception invalid) {
+            throw new IOException("待校验记录或文件大小不匹配，原文件已保留，未重新下载或发布", invalid);
+        }
+        emitIntegrity(progress, bytes);
+        attempt.check();
+        rejectHtml(payload);
+        markCompleted(directory, selected, payload, attempt);
+        // complete.json is already durable; leftover pending records cannot invalidate that result.
+        proof.delete(); staged.delete();
+        return payload;
+    }
+
+    private static String integrityRecordHash(DirectFileSpec spec, long bytes, String owner, String confirmation) throws Exception {
+        return fingerprint(spec.url + "\n" + spec.name + "\n" + spec.mime + "\n" + spec.size + "\n" + spec.etag
+                + "\n" + spec.lastModified + "\n" + spec.ranges + "\n" + bytes + "\n" + owner + "\n" + confirmation);
+    }
+
+    private static void emitIntegrity(Consumer<JSONObject> progress, long bytes) {
+        if (progress == null) return;
+        try {
+            progress.accept(new JSONObject().put("status", "downloading").put("phase", "processing")
+                    .put("stageLabel", "正在校验文件").put("detail", "文件传输已完成，正在校验完整缓存")
+                    .put("transferComplete", true).put("progress", -1).put("stageProgress", -1)
+                    .put("downloadedBytes", bytes).put("totalBytes", bytes).put("totalBytesEstimated", false)
+                    .put("speedBytesPerSecond", -1).put("etaSeconds", -1).put("activeConnections", 0));
+        } catch (Exception ignored) { /* A delayed UI update is not a reason to lose a durable checkpoint. */ }
     }
 
     static void markCompleted(File directory, DirectFileSpec selected, File payload, Attempt attempt) throws Exception {

@@ -7,6 +7,7 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.Assert.*;
 
 /** Response fixtures test metadata and saved-file recovery; no native execution is claimed. */
@@ -100,6 +101,65 @@ public final class DirectFileDownloaderTest {
         assertEquals(512, measured.get(0).getLong("speedBytesPerSecond"));
         DirectFileDownloader.parseProgress("Download complete: payload", measured::add);
         assertEquals("Log completion cannot publish 100%", 1, measured.size());
+    }
+
+    @Test public void cancelledIntegrityCheckCanRetryCacheWithoutAnotherTransfer() throws Exception {
+        File work = Files.createTempDirectory("direct-file-pending-").toFile();
+        File directory = new File(work, "direct-http"); assertTrue(directory.mkdir());
+        try {
+            byte[] data = new byte[300000]; Arrays.fill(data, (byte) 65);
+            File payload = new File(directory, "payload"); Files.write(payload.toPath(), data);
+            DirectFileSpec spec = new DirectFileSpec(URL, "large.bin", "application/octet-stream", data.length, "\"completed-source\"", "", true);
+            DirectFileDownloader.recordTransferComplete(directory, spec, payload, "native-fixture", "aria2-exit-0");
+            AtomicInteger checks = new AtomicInteger();
+            DirectFileDownloader.Attempt stopped = new DirectFileDownloader.Attempt("interrupted-hash", () -> checks.incrementAndGet() >= 3);
+            List<JSONObject> progress = new ArrayList<>();
+            try { DirectFileDownloader.recoverIntegrity(directory, spec, stopped, progress::add); fail("Hash was not interrupted"); }
+            catch (InterruptedIOException expected) { assertTrue(expected.getMessage().contains("校验")); }
+            assertTrue(new File(directory, "integrity-pending.json").isFile());
+            assertFalse(new File(directory, "complete.json").exists());
+            assertEquals("processing", progress.get(0).getString("phase"));
+            assertTrue(progress.get(0).getBoolean("transferComplete"));
+            // Null Context makes a second network/native initialization fail: only the checkpoint path is usable.
+            File reused = DirectFileDownloader.download(null, URL, spec, work, "retry-integrity", () -> false, ignored -> {});
+            assertEquals(payload, reused); assertEquals(data.length, reused.length());
+            assertTrue(new File(directory, "complete.json").isFile());
+            assertFalse(new File(directory, "integrity-pending.json").exists());
+        } finally { removeFiles(directory); work.delete(); }
+    }
+
+    @Test public void fullyWrittenStagingProofCanRecoverBeforeRename() throws Exception {
+        File work = Files.createTempDirectory("direct-file-proof-stage-").toFile();
+        File directory = new File(work, "direct-http"); assertTrue(directory.mkdir());
+        try {
+            File payload = new File(directory, "payload"); Files.write(payload.toPath(), new byte[]{1,2,3});
+            DirectFileSpec spec = new DirectFileSpec(URL, "file.bin", "application/octet-stream", 3);
+            DirectFileDownloader.recordTransferComplete(directory, spec, payload, "fixture", "aria2-exit-0");
+            assertTrue(new File(directory, "integrity-pending.json").renameTo(new File(directory, "integrity-pending.json.tmp")));
+            assertEquals(payload, DirectFileDownloader.download(null, URL, spec, work, "retry-staged-proof", () -> false, ignored -> {}));
+            assertTrue(new File(directory, "complete.json").isFile());
+        } finally { removeFiles(directory); work.delete(); }
+    }
+
+    @Test public void corruptProofOrChangedPayloadSizeCannotBecomeComplete() throws Exception {
+        for (boolean corruptProof : new boolean[]{false, true}) {
+            File directory = Files.createTempDirectory("direct-file-invalid-proof-").toFile();
+            try {
+                File payload = new File(directory, "payload"); Files.write(payload.toPath(), new byte[]{1,2,3});
+                DirectFileSpec spec = new DirectFileSpec(URL, "file.bin", "application/octet-stream", 3);
+                DirectFileDownloader.recordTransferComplete(directory, spec, payload, "fixture", "aria2-exit-0");
+                if (corruptProof) Files.write(new File(directory, "integrity-pending.json").toPath(), "{\"schema\":1}".getBytes(StandardCharsets.UTF_8));
+                else Files.write(payload.toPath(), new byte[]{1,2,3,4});
+                try { DirectFileDownloader.recoverIntegrity(directory, spec, new DirectFileDownloader.Attempt("retry", () -> false), ignored -> {}); fail("Invalid completed proof accepted"); }
+                catch (IOException expected) { assertTrue(expected.getMessage().contains("已保留")); }
+                assertTrue(payload.isFile()); assertTrue(new File(directory, "integrity-pending.json").isFile());
+                assertFalse(new File(directory, "complete.json").exists());
+            } finally { removeFiles(directory); }
+        }
+    }
+
+    private static void removeFiles(File directory) {
+        File[] files = directory.listFiles(); if (files != null) for (File file : files) file.delete(); directory.delete();
     }
 
     private static DirectFileDownloader.Probe probe(ArrayDeque<FakeConnection> responses) throws Exception {
