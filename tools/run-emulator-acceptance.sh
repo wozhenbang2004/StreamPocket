@@ -10,18 +10,38 @@ capture_evidence() {
   adb -s "$qa_serial" logcat -d > "$qa_output/logcat.txt" 2>&1 || true
   adb -s "$qa_serial" shell dumpsys audio > "$qa_output/audio-focus.txt" 2>&1 || true
   adb -s "$qa_serial" exec-out run-as dev.streampocket.localtest \
-    tar -C files/qa-captures -cf - upgrade050 startup051 > "$qa_output/captures.tar" 2> "$qa_output/capture-errors.txt" || true
+    tar -C files/qa-captures -cf - upgrade050 startup051 directfile > "$qa_output/captures.tar" 2> "$qa_output/capture-errors.txt" || true
   if [ -s "$qa_output/captures.tar" ]; then
     tar -xf "$qa_output/captures.tar" -C "$qa_output" || true
   fi
 }
 trap capture_evidence EXIT
 
+if adb -s "$qa_serial" shell pm path dev.streampocket.localtest | tr -d '\r' | grep -q '^package:'; then
+  echo 'Acceptance requires a fresh isolated CI emulator installation; existing app data was left untouched.' >&2
+  exit 1
+fi
 adb -s "$qa_serial" install -r app/build/outputs/apk/debug/app-debug.apk
 adb -s "$qa_serial" install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 # Acknowledge the emulator's one-time system navigation tutorial before UI capture.
 adb -s "$qa_serial" shell settings put secure immersive_mode_confirmations confirmed
 adb -s "$qa_serial" logcat -c
+# Ordinary files run first: no media scenario may warm up FFmpeg/Python/aria2.
+adb -s "$qa_serial" shell am force-stop dev.streampocket.localtest
+timeout 150s adb -s "$qa_serial" shell am instrument -w -r -e scenario directfile \
+  dev.streampocket.localtest.test/dev.streampocket.UiAcceptanceInstrumentation \
+  | tee "$qa_output/directfile-instrumentation.txt"
+
+python3 - "$qa_output/directfile-instrumentation.txt" <<'PY'
+from pathlib import Path
+import sys
+result = Path(sys.argv[1]).read_text()
+if 'PASS: directfile;' not in result or 'INSTRUMENTATION_CODE: -1' not in result or 'FAIL at directfile:' in result:
+    raise SystemExit('Real Android/native aria2 file acceptance did not report success; inspect the uploaded evidence.')
+print('Real Android native aria2 HTTPS download, verified cache reuse and public-file read-back acceptance passed.')
+PY
+
+adb -s "$qa_serial" shell am force-stop dev.streampocket.localtest
 timeout 240s adb -s "$qa_serial" shell am instrument -w -r -e scenario upgrade050 \
   dev.streampocket.localtest.test/dev.streampocket.UiAcceptanceInstrumentation \
   | tee "$qa_output/instrumentation.txt"

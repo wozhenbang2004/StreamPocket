@@ -51,6 +51,11 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
                 result.putString("stream","PASS: startup051; real Activity navigation and HOME/reopen; failed check retries on next opening; internal navigation does not repeat; real switch disables/enables checks; metadata is an offline fixture, no APK download or installation; captures="+output.getAbsolutePath());
                 finish(Activity.RESULT_OK,result);return;
             }
+            if("directfile".equals(phase)){
+                verifyDirectFile();
+                result.putString("stream","PASS: directfile; real HTTPS Engine.inspectFile, bundled native aria2 download, pinned bytes/SHA-256, completed-cache reuse with a new process ID, public Downloads save and independent read-back SHA-256, dedicated output cleanup; real ordinary-file and preset-editor screens; licensed Big Buck Bunny QA media; captures="+output.getAbsolutePath());
+                finish(Activity.RESULT_OK,result);return;
+            }
             File media=new File(app.getFilesDir(),"qa-media");check(media.isDirectory()||media.mkdirs(),"media directory");
             File wide=copyAsset(media,"bbb-licensed-20s.mp4"),tall=copyAsset(media,"bbb-portrait-crop-20s.mp4");
             MainActivity main=(MainActivity)startActivitySync(new Intent(app,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();
@@ -100,6 +105,158 @@ public final class UiAcceptanceInstrumentation extends Instrumentation {
             onMain(()->{field(main,"input",android.widget.EditText.class).setText(parsed.url);invoke(main,"showMedia",new Class<?>[]{java.util.List.class},java.util.Collections.singletonList(parsed));});SystemClock.sleep(1000);capture("10-inline-real-artwork-metadata-fixture");
             result.putString("stream","PASS: "+phase+"; real horizontal/portrait decode, first frame, library return"+("before".equals(phase)?"":"; real scrub bitmap, sheet drag/cancel/back, non-executing swipe")+("upgrade050".equals(phase)?"; system PiP retains playback, next media keeps playback and audio focus, returns to fullscreen, releases on exit":"")+"; captures="+output.getAbsolutePath());finish(Activity.RESULT_OK,result);
         }catch(Throwable failure){result.putString("stream","FAIL at "+phase+": "+android.util.Log.getStackTraceString(failure));finish(Activity.RESULT_CANCELED,result);}
+    }
+    /** No network fixture: production inspection, native transfer, cache validation and publication APIs. */
+    private void verifyDirectFile()throws Exception{
+        Context app=getTargetContext().getApplicationContext();
+        String source="https://raw.githubusercontent.com/wozhenbang2004/StreamPocket/e38088e44d88a8a35b787445abac6e177bf176b8/test-media/bbb-licensed-20s.mp4";
+        String expectedSha="e6fa30bb74073423c83b4cd9b88bd6630a31e69cb19ed6dbb9f8ff50328f3a28";
+        long expectedBytes=2216913L,deadline=SystemClock.elapsedRealtime()+110000;
+        BooleanSupplier expired=()->SystemClock.elapsedRealtime()>=deadline;
+        String runId=java.util.UUID.randomUUID().toString();
+        File work=new File(new File(app.getCacheDir(),"qa-directfile"),runId);
+        check(work.mkdirs(),"fresh isolated native download directory");
+        JSONObject evidence=new JSONObject().put("source",source).put("expectedBytes",expectedBytes).put("expectedSha256",expectedSha)
+                .put("network","Real HTTPS requests; no inspection, transport or native-process fixture")
+                .put("license","Big Buck Bunny QA excerpt; (c) 2008 Blender Foundation; Creative Commons Attribution 3.0")
+                .put("licenseSource","https://peach.blender.org/about/")
+                .put("supportedAbis",new JSONArray(java.util.Arrays.asList(android.os.Build.SUPPORTED_ABIS)))
+                .put("uiScope","Real production ordinary-file screen with network-inspected metadata; unsaved labelled QA preset in the real editor");
+        Uri saved=null;MainActivity main=null;boolean verified=false;
+        try{
+            check(java.util.Arrays.asList(android.os.Build.SUPPORTED_ABIS).contains("x86_64"),"directfile scenario requires the isolated CI x86_64 APK/emulator");
+            File packages=new File(app.getNoBackupFilesDir(),"youtubedl-android/packages");
+            check(!new File(packages,"python").exists()&&!new File(packages,"aria2c").exists(),
+                    "fresh installation has no pre-extracted Python/aria2 runtime; file download must initialize its own dependencies");
+            evidence.put("freshFileFirstRuntime",true);
+            Engine.Media media=new Engine(app).inspectFile(source,expired);
+            check(media.directFile()&&media.file!=null,"real Engine inspection selects ordinary-file mode");
+            check(source.equals(media.url)&&source.equals(media.file.url),"the selected file retains the pinned source URL");
+            check("bbb-licensed-20s.mp4".equals(media.file.name),"the real response resolves the expected file name");
+            check(media.file.size==expectedBytes,"real response size matches the pinned licensed file");
+            evidence.put("inspection",media.file.toJson());
+
+            AtomicInteger nativeStarts=new AtomicInteger();
+            File downloaded=DirectFileDownloader.download(app,source,media.file,work,"qa-directfile-"+runId,expired,patch->{
+                if("正在下载文件".equals(patch.optString("stageLabel")))nativeStarts.incrementAndGet();
+            });
+            check(nativeStarts.get()>0,"first transfer reaches the real native-process execution path");
+            evidence.put("nativeAria2Version",nativeAria2Version(app));
+            FileDigest transfer=readDigest(new java.io.FileInputStream(downloaded));
+            check(transfer.bytes==expectedBytes&&expectedSha.equals(transfer.sha256),"native output matches the pinned complete file bytes and SHA-256");
+            File cache=new File(work,"direct-http"),marker=new File(cache,"complete.json");
+            check(marker.isFile()&&!new File(cache,"payload.aria2").exists(),"native completion is confirmed and journaled without a remaining aria2 control file");
+            long lastModified=downloaded.lastModified();AtomicInteger cacheCallbacks=new AtomicInteger();
+            File reused=DirectFileDownloader.download(app,source,media.file,work,"qa-directfile-cache-"+runId,expired,patch->cacheCallbacks.incrementAndGet());
+            check(downloaded.getCanonicalFile().equals(reused.getCanonicalFile())&&reused.lastModified()==lastModified,
+                    "a second process identity reuses the same verified completed payload");
+            check(cacheCallbacks.get()==0,"completed-cache reuse returns before any new probe or native transfer");
+            evidence.put("nativeDownload",new JSONObject().put("bytes",transfer.bytes).put("sha256",transfer.sha256).put("nativeStartEvents",nativeStarts.get()))
+                    .put("cacheReuse",new JSONObject().put("newProcessId",true).put("samePayload",true).put("noNewTransferCallbacks",true));
+
+            String publicName="StreamPocket-QA-"+runId+".mp4";
+            MediaExporter.Result published=MediaExporter.saveFile(app,reused,publicName,media.file.mime,expired,
+                    new DownloadLocation.Target(null,DownloadLocation.DEFAULT_LABEL));
+            saved=published.uri;
+            FileDigest publicRead=readDigest(app.getContentResolver().openInputStream(saved));
+            check(publicRead.bytes==expectedBytes&&expectedSha.equals(publicRead.sha256),"public Downloads URI independently reads back the pinned bytes and SHA-256");
+            check(published.bytes==expectedBytes&&expectedSha.equals(published.sha256),"publication receipt agrees with the independent public read-back");
+            JSONObject publicMetadata=publicFileMetadata(app,saved);
+            String expectedPath=android.os.Environment.DIRECTORY_DOWNLOADS+"/StreamPocket";
+            check(publicName.equals(publicMetadata.getString("name")),"public file keeps its dedicated QA output name");
+            check(published.mime.equals(publicMetadata.getString("mime")),"published MIME matches the actual public MediaStore row");
+            check(publicMetadata.getLong("bytes")==expectedBytes&&publicMetadata.getInt("pending")==0,"saved file is published, complete and not pending");
+            check(expectedPath.equals(publicMetadata.getString("relativePath"))||(expectedPath+"/").equals(publicMetadata.getString("relativePath")),
+                    "ordinary file is actually published in default Downloads/StreamPocket");
+            evidence.put("publicOutput",publicMetadata.put("uri",saved.toString()).put("readBackSha256",publicRead.sha256));
+
+            app.getSharedPreferences("config",0).edit().putString("appearance_theme","light").commit();
+            main=(MainActivity)startActivitySync(new Intent(app,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            MainActivity screen=main;
+            waitUntil(screen::hasWindowFocus,10000,"real main activity has focus for the file-mode capture");
+            onMain(()->{
+                Field mode=MainActivity.class.getDeclaredField("fileIntake");mode.setAccessible(true);mode.setBoolean(screen,true);
+                invoke(screen,"showTab",new Class<?>[]{String.class},"new");
+                field(screen,"input",android.widget.EditText.class).setText("合法 QA 媒体 · Big Buck Bunny / CC BY 3.0\n"+source);
+            });
+            check(onMainValue(()->field(screen,"input",android.widget.EditText.class).getContentDescription().toString().startsWith("文件链接")),
+                    "ordinary-file input is the real production mode");
+            SystemClock.sleep(500);capture("01-ordinary-file-mode-licensed-qa-link");
+            onMain(()->invoke(screen,"showMedia",new Class<?>[]{java.util.List.class},java.util.Collections.singletonList(media)));
+            SystemClock.sleep(600);capture("02-real-network-inspected-file");
+            DownloadPresets.Preset sample=new DownloadPresets.Preset("qa-directfile","合法 QA 媒体样例（未保存）","best",false,false,
+                    SubtitleChoices.PREFER_ORIGINAL,java.util.Collections.emptyList(),NamingTemplate.DEFAULT);
+            onMain(()->invoke(screen,"editPreset",new Class<?>[]{DownloadPresets.Preset.class},sample));
+            waitUntil(()->activeWindowContains("文件命名模板"),10000,"the real preset editor opens with its template input");
+            SystemClock.sleep(500);capture("03-real-preset-editor-unsaved-qa-sample");
+            sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);
+            waitUntil(screen::hasWindowFocus,5000,"Back dismisses the unsaved preset editor");
+            check(!expired.getAsBoolean(),"directfile verification completes within the bounded scenario");
+            verified=true;evidence.put("verified",true);
+        }catch(Exception|AssertionError failure){
+            evidence.put("verified",false).put("failure",android.util.Log.getStackTraceString(failure));throw failure;
+        }finally{
+            boolean publicRemoved=saved==null;
+            if(saved!=null)try{publicRemoved=MediaExporter.delete(app,saved);}catch(Exception cleanup){evidence.put("publicCleanupError",cleanup.toString());}
+            boolean cacheRemoved=deleteQaTree(work);
+            evidence.put("dedicatedPublicOutputRemoved",publicRemoved).put("dedicatedNativeCacheRemoved",cacheRemoved);
+            boolean uiClosed=true;MainActivity screen=main;
+            if(screen!=null)try{onMain(()->{if(!screen.isFinishing())screen.finish();});}
+            catch(Exception cleanup){uiClosed=false;evidence.put("uiCleanupError",cleanup.toString());}
+            evidence.put("passed",verified&&publicRemoved&&cacheRemoved&&uiClosed);
+            try(FileOutputStream report=new FileOutputStream(new File(output,"directfile-evidence.json"))){report.write(evidence.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+            if(verified)check(publicRemoved&&cacheRemoved&&uiClosed,"only the dedicated QA public output and native cache are cleaned up and the QA screen closes");
+        }
+    }
+    private String nativeAria2Version(Context app)throws Exception{
+        // Inspect only after production download performed first-use extraction.
+        // No Engine/FFmpeg/YoutubeDL/Aria2 warm-up is performed by this QA path.
+        File binary=new File(app.getApplicationInfo().nativeLibraryDir,"libaria2c.so");
+        File packages=new File(app.getNoBackupFilesDir(),"youtubedl-android/packages");
+        File certificate=new File(packages,"python/usr/etc/tls/cert.pem");
+        check(binary.isFile()&&binary.canExecute(),"Maven x86_64 aria2 library is installed as an executable native component");
+        check(certificate.isFile()&&certificate.length()>0,"the production wrapper extracted its TLS trust bundle");
+        ProcessBuilder command=new ProcessBuilder(binary.getAbsolutePath(),"--version").redirectErrorStream(true);
+        command.environment().put("LD_LIBRARY_PATH",new File(packages,"python/usr/lib")+":"+new File(packages,"ffmpeg/usr/lib")+":"+new File(packages,"aria2c/usr/lib"));
+        Process process=command.start();
+        try{
+            check(process.waitFor(5,TimeUnit.SECONDS),"bundled x86_64 aria2 version probe exits within five seconds");
+            java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();byte[] block=new byte[1024];int count;
+            try(InputStream input=process.getInputStream()){while((count=input.read(block))!=-1){check(bytes.size()+count<=16384,"bounded aria2 version output");bytes.write(block,0,count);}}
+            String version=bytes.toString("UTF-8");
+            check(process.exitValue()==0&&version.toLowerCase(java.util.Locale.ROOT).contains("aria2"),"bundled aria2 executes successfully on this Android ABI: "+version);
+            return version.trim();
+        }finally{process.destroy();if(!process.waitFor(1,TimeUnit.SECONDS))process.destroyForcibly();}
+    }
+    private JSONObject publicFileMetadata(Context app,Uri uri)throws Exception{
+        String[] columns={android.provider.MediaStore.MediaColumns.DISPLAY_NAME,android.provider.MediaStore.MediaColumns.SIZE,
+                android.provider.MediaStore.MediaColumns.RELATIVE_PATH,android.provider.MediaStore.MediaColumns.IS_PENDING,
+                android.provider.MediaStore.MediaColumns.MIME_TYPE};
+        try(android.database.Cursor row=app.getContentResolver().query(uri,columns,null,null,null)){
+            check(row!=null&&row.moveToFirst(),"published file has a readable MediaStore row");
+            return new JSONObject().put("name",row.getString(0)).put("bytes",row.getLong(1)).put("relativePath",row.getString(2)).put("pending",row.getInt(3)).put("mime",row.getString(4));
+        }
+    }
+    private static final class FileDigest{final long bytes;final String sha256;FileDigest(long bytes,String sha256){this.bytes=bytes;this.sha256=sha256;}}
+    private static FileDigest readDigest(InputStream stream)throws Exception{
+        check(stream!=null,"readable private/public output stream");java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
+        long bytes=0;byte[] block=new byte[32768];int count;
+        try(InputStream input=stream){while((count=input.read(block))!=-1){digest.update(block,0,count);bytes+=count;}}
+        StringBuilder hex=new StringBuilder();for(byte value:digest.digest())hex.append(String.format(java.util.Locale.ROOT,"%02x",value&255));
+        return new FileDigest(bytes,hex.toString());
+    }
+    private boolean activeWindowContains(String expected){
+        android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+        if(root==null)return false;try{return nodeContains(root,expected);}finally{root.recycle();}
+    }
+    private static boolean nodeContains(android.view.accessibility.AccessibilityNodeInfo node,String expected){
+        if(expected.contentEquals(node.getText()==null?"":node.getText())||expected.contentEquals(node.getContentDescription()==null?"":node.getContentDescription()))return true;
+        for(int i=0;i<node.getChildCount();i++){android.view.accessibility.AccessibilityNodeInfo child=node.getChild(i);if(child!=null)try{if(nodeContains(child,expected))return true;}finally{child.recycle();}}
+        return false;
+    }
+    private static boolean deleteQaTree(File file){
+        boolean removed=true;File[] children=file.listFiles();if(children!=null)for(File child:children)removed=deleteQaTree(child)&&removed;
+        return (!file.exists()||file.delete())&&removed;
     }
     /** Real Android lifecycle and controls, with only the metadata transport replaced. */
     private void verifyStartupUpdates()throws Exception{

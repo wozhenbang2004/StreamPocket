@@ -143,7 +143,7 @@ public class StorageLocationTest {
             Uri uri=extras.getParcelable("uri");Bundle result=new Bundle();
             try {
                 String id=DocumentsContract.getDocumentId(uri);
-                if("android:createDocument".equals(method))result.putParcelable("uri",DocumentsContract.buildDocumentUriUsingTree(uri,createDocument(id,extras.getString("mimeType"),extras.getString("_display_name"))));
+                if("android:createDocument".equals(method))result.putParcelable("uri",DocumentsContract.buildDocumentUriUsingTree(uri,createDocument(id,extras.getString(DocumentsContract.Document.COLUMN_MIME_TYPE),extras.getString("_display_name"))));
                 else if("android:deleteDocument".equals(method))deleteDocument(id);
                 else if("android:renameDocument".equals(method))result.putParcelable("uri",DocumentsContract.buildDocumentUriUsingTree(uri,renameDocument(id,extras.getString("_display_name"))));
                 else if("android:isChildDocument".equals(method)){Uri child=extras.getParcelable("targetUri");result.putBoolean("result",isChildDocument(id,DocumentsContract.getDocumentId(child)));}

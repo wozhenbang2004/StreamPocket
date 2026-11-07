@@ -24,10 +24,19 @@ jobs:
           javac -Xlint:all -d "$RUNNER_TEMP/streampocket-reliability" \
             app/src/main/java/dev/streampocket/CoreUpdate.java \
             app/src/main/java/dev/streampocket/DownloadProcessStopper.java \
+            app/src/main/java/dev/streampocket/DirectFileRules.java \
+            app/src/main/java/dev/streampocket/NamingTemplate.java \
+            app/src/main/java/dev/streampocket/DownloadRecovery.java \
+            app/src/test/java/dev/streampocket/DirectFileRulesSelfTest.java \
+            app/src/test/java/dev/streampocket/NamingTemplateSelfTest.java \
+            app/src/test/java/dev/streampocket/DownloadRecoverySelfTest.java \
             app/src/test/java/dev/streampocket/CoreUpdateSelfTest.java \
             app/src/test/java/dev/streampocket/DownloadProcessStopperSelfTest.java
           java -cp "$RUNNER_TEMP/streampocket-reliability" dev.streampocket.CoreUpdateSelfTest
           java -cp "$RUNNER_TEMP/streampocket-reliability" dev.streampocket.DownloadProcessStopperSelfTest
+          java -cp "$RUNNER_TEMP/streampocket-reliability" dev.streampocket.DirectFileRulesSelfTest
+          java -cp "$RUNNER_TEMP/streampocket-reliability" dev.streampocket.NamingTemplateSelfTest
+          java -cp "$RUNNER_TEMP/streampocket-reliability" dev.streampocket.DownloadRecoverySelfTest
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools

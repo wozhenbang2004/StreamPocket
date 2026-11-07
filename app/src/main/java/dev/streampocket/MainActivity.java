@@ -72,6 +72,10 @@ public final class MainActivity extends Activity {
     private InspectionBatch.Inspector inspector;
     private InspectionBatch.Inspector fileInspector;
     private final ArrayList<Engine.Media> pendingBatch=new ArrayList<>();
+    private final ArrayList<Engine.Quality> pendingBatchQualities=new ArrayList<>();
+    private volatile long archiveGeneration;
+    private boolean archiveChecking;
+    private PocketDialog archiveDialog;
     private boolean parsing=false, loginOpening=false, taskMenuOpen=false;
     private String cookieImportPlatform;
     private String loginRecoveryId, loginRecoveryType;
@@ -485,17 +489,57 @@ public final class MainActivity extends Activity {
 
     private void enqueueBatch(List<Engine.Media> media) {
         if(media.isEmpty())return;
+        if(archiveChecking){toast("正在检查下载记录，请稍候或取消");return;}
+        if(!pendingBatch.isEmpty()){toast("正在等待保存权限，请先完成当前操作");return;}
+        if(isFinishing()||isDestroyed())return;
+        final List<Engine.Media> batch=new ArrayList<>();
+        final List<Engine.Quality> qualities=new ArrayList<>();
         try {
-            int duplicates=0;
-            for(Engine.Media item:media)if(!ContentArchiveStore.find(this,item,selectedQuality(item)).isEmpty())duplicates++;
-            if(duplicates>0){
-                new PocketDialog.Builder(this).setTitle("其中 "+duplicates+" 项以前保存过")
-                        .setMessage("下载归档会保留以前的保存记录。你仍可重新下载，例如原文件已移除，或这次选择了另一种格式。")
-                        .setNegativeButton("返回检查",null).setPositiveButton("仍然下载",(d,w)->enqueueBatchConfirmed(media)).show();
-                return;
+            for(Engine.Media item:new ArrayList<>(media)){
+                // An old click from a row already submitted or replaced cannot create another task.
+                if(!inspectedMedia.contains(item))continue;
+                qualities.add(Engine.Quality.fromJson(new JSONObject(selectedQuality(item).toJson().toString())));
+                batch.add(Engine.Media.fromJson(new JSONObject(item.toJson().toString())));
             }
-        }catch(Exception unavailable){toast("历史归档暂不可用，本次下载仍可继续");}
-        enqueueBatchConfirmed(media);
+        }catch(Exception invalid){showMessage("暂时无法加入队列",friendly(invalid));return;}
+        if(batch.isEmpty())return;
+        final long generation=++archiveGeneration;archiveChecking=true;
+        archiveDialog=new PocketDialog.Builder(this).setTitle("检查下载记录")
+                .setMessage("正在检查这批内容以前是否保存过…")
+                .setNegativeButton("取消",(d,w)->cancelArchiveCheck(generation))
+                .setOnCancelListener(d->cancelArchiveCheck(generation)).show();
+        try{io.execute(()->{
+            int duplicates=0;boolean unavailable=false;
+            try{
+                for(int i=0;i<batch.size();i++){
+                    if(generation!=archiveGeneration||Thread.currentThread().isInterrupted())return;
+                    if(!ContentArchiveStore.find(this,batch.get(i),qualities.get(i)).isEmpty())duplicates++;
+                }
+            }catch(Exception failure){unavailable=true;}
+            final int found=duplicates;final boolean failed=unavailable;
+            main.post(()->{
+                if(generation!=archiveGeneration||!archiveChecking)return;
+                if(isFinishing()||isDestroyed()){cancelArchiveCheck(generation);return;}
+                if(archiveDialog!=null){archiveDialog.dismiss();archiveDialog=null;}
+                if(failed)toast("历史归档暂不可用，本次下载仍可继续");
+                if(found>0&&!failed){
+                    archiveDialog=new PocketDialog.Builder(this).setTitle("其中 "+found+" 项以前保存过")
+                            .setMessage("下载归档会保留以前的保存记录。你仍可重新下载，例如原文件已移除，或这次选择了另一种格式。")
+                            .setNegativeButton("返回检查",(d,w)->cancelArchiveCheck(generation))
+                            .setOnCancelListener(d->cancelArchiveCheck(generation))
+                            .setPositiveButton("仍然下载",(d,w)->{
+                                if(generation!=archiveGeneration||!archiveChecking||isFinishing()||isDestroyed())return;
+                                cancelArchiveCheck(generation);enqueueBatchConfirmed(batch,qualities);
+                            }).show();
+                }else{cancelArchiveCheck(generation);enqueueBatchConfirmed(batch,qualities);}
+            });
+        });}catch(RejectedExecutionException stopped){cancelArchiveCheck(generation);}
+    }
+
+    private void cancelArchiveCheck(long generation) {
+        if(generation!=archiveGeneration)return;
+        archiveGeneration++;archiveChecking=false;
+        PocketDialog dialog=archiveDialog;archiveDialog=null;if(dialog!=null)dialog.dismiss();
     }
 
     private Engine.Quality selectedQuality(Engine.Media media) {
@@ -503,14 +547,14 @@ public final class MainActivity extends Activity {
         return choices.get(Math.max(0,Math.min(qualitySelections.getOrDefault(InspectionBatch.key(media),0),choices.size()-1)));
     }
 
-    private void enqueueBatchConfirmed(List<Engine.Media> media) {
+    private void enqueueBatchConfirmed(List<Engine.Media> media,List<Engine.Quality> qualities) {
         if(media.isEmpty())return;
         if(needsStoragePermission()){
-            pendingQueueAction=null;pendingQueueIds.clear();pendingBatch.clear();pendingBatch.addAll(media);requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},STORAGE_REQUEST);return;
+            pendingQueueAction=null;pendingQueueIds.clear();pendingBatch.clear();pendingBatch.addAll(media);
+            pendingBatchQualities.clear();pendingBatchQualities.addAll(qualities);
+            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},STORAGE_REQUEST);return;
         }
         try {
-            List<Engine.Quality> qualities=new ArrayList<>();
-            for(Engine.Media m:media)qualities.add(selectedQuality(m));
             ArrayList<String> ids=TaskStore.createBatch(this,media,qualities);
             Intent request=new Intent(this,DownloadService.class).setAction(DownloadService.ENQUEUE).putStringArrayListExtra("ids",ids);
             try {if(Build.VERSION.SDK_INT>=26)startForegroundService(request);else startService(request);}
@@ -536,7 +580,7 @@ public final class MainActivity extends Activity {
         boolean starts=DownloadService.ENQUEUE.equals(action)||DownloadService.RESUME.equals(action)
                 ||DownloadService.RETRY_FAILED.equals(action)||DownloadService.RESUME_QUEUE.equals(action);
         if(starts)for(String id:ids){JSONObject task=TaskStore.get(this,id);if(task!=null&&needsStoragePermission(task)){
-            pendingBatch.clear();pendingQueueAction=action;pendingQueueIds.clear();pendingQueueIds.addAll(ids);
+            pendingBatch.clear();pendingBatchQualities.clear();pendingQueueAction=action;pendingQueueIds.clear();pendingQueueIds.addAll(ids);
             requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},STORAGE_REQUEST);return;
         }}
         try {
@@ -583,7 +627,10 @@ public final class MainActivity extends Activity {
             JSONObject media=task.optJSONObject("media");String poster=media==null?"":media.optString("thumbnail");if(poster.isEmpty()&&"completed".equals(status))poster=task.optString("uri");
             FrameLayout thumbnail=new FrameLayout(this);thumbnail.setBackground(shape(palette.control,10,0));thumbnail.setClipToOutline(true);
             ImageView cover=cover(poster,id,64,64);thumbnail.addView(cover,new FrameLayout.LayoutParams(-1,-1));
-            boolean playable=task.optString("mime").startsWith("video/")||task.optString("mime").startsWith("audio/");
+            JSONObject taskMedia=task.optJSONObject("media");String taskKind=task.optString("kind",taskMedia==null?"":taskMedia.optString("kind"));
+            boolean directFile="direct-file".equals(taskKind)||(taskMedia!=null&&"direct-file".equals(taskMedia.optString("kind")));
+            String mime=task.optString("mime");boolean legacyMedia=mime.isEmpty()&&(taskKind.isEmpty()||"media".equals(taskKind))&&(taskMedia==null||!taskMedia.optBoolean("album"));
+            boolean playable=!directFile&&(mime.startsWith("video/")||mime.startsWith("audio/")||legacyMedia);
             String primary="completed".equals(status)?(playable?"播放":"打开"):"paused".equals(status)?(held?"排队":"继续"):"pausing".equals(status)?"暂停中":"cancelling".equals(status)?"取消中":active?(pauseable?"暂停":"处理中"):"重试";
             Button action=quietButton(primary);action.setTextColor(Color.WHITE);action.setTextSize(12);action.setPadding(0,0,0,0);action.setMinWidth(0);action.setBackground(new android.graphics.drawable.InsetDrawable(shape(0xB3171A1C,18,0),dp(6)));
             action.setEnabled((!active||pauseable)&&!"pausing".equals(status)&&!"cancelling".equals(status)&&!TaskStore.heldByQueue(task));action.setContentDescription(primary+"："+task.optString("title"));action.setVisibility(action.isEnabled()&&!queueSelecting?View.VISIBLE:View.GONE);
@@ -1469,9 +1516,9 @@ public final class MainActivity extends Activity {
         if(request==MOVE_STORAGE_REQUEST){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)moveDownloadedFiles();else showMessage("没有移动文件","请允许保存文件所需的存储权限，原文件保持不变。");return;}
         if(request==STORAGE_REQUEST) {
             String action=pendingQueueAction;List<String> ids=new ArrayList<>(pendingQueueIds);pendingQueueAction=null;pendingQueueIds.clear();
-            if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){if(action!=null)requestQueueCommand(action,ids);else if(!pendingBatch.isEmpty()){List<Engine.Media> batch=new ArrayList<>(pendingBatch);pendingBatch.clear();enqueueBatchConfirmed(batch);}}
+            if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){if(action!=null)requestQueueCommand(action,ids);else if(!pendingBatch.isEmpty()){List<Engine.Media> batch=new ArrayList<>(pendingBatch);List<Engine.Quality> qualities=new ArrayList<>(pendingBatchQualities);pendingBatch.clear();pendingBatchQualities.clear();enqueueBatchConfirmed(batch,qualities);}}
             else showMessage("没有开始下载","Android 7–9 需要存储权限才能把视频保存到公共下载目录。链接已保留。");
-            pendingBatch.clear();
+            pendingBatch.clear();pendingBatchQualities.clear();
         }
     }
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);readShare(intent);}
@@ -1504,7 +1551,7 @@ public final class MainActivity extends Activity {
         if(libraryView!=null)libraryState=libraryView.saveUiState();if(libraryState!=null)state.putBundle("library_state",libraryState);
         try{org.json.JSONArray media=new org.json.JSONArray();for(Engine.Media m:inspectedMedia)media.put(m.toJson());state.putString("inspection_media",media.toString());}catch(Exception ignored){}
     }
-    @Override protected void onDestroy(){super.onDestroy();foreground=false;fileMoveCancelled.set(true);fileIo.shutdownNow();if(clipboardReview!=null)clipboardReview.dismiss();main.removeCallbacks(checkClipboard);main.removeCallbacks(previewLinks);main.removeCallbacks(poll);main.removeCallbacks(commitRemovals);if(!isChangingConfigurations())commitPendingRemovals(false);pendingRemoval.clear();if(libraryView!=null)libraryView.release();if(artwork!=null)artwork.release();++parseGeneration;engine.cancelInspect();if(collectionEngine!=null)collectionEngine.cancelInspect();io.shutdownNow();}
+    @Override protected void onDestroy(){cancelArchiveCheck(archiveGeneration);super.onDestroy();foreground=false;fileMoveCancelled.set(true);fileIo.shutdownNow();if(clipboardReview!=null)clipboardReview.dismiss();main.removeCallbacks(checkClipboard);main.removeCallbacks(previewLinks);main.removeCallbacks(poll);main.removeCallbacks(commitRemovals);if(!isChangingConfigurations())commitPendingRemovals(false);pendingRemoval.clear();if(libraryView!=null)libraryView.release();if(artwork!=null)artwork.release();++parseGeneration;engine.cancelInspect();if(collectionEngine!=null)collectionEngine.cancelInspect();io.shutdownNow();}
 
     @Override public void onBackPressed(){if("queue".equals(tab)&&queueSelecting){queueSelecting=false;queueSelection.clear();refreshQueue(true);return;}super.onBackPressed();}
 

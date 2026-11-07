@@ -31,7 +31,13 @@ public final class Content040UiTest {
         try(ActivityController<MainActivity> c=Robolectric.buildActivity(MainActivity.class).create().start().resume().visible()){
             MainActivity a=c.get();Engine.Media video=video();Engine.Media album=video();album.id="album";album.title="离线图集样例";album.album=true;album.imageCount=3;album.hasAudio=false;album.qualities.clear();album.qualities.add(new Engine.Quality("images","全部图片 · ZIP","best"));
             media(a).add(video);media(a).add(album);call(a,"showTab",new Class<?>[]{String.class},"new");
-            assertNotNull(find(a.getWindow().getDecorView(),"保存图集"));assertNotNull(find(a.getWindow().getDecorView(),"批量设置"));
+            assertNotNull(find(a.getWindow().getDecorView(),"保存图集"));assertNotNull(find(a.getWindow().getDecorView(),"下载预设"));
+            call(a,"showPresetPicker",new Class<?>[0]);PocketDialog presets=(PocketDialog)ShadowDialog.getLatestDialog();
+            int batch=-1;for(int n=0;n<presets.getListView().getAdapter().getCount();n++)
+                if(String.valueOf(presets.getListView().getAdapter().getItem(n)).equals("选择部分内容设置画质"))batch=n;
+            assertTrue("Existing partial-batch controls remain reachable from presets",batch>=0);
+            presets.getListView().performItemClick(null,batch,batch);PocketDialog selection=(PocketDialog)ShadowDialog.getLatestDialog();
+            assertEquals(2,selection.getListView().getCount());assertTrue(TaskStore.all(a).isEmpty());selection.dismiss();
             call(a,"showAttachments",new Class<?>[]{Engine.Media.class},video);PocketDialog panel=(PocketDialog)ShadowDialog.getLatestDialog();
             panel.getListView().performItemClick(null,0,0);panel.getListView().performItemClick(null,1,1);
             capture(panel.getWindow().getDecorView(),"attachments-fixture");panel.getButton(PocketDialog.BUTTON_POSITIVE).performClick();
