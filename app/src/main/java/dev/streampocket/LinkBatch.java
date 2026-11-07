@@ -14,21 +14,31 @@ public final class LinkBatch {
     private static final Pattern LINK = Pattern.compile(
             "(?i)(?:https?://|(?<![\\w.@/])(?:(?:www|m|mobile|music|v|vm|vt|old|np|clips|player|go)\\.)?(?:" + VideoPlatform.shareDomainPattern()
                     + ")/)[^\\s<>\\\"『』「」。，！？；、,;]+?(?=https?://|[\\s<>\\\"『』「」。，！？；、,;]|$)");
+    private static final Pattern FILE_LINK = Pattern.compile("(?i)https?://[^\\s<>\\\"『』「」]+");
     private static final Pattern TWEET = Pattern.compile("/(?:[^/]+/status|i/web/status)/(\\d+)(/(?:video|photo)/\\d+)?(?:/.*)?");
 
     public static Result parse(String text) {
-        if (text == null || text.trim().isEmpty()) throw new IllegalArgumentException("请先粘贴视频链接或分享文案。");
+        return parse(text, false);
+    }
+
+    /** Direct files retain every signed query byte and bypass video aliases. */
+    public static Result parseFiles(String text) {
+        return parse(text, true);
+    }
+
+    private static Result parse(String text, boolean files) {
+        if (text == null || text.trim().isEmpty()) throw new IllegalArgumentException(files ? "请先粘贴文件链接。" : "请先粘贴视频链接或分享文案。");
         if (text.length() > 65536) throw new IllegalArgumentException("分享文案过长，请分批粘贴（每批最多 100 个链接）。");
         LinkedHashMap<String, String> unique = new LinkedHashMap<>();
         List<String> invalid = new ArrayList<>();
         int duplicates = 0;
-        Matcher match = LINK.matcher(text);
+        Matcher match = (files ? FILE_LINK : LINK).matcher(text);
         while (match.find()) {
             String candidate = match.group();
             if (!candidate.regionMatches(true, 0, "http", 0, 4)) candidate = "https://" + candidate;
             try {
-                String url = CommonVideoLinks.normalizeVideo(candidate);
-                String key = identity(url);
+                String url = files ? DirectFileRules.normalizeUrl(candidate) : CommonVideoLinks.normalizeVideo(candidate);
+                String key = files ? url : identity(url);
                 if (unique.containsKey(key)) duplicates++;
                 else unique.put(key, url);
                 if (unique.size() > MAX_LINKS) throw new TooManyLinks();
@@ -37,8 +47,8 @@ public final class LinkBatch {
             } catch (IllegalArgumentException bad) { invalid.add(candidate); }
         }
         if (unique.isEmpty()) throw new IllegalArgumentException(invalid.isEmpty()
-                ? "未找到视频链接。可一次粘贴多个链接或包含链接的分享文案。"
-                : "未找到公开网站的有效视频链接，不支持本地地址或含账号密码的链接。");
+                ? (files ? "未找到文件链接。请按行粘贴完整的 HTTP 或 HTTPS 地址。" : "未找到视频链接。可一次粘贴多个链接或包含链接的分享文案。")
+                : (files ? "未找到有效文件链接，不支持本地地址或含账号密码的链接。" : "未找到公开网站的有效视频链接，不支持本地地址或含账号密码的链接。"));
         return new Result(new ArrayList<>(unique.values()), invalid, duplicates);
     }
 

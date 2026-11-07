@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.Context;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -23,7 +24,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** User-started foreground queue. Process-death recovery is an explicit retry. */
+/** User-started foreground queue with bounded recovery when the user returns to the app. */
 public final class DownloadService extends Service {
     public static final String ENQUEUE = "dev.streampocket.ENQUEUE";
     public static final String CANCEL = "dev.streampocket.CANCEL";
@@ -34,9 +35,12 @@ public final class DownloadService extends Service {
     public static final String RETRY_FAILED = "dev.streampocket.RETRY_FAILED";
     public static final String MOVE_NEXT = "dev.streampocket.MOVE_NEXT";
     public static final String MOVE_LAST = "dev.streampocket.MOVE_LAST";
+    private static final String RECOVER = "dev.streampocket.RECOVER";
     private static final String CHANNEL = "downloads";
     private static final int NOTIFICATION = 88;
     private static final DownloadProcessStopper PROCESS_STOPS = new DownloadProcessStopper();
+    private static final Set<String> PROCESS_OWNED = new HashSet<>();
+    private static final Object RECOVERY_START = new Object();
     private final Object lock = new Object();
     private final ArrayDeque<String> queue = new ArrayDeque<>();
     private final Set<String> cancelled = new HashSet<>();
@@ -52,6 +56,26 @@ public final class DownloadService extends Service {
     private DownloadProcessStopper processStops = PROCESS_STOPS;
     private int lastStartId;
     private long lastProgressWrite;
+
+    /** Call only from a visible activity. This does not bypass force-stop or background-start restrictions. */
+    public static int recover(Context context) {
+        if (!context.getSharedPreferences("config", MODE_PRIVATE).getBoolean("download_auto_recover", true)) return 0;
+        synchronized (RECOVERY_START) {
+            Set<String> owned;
+            synchronized (PROCESS_OWNED) { owned = new HashSet<>(PROCESS_OWNED); }
+            List<String> ids = TaskStore.recoverPending(context, owned);
+            if (ids.isEmpty()) return 0;
+            Intent request = new Intent(context, DownloadService.class).setAction(RECOVER)
+                    .putStringArrayListExtra("ids", new java.util.ArrayList<>(ids));
+            try {
+                if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(request); else context.startService(request);
+                return ids.size();
+            } catch (RuntimeException unavailable) {
+                TaskStore.recoveryStartFailed(context, ids);
+                return 0;
+            }
+        }
+    }
 
     @Override public void onCreate() {
         super.onCreate(); TaskStore.init(this);
@@ -76,6 +100,9 @@ public final class DownloadService extends Service {
                     if (task != null && "queued".equals(task.optString("status")))
                         TaskStore.markStopped(this, item, "interrupted", "下载服务正在停止，点击重试可继续");
                 }
+            } else if (RECOVER.equals(intent.getAction())) {
+                java.util.ArrayList<String> rejected = intent.getStringArrayListExtra("ids");
+                if (rejected != null) TaskStore.recoveryStartFailed(this, rejected);
             }
             stopSelf(startId); return START_NOT_STICKY;
         }
@@ -96,10 +123,10 @@ public final class DownloadService extends Service {
         if (MOVE_NEXT.equals(action) || MOVE_LAST.equals(action)) {
             moveWaiting(id, MOVE_NEXT.equals(action)); finishIfIdle(startId); return START_NOT_STICKY;
         }
-        boolean resumeQueue = RESUME_QUEUE.equals(action);
+        boolean resumeQueue = RESUME_QUEUE.equals(action), recovering = RECOVER.equals(action);
         DownloadQueuePolicy.Admission admission = RESUME.equals(action) ? DownloadQueuePolicy.Admission.RESUME
                 : RETRY_FAILED.equals(action) ? DownloadQueuePolicy.Admission.RETRY_FAILED : DownloadQueuePolicy.Admission.ANY;
-        if ((!resumeQueue && !ENQUEUE.equals(action) && !RESUME.equals(action) && !RETRY_FAILED.equals(action))
+        if ((!resumeQueue && !recovering && !ENQUEUE.equals(action) && !RESUME.equals(action) && !RETRY_FAILED.equals(action))
                 || (!resumeQueue && ids.isEmpty())) {
             finishIfIdle(startId); return START_NOT_STICKY;
         }
@@ -113,13 +140,22 @@ public final class DownloadService extends Service {
                     current == null ? -1 : current.optDouble("progress", -1)));
             java.util.List<String> candidates = new java.util.ArrayList<>();
             for (String item : ids) if (!item.equals(active) && !queue.contains(item)) candidates.add(item);
-            java.util.List<String> accepted = resumeQueue ? TaskStore.resumeQueue(this, active) : TaskStore.markQueuedBatch(this, candidates, admission);
+            java.util.List<String> accepted = resumeQueue ? TaskStore.resumeQueue(this, active)
+                    : recovering ? TaskStore.acceptRecovered(this, candidates) : TaskStore.markQueuedBatch(this, candidates, admission);
             for (String item : accepted) {
                 cancelled.remove(item); pauseRequested.remove(item);
                 JSONObject task = TaskStore.get(this, item);
                 if (task != null && "queued".equals(task.optString("status")) && !queue.contains(item)) queue.addLast(item);
             }
-            if (accepted.isEmpty() && !resumeQueue) for (String item : candidates) {
+            if (recovering && !accepted.isEmpty()) {
+                Set<String> waiting = new HashSet<>(queue);
+                queue.clear();
+                for (JSONObject task : TaskStore.all(this)) {
+                    String item = task.optString("id");
+                    if (waiting.contains(item)) queue.addLast(item);
+                }
+            }
+            if (accepted.isEmpty() && !resumeQueue && !recovering) for (String item : candidates) {
                 JSONObject task = TaskStore.get(this, item);
                 if (task != null && DownloadQueuePolicy.accepts(task.optString("status"), task.optString("pauseOrigin"), admission))
                     patch(item, "failed", -1, "无法记录下载队列，请重试", "下载尚未开始。");
@@ -139,8 +175,9 @@ public final class DownloadService extends Service {
             isActive = id.equals(active);
             if (!isActive && !TaskStore.canEnqueue(task)) return;
             if (!isActive) {
+                if (!TaskStore.markStoppedCommitted(this, id, "cancelled", "已取消；可重试继续")) return;
                 pauseRequested.remove(id); cancelled.add(id);
-                queue.remove(id); TaskStore.markStopped(this, id, "cancelled", "已取消；可重试继续");
+                queue.remove(id);
             } else {
                 if (!TaskStore.markCancelRequested(this, id)) return;
                 pauseRequested.remove(id); cancelled.add(id);
@@ -223,14 +260,20 @@ public final class DownloadService extends Service {
                 if (TaskStore.isQueuePaused(this)) { active = null; draining = false; break; }
                 id = queue.poll();
                 if (id == null) { active = null; draining = false; break; }
-                active = id;
                 attemptEngine = new Engine(this);
                 attempt = processStops.newAttempt(id, processId -> {
                     // A refresh runs an inspect process. Its Engine belongs only
                     // to this attempt, so an old stop cannot cancel a later one.
                     attemptEngine.cancelInspect();
-                    return YoutubeDL.getInstance().destroyProcessById(processId);
+                    boolean fileStopped = DirectFileDownloader.stop(processId);
+                    return YoutubeDL.getInstance().destroyProcessById(processId) || fileStopped;
                 });
+                synchronized (PROCESS_OWNED) {
+                    // An old service may still be waiting for its native child
+                    // to exit. A new service must never write the same partials.
+                    if (!PROCESS_OWNED.add(id)) continue;
+                }
+                active = id;
                 activeAttempt = attempt;
             }
             try { download(id, attempt.processId, attemptEngine); }
@@ -240,6 +283,7 @@ public final class DownloadService extends Service {
                     active = null; activeAttempt = null;
                     cancelled.remove(id); pauseRequested.remove(id); awaitingResumeProgress.remove(id);
                 }
+                synchronized (PROCESS_OWNED) { PROCESS_OWNED.remove(id); }
             }
         }
         main.post(() -> finishIfIdle(lastStartId));
@@ -269,8 +313,6 @@ public final class DownloadService extends Service {
             if (isCancelled(id)) throw new IOException("cancelled");
             publishPreparing(id, tracker.snapshot(), task);
             updateNotification(task.optString("title"), id, -1);
-            engine.init();
-            if (isCancelled(id)) throw new IOException("cancelled");
             Engine.Media media = Engine.Media.fromJson(task.getJSONObject("media"));
             Engine.Quality quality = Engine.Quality.fromJson(task.getJSONObject("quality"));
             admission[0] = SourceScheduler.SHARED.acquire(media.url, () -> isCancelled(id), stage -> {
@@ -285,123 +327,155 @@ public final class DownloadService extends Service {
             File root = getExternalFilesDir("downloads");
             if (root == null) root = new File(getFilesDir(), "downloads");
             File directory = new File(root, id);
-            YoutubeDLRequest request = engine.request(media.url, processId,!media.publicTwitter);
-            boolean preservingNative = DownloadTuning.hasNativeResume(directory);
-            String transferMode = engine.configureDownload(request, media.url, preservingNative, processId);
-            TaskStore.update(this, id, new JSONObject().put("transferReason", preservingNative
-                    ? "保留已有断点，使用兼容方式续传" : ""));
-            int configuredConnections = DownloadTuning.connections(getSharedPreferences("config", MODE_PRIVATE)
-                    .getInt(DownloadTuning.PREFERENCE, DownloadTuning.DEFAULT_CONNECTIONS));
-            tracker.setTransferPolicy(transferMode, configuredConnections);
-            if (task.optLong("downloadedBytes", 0) <= 0) publishProgress(id, tracker.snapshot());
-            // Native transfers preserve pre-0.1.4 partials. Sparse parallel files
-            // stay separate so switching modes cannot append to incompatible data.
-            File workingDirectory = "parallel-http".equals(transferMode) ? new File(directory, transferMode) : directory;
-            if (!workingDirectory.isDirectory() && !workingDirectory.mkdirs()) throw new IOException("无法创建临时下载目录");
-            if (!media.twitterApi.isEmpty()) request.addOption("--extractor-args", "twitter:api=" + media.twitterApi);
-            if (media.playlistIndex > 0) request.addOption("--playlist-items", String.valueOf(media.playlistIndex));
-            request.addOption("--continue");
-            request.addOption("--no-overwrites");
-            request.addOption("--no-mtime");
-            request.addOption("--newline");
-            request.addOption("--progress");
-            request.addOption("--no-simulate");
-            quality.configure(request);
-            request.addOption("--output", new File(workingDirectory, "%(title).100B [%(id)s].%(ext)s").getAbsolutePath());
-            request.addOption("--print", DownloadProgress.PLAN_TEMPLATE);
-            request.addOption("--progress-template", DownloadProgress.DOWNLOAD_TEMPLATE);
-            request.addOption("--progress-template", DownloadProgress.POST_TEMPLATE);
-            request.addOption("--print", "after_move:filepath");
-            if (media.saveCover && !media.album) request.addOption("--write-thumbnail");
-            media.configureSubtitles(request);
-            if (media.album && !engine.useResolved(request, media, processId)) {
+            File workingDirectory;
+            File complete;
+            if (media.directFile()) {
+                if (media.file == null) throw new IOException("文件信息缺失，请重新检查链接");
+                workingDirectory = new File(directory, "direct-http");
                 admission[0].close();
-                List<Engine.Media> refreshed = engine.inspect(media.url, message -> updateNotification(message,id,-1), () -> isCancelled(id));
-                Engine.Media selected = null;
-                for (Engine.Media item : refreshed) if (item.album && item.id.equals(media.id)) selected = item;
-                if (selected == null || !engine.useResolved(request, selected, processId)) throw new IOException("图集信息已失效，请重新解析");
-                media.imageCount = selected.imageCount;
-                admission[0] = SourceScheduler.SHARED.acquire(media.url, () -> isCancelled(id), message -> updateNotification(message,id,-1));
-            }
-            boolean resolved = request.hasOption("--load-info-json") || engine.useResolved(request, media, processId);
-            String requestScope = engine.requestScope(processId);
-            lastProgressWrite = 0;
-            String output;
-            Engine.RUNTIME_LOCK.readLock().lockInterruptibly();
-            boolean runtimeHeld = true;
-            try {
-                for (int refresh = 0;; refresh++) try {
-                    // A refresh may wait for the runtime lock after Stop. Check
-                    // again for every execution, not only before the first try.
-                    if (isCancelled(id)) throw new IOException("cancelled");
-                    // The wrapper only dispatches stdout. Merge download stderr so
-                    // retries and real source errors reach the same stage model.
-                    output = YoutubeDL.getInstance().execute(request, processId, true, (progress, eta, line) -> {
-                        if (line.startsWith(DownloadProgress.PLAN_PREFIX) || line.startsWith(DownloadProgress.DOWNLOAD_PREFIX)) {
-                            admission[0].close(); // Metadata is ready; the transfer may continue alongside later inspections.
-                        }
-                        String safeLine = Engine.cleanLog(line);
-                        boolean event = tracker.accept(line);
-                        if (!DownloadProgress.isProtocolLine(line)) {
-                            if (log.length() > 6000) log.delete(0, log.length() - 4000);
-                            log.append(safeLine).append('\n');
-                        }
-                        DownloadProgress.Snapshot state = tracker.snapshot();
-                        long now = System.currentTimeMillis();
-                        if (!isCancelled(id) && event && (now - lastProgressWrite > 650 || !state.boundary().equals(lastBoundary[0]))) {
-                            lastProgressWrite = now; lastBoundary[0] = state.boundary();
-                            publishProgress(id, state);
-                            updateNotification(media.title + " · " + state.stageLabel, id, state.progress);
-                        }
-                        return kotlin.Unit.INSTANCE;
-                    }).getOut();
-                    if (!media.publicTwitter) new AccountStore(this).noteRequest(media.url, requestScope, null);
-                    break;
-                } catch (Exception failure) {
-                    if (resolved && refresh == 0 && !media.album && !isCancelled(id) && Engine.expiredMedia(log + "\n" + failure)) {
-                        admission[0].close();
-                        request = Engine.withoutResolved(request);
-                        log.setLength(0); updateNotification("媒体地址已失效，正在刷新", id, -1);
-                        // A new inspection acquires the source gate before the runtime lock.
-                        // Release our read lock so a queued core update cannot form a lock cycle.
-                        Engine.RUNTIME_LOCK.readLock().unlock(); runtimeHeld=false;
-                        List<Engine.Media> refreshed=engine.inspect(media.url,message->updateNotification(message,id,-1),()->isCancelled(id));
-                        Engine.Media selected=null;for(Engine.Media item:refreshed)if(item.id.equals(media.id)&&!item.album)selected=item;
-                        if(selected==null||!engine.useResolved(request,selected,processId))throw new IOException("未能刷新所选内容，请重新解析原链接");
-                        admission[0]=SourceScheduler.SHARED.acquire(media.url,()->isCancelled(id),message->updateNotification(message,id,-1));
-                        Engine.RUNTIME_LOCK.readLock().lockInterruptibly(); runtimeHeld=true;
-                        continue;
-                    }
-                    if (!media.publicTwitter) new AccountStore(this).noteRequest(media.url, requestScope, failure);
-                    // Upstream constructs exceptions from stderr, which is empty
-                    // after redirecting it. Retain the sanitized actual error.
-                    if (!isCancelled(id) && log.length() > 0) {
-                        String sourceError = "";
-                        for (String entry : log.toString().split("\\r?\\n")) if (entry.startsWith("ERROR:")) sourceError = entry;
-                        if (!sourceError.isEmpty()) throw new IOException(sourceError, failure);
-                        if (failure.getMessage() == null || failure.getMessage().trim().isEmpty())
-                            throw new IOException(Engine.cleanLog(log.substring(Math.max(0, log.length() - 2000))), failure);
-                    }
-                    throw failure;
+                complete = DirectFileDownloader.download(this, media.url, media.file, directory, processId,
+                        () -> isCancelled(id), state -> {
+                            synchronized (lock) {
+                                if (isCancelled(id)) return;
+                                try { TaskStore.update(this, id, state); } catch (Exception ignored) {}
+                                if (state.optLong("downloadedBytes", -1) >= 0) awaitingResumeProgress.remove(id);
+                                updateNotification(media.title + " · " + state.optString("stageLabel"), id, state.optDouble("progress", -1));
+                            }
+                        });
+                if (isCancelled(id)) throw new IOException("cancelled");
+                SourceScheduler.SHARED.outcomeForUrl(media.url, null);
+            } else {
+                engine.init();
+                if (isCancelled(id)) throw new IOException("cancelled");
+                YoutubeDLRequest request = engine.request(media.url, processId,!media.publicTwitter);
+                boolean preservingNative = DownloadTuning.hasNativeResume(directory);
+                String transferMode = engine.configureDownload(request, media.url, preservingNative, processId);
+                TaskStore.update(this, id, new JSONObject().put("transferReason", preservingNative
+                        ? "保留已有断点，使用兼容方式续传" : ""));
+                int configuredConnections = DownloadTuning.connections(getSharedPreferences("config", MODE_PRIVATE)
+                        .getInt(DownloadTuning.PREFERENCE, DownloadTuning.DEFAULT_CONNECTIONS));
+                tracker.setTransferPolicy(transferMode, configuredConnections);
+                if (task.optLong("downloadedBytes", 0) <= 0) publishProgress(id, tracker.snapshot());
+                // Native transfers preserve pre-0.1.4 partials. Sparse parallel files
+                // stay separate so switching modes cannot append to incompatible data.
+                workingDirectory = "parallel-http".equals(transferMode) ? new File(directory, transferMode) : directory;
+                if (!workingDirectory.isDirectory() && !workingDirectory.mkdirs()) throw new IOException("无法创建临时下载目录");
+                if (!media.twitterApi.isEmpty()) request.addOption("--extractor-args", "twitter:api=" + media.twitterApi);
+                if (media.playlistIndex > 0) request.addOption("--playlist-items", String.valueOf(media.playlistIndex));
+                request.addOption("--continue");
+                request.addOption("--no-overwrites");
+                request.addOption("--no-mtime");
+                request.addOption("--newline");
+                request.addOption("--progress");
+                request.addOption("--no-simulate");
+                quality.configure(request);
+                request.addOption("--output", new File(workingDirectory, task.optString("outputPattern", "%(title).100B [%(id)s].%(ext)s")).getAbsolutePath());
+                request.addOption("--print", DownloadProgress.PLAN_TEMPLATE);
+                request.addOption("--progress-template", DownloadProgress.DOWNLOAD_TEMPLATE);
+                request.addOption("--progress-template", DownloadProgress.POST_TEMPLATE);
+                request.addOption("--print", "after_move:filepath");
+                if (media.saveCover && !media.album) request.addOption("--write-thumbnail");
+                media.configureSubtitles(request);
+                if (media.album && !engine.useResolved(request, media, processId)) {
+                    admission[0].close();
+                    List<Engine.Media> refreshed = engine.inspect(media.url, message -> updateNotification(message,id,-1), () -> isCancelled(id));
+                    Engine.Media selected = null;
+                    for (Engine.Media item : refreshed) if (item.album && item.id.equals(media.id)) selected = item;
+                    if (selected == null || !engine.useResolved(request, selected, processId)) throw new IOException("图集信息已失效，请重新解析");
+                    media.imageCount = selected.imageCount;
+                    admission[0] = SourceScheduler.SHARED.acquire(media.url, () -> isCancelled(id), message -> updateNotification(message,id,-1));
                 }
-            } finally { if(runtimeHeld)Engine.RUNTIME_LOCK.readLock().unlock(); }
-            if (isCancelled(id)) throw new IOException("cancelled");
-            SourceScheduler.SHARED.outcomeForUrl(media.url, null);
-            File complete = media.album ? ContentFiles.album(workingDirectory, output, media.imageCount, media.title, media.id, () -> isCancelled(id)) : findFinalFile(workingDirectory, output);
-            if (!media.album) MediaValidation.check(complete, media, quality);
-            if (!publishProgress(id, tracker.saving())) throw new IOException("stopped");
+                boolean resolved = request.hasOption("--load-info-json") || engine.useResolved(request, media, processId);
+                String requestScope = engine.requestScope(processId);
+                lastProgressWrite = 0;
+                String output;
+                Engine.RUNTIME_LOCK.readLock().lockInterruptibly();
+                boolean runtimeHeld = true;
+                try {
+                    for (int refresh = 0;; refresh++) try {
+                        // A refresh may wait for the runtime lock after Stop. Check
+                        // again for every execution, not only before the first try.
+                        if (isCancelled(id)) throw new IOException("cancelled");
+                        // The wrapper only dispatches stdout. Merge download stderr so
+                        // retries and real source errors reach the same stage model.
+                        output = YoutubeDL.getInstance().execute(request, processId, true, (progress, eta, line) -> {
+                            if (line.startsWith(DownloadProgress.PLAN_PREFIX) || line.startsWith(DownloadProgress.DOWNLOAD_PREFIX)) {
+                                admission[0].close(); // Metadata is ready; the transfer may continue alongside later inspections.
+                            }
+                            String safeLine = Engine.cleanLog(line);
+                            boolean event = tracker.accept(line);
+                            if (!DownloadProgress.isProtocolLine(line)) {
+                                if (log.length() > 6000) log.delete(0, log.length() - 4000);
+                                log.append(safeLine).append('\n');
+                            }
+                            DownloadProgress.Snapshot state = tracker.snapshot();
+                            long now = System.currentTimeMillis();
+                            if (!isCancelled(id) && event && (now - lastProgressWrite > 650 || !state.boundary().equals(lastBoundary[0]))) {
+                                lastProgressWrite = now; lastBoundary[0] = state.boundary();
+                                publishProgress(id, state);
+                                updateNotification(media.title + " · " + state.stageLabel, id, state.progress);
+                            }
+                            return kotlin.Unit.INSTANCE;
+                        }).getOut();
+                        if (!media.publicTwitter) new AccountStore(this).noteRequest(media.url, requestScope, null);
+                        break;
+                    } catch (Exception failure) {
+                        if (resolved && refresh == 0 && !media.album && !isCancelled(id) && Engine.expiredMedia(log + "\n" + failure)) {
+                            admission[0].close();
+                            request = Engine.withoutResolved(request);
+                            log.setLength(0); updateNotification("媒体地址已失效，正在刷新", id, -1);
+                            // A new inspection acquires the source gate before the runtime lock.
+                            // Release our read lock so a queued core update cannot form a lock cycle.
+                            Engine.RUNTIME_LOCK.readLock().unlock(); runtimeHeld=false;
+                            List<Engine.Media> refreshed=engine.inspect(media.url,message->updateNotification(message,id,-1),()->isCancelled(id));
+                            Engine.Media selected=null;for(Engine.Media item:refreshed)if(item.id.equals(media.id)&&!item.album)selected=item;
+                            if(selected==null||!engine.useResolved(request,selected,processId))throw new IOException("未能刷新所选内容，请重新解析原链接");
+                            admission[0]=SourceScheduler.SHARED.acquire(media.url,()->isCancelled(id),message->updateNotification(message,id,-1));
+                            Engine.RUNTIME_LOCK.readLock().lockInterruptibly(); runtimeHeld=true;
+                            continue;
+                        }
+                        if (!media.publicTwitter) new AccountStore(this).noteRequest(media.url, requestScope, failure);
+                        // Upstream constructs exceptions from stderr, which is empty
+                        // after redirecting it. Retain the sanitized actual error.
+                        if (!isCancelled(id) && log.length() > 0) {
+                            String sourceError = "";
+                            for (String entry : log.toString().split("\\r?\\n")) if (entry.startsWith("ERROR:")) sourceError = entry;
+                            if (!sourceError.isEmpty()) throw new IOException(sourceError, failure);
+                            if (failure.getMessage() == null || failure.getMessage().trim().isEmpty())
+                                throw new IOException(Engine.cleanLog(log.substring(Math.max(0, log.length() - 2000))), failure);
+                        }
+                        throw failure;
+                    }
+                } finally { if(runtimeHeld)Engine.RUNTIME_LOCK.readLock().unlock(); }
+                if (isCancelled(id)) throw new IOException("cancelled");
+                SourceScheduler.SHARED.outcomeForUrl(media.url, null);
+                complete = media.album ? ContentFiles.album(workingDirectory, output, media.imageCount, media.title, media.id, () -> isCancelled(id)) : findFinalFile(workingDirectory, output);
+                if (!media.album) MediaValidation.check(complete, media, quality);
+            }
+            if (media.directFile()) {
+                synchronized (lock) {
+                    if (isCancelled(id)) throw new IOException("stopped");
+                    TaskStore.update(this, id, new JSONObject().put("status", "downloading").put("phase", "saving")
+                            .put("stageLabel", "正在保存").put("detail", "正在保存文件").put("stageProgress", -1)
+                            .put("transferComplete", true).put("speedBytesPerSecond", -1).put("etaSeconds", -1));
+                }
+            } else if (!publishProgress(id, tracker.saving())) throw new IOException("stopped");
+            if (!TaskStore.beginPublication(this, id)) throw new IOException("无法记录保存状态，未创建公共文件，请重试");
             updateNotification("正在保存 · " + media.title, id, -1);
-            MediaExporter.Result saved = MediaExporter.save(this, complete, () -> isCancelled(id), destination);
+            MediaExporter.Result saved = media.directFile()
+                    ? MediaExporter.saveFile(this, complete, media.file.name, media.file.mime, () -> isCancelled(id), destination)
+                    : MediaExporter.save(this, complete, () -> isCancelled(id), destination);
             committed = saved; committedBytes = complete.length();
             // Once the public file is committed, report that durable result even if Cancel arrived late.
             JSONObject success = new JSONObject().put("status", "completed").put("progress", 100)
                     .put("phase", "completed").put("stageLabel", "已保存").put("stageProgress", -1)
                     .put("transferComplete", true).put("etaSeconds", -1).put("speedBytesPerSecond", -1)
                     .put("detail", "已保存到 " + destination.label).put("savedLocation",destination.label).put("publicationBusy",true).put("userError", "").put("pauseRequested", false)
-                    .put("uri", saved.uri.toString()).put("mime", saved.mime).put("log", "")
+                    .put("uri", saved.uri.toString()).put("mime", saved.mime).put("sha256", saved.sha256).put("log", "")
                     .put("size", complete.length()).put("completedAt", System.currentTimeMillis());
             TaskStore.update(this, id, success);
-            if (!media.album && (media.saveCover || media.saveSubtitles)) {
+            recordArchive(id);
+            if (!media.directFile() && !media.album && (media.saveCover || media.saveSubtitles)) {
                 try {
                     ContentFiles.Sidecars attachments = ContentFiles.publishSidecars(this, workingDirectory, media, () -> isCancelled(id), savedFiles -> {
                         try {TaskStore.update(this,id,new JSONObject().put("attachments",savedFiles).put("attachmentNote","媒体已保存，正在保存附件"));}
@@ -425,10 +499,11 @@ public final class DownloadService extends Service {
                     TaskStore.update(this, id, new JSONObject().put("status", "completed").put("progress", 100)
                             .put("phase", "completed").put("stageLabel", "已保存").put("stageProgress", -1)
                             .put("detail", "已保存到 " + committedLocation + "，视频库可稍后重新同步").put("savedLocation",committedLocation).put("userError", "")
-                            .put("uri", committed.uri.toString()).put("mime", committed.mime).put("size", committedBytes)
+                            .put("uri", committed.uri.toString()).put("mime", committed.mime).put("sha256", committed.sha256).put("size", committedBytes)
                             .put("completedAt", System.currentTimeMillis()).put("transferComplete", true)
                             .put("speedBytesPerSecond", -1).put("etaSeconds", -1).put("pauseRequested", false).put("libraryIndexPending", true));
                 } catch (Exception ignored) { /* Never misreport a committed file as failed. */ }
+                recordArchive(id);
             } else {
                 synchronized (lock) {
                     if (isCancelled(id)) stopped = true;
@@ -447,6 +522,15 @@ public final class DownloadService extends Service {
             engine.cleanupRequest(processId);
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
             if (stopped) finishStopped(id);
+        }
+    }
+
+    private void recordArchive(String id) {
+        try {
+            ContentArchiveStore.recordCompleted(this, TaskStore.get(this, id));
+        } catch (Exception archiveFailure) {
+            try { TaskStore.update(this, id, new JSONObject().put("archivePending", true)); }
+            catch (Exception ignored) { /* The public file is already committed. */ }
         }
     }
 

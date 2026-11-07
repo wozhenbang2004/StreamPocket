@@ -341,6 +341,21 @@ public final class Engine {
         return inspect(input, stage -> {});
     }
 
+    /** An explicit file request never passes through a site's video extractor. */
+    public Media inspectFile(String input, java.util.function.BooleanSupplier cancelled) throws Exception {
+        String url = DirectFileRules.normalizeUrl(input);
+        DirectFileSpec spec = DirectFileDownloader.inspect(app, url, cancelled);
+        Media media = new Media();
+        media.kind = "direct-file"; media.file = spec; media.url = url;
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(url.getBytes(StandardCharsets.UTF_8));
+        StringBuilder id = new StringBuilder();
+        for (byte value : digest) id.append(String.format(Locale.ROOT, "%02x", value & 255));
+        media.id = id.toString(); media.extractorKey = "direct-file";
+        media.title = spec.name; media.platform = "文件"; media.filesize = spec.size;
+        media.qualities.add(new Quality("original-file", "原文件", ""));
+        return media;
+    }
+
     public List<Media> inspect(String input, Consumer<String> progress) throws Exception {
         return inspect(input, progress, () -> false);
     }
@@ -483,6 +498,7 @@ public final class Engine {
         media.url = source;
         media.playlistIndex = Math.max(0,data.optInt("playlist_index",playlistIndex));
         media.id = data.optString("id", "video");
+        media.extractorKey = data.optString("extractor_key", data.optString("extractor", ""));
         media.title = data.optString("title", "未命名视频");
         media.uploader = data.optString("uploader", data.optString("channel", ""));
         media.duration = (long) data.optDouble("duration", 0);
@@ -687,6 +703,8 @@ public final class Engine {
 
     public static final class Media {
         public String url = "", id = "", title = "", uploader = "", platform = "";
+        public String kind = "media", extractorKey = "", presetId = "", presetName = "", namingTemplate = "";
+        public DirectFileSpec file;
         public String twitterApi = "", thumbnail = "";
         public boolean publicTwitter, hasAudio;
         public String resolvedKey = "";
@@ -703,10 +721,12 @@ public final class Engine {
         public int playlistIndex;
         public List<Quality> qualities = new ArrayList<>();
         public List<Quality> downloadChoices() {
+            if (directFile()) return Collections.singletonList(new Quality("original-file", "原文件", ""));
             List<Quality> choices = new ArrayList<>(qualities);
             if (hasAudio) { choices.add(Quality.audio("m4a")); choices.add(Quality.audio("mp3")); }
             return choices;
         }
+        public boolean directFile() { return "direct-file".equals(kind); }
         List<SubtitleChoices.Language> availableSubtitles() {
             if (!subtitleChoices.isEmpty()) return subtitleChoices;
             if (subtitleAvailable && SubtitleChoices.validLanguage(subtitleLanguage))
@@ -729,6 +749,8 @@ public final class Engine {
             JSONArray choices = new JSONArray(); for (Quality quality : qualities) choices.put(quality.toJson());
             JSONArray subtitles = new JSONArray(); for (SubtitleChoices.Language language : subtitleChoices) subtitles.put(language.toJson());
             return new JSONObject().put("url", url).put("id", id).put("title", title).put("uploader", uploader)
+                    .put("kind", kind).put("file", file == null ? JSONObject.NULL : file.toJson())
+                    .put("extractorKey", extractorKey).put("presetId", presetId).put("presetName", presetName).put("namingTemplate", namingTemplate)
                     .put("resolvedKey", resolvedKey).put("album", album).put("imageCount", imageCount).put("subtitleAvailable", subtitleAvailable)
                     .put("saveSubtitles", saveSubtitles).put("saveCover", saveCover)
                     .put("subtitleLanguage", subtitleLanguage)
@@ -739,6 +761,12 @@ public final class Engine {
         public static Media fromJson(JSONObject json) {
             Media media = new Media(); media.url = json.optString("url"); media.id = json.optString("id");
             media.title = json.optString("title"); media.uploader = json.optString("uploader"); media.platform = json.optString("platform");
+            media.kind = "direct-file".equals(json.optString("kind")) ? "direct-file" : "media";
+            media.extractorKey = json.optString("extractorKey"); media.presetId = json.optString("presetId");
+            media.presetName = json.optString("presetName"); media.namingTemplate = json.optString("namingTemplate");
+            JSONObject file = json.optJSONObject("file");
+            if (file != null) try { media.file = DirectFileSpec.fromJson(file); }
+            catch (Exception invalid) { throw new IllegalArgumentException("文件下载信息无效，请重新检查链接", invalid); }
             media.duration = json.optLong("duration"); media.playlistIndex = json.optInt("playlistIndex");
             media.twitterApi = json.optString("twitterApi", "");media.publicTwitter=json.optBoolean("publicTwitter",false);
             media.hasAudio = json.optBoolean("hasAudio", false);
@@ -755,7 +783,8 @@ public final class Engine {
             JSONArray choices = json.optJSONArray("qualities"); if (choices != null) for (int i = 0; i < choices.length(); i++) {
                 JSONObject quality = choices.optJSONObject(i); if (quality != null) media.qualities.add(Quality.fromJson(quality));
             }
-            if (media.qualities.isEmpty()) media.qualities.add(new Quality("best", "最高可用画质", "bv*+ba/b"));
+            if (media.qualities.isEmpty()) media.qualities.add(media.directFile()
+                    ? new Quality("original-file", "原文件", "") : new Quality("best", "最高可用画质", "bv*+ba/b"));
             return media;
         }
     }

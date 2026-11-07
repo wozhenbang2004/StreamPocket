@@ -27,6 +27,7 @@ public final class MainActivity extends Activity {
     private Engine collectionEngine;
     private LinearLayout brand, inspectionResults, notice, linkEditor, homeExtras, addLinkRow, linkPreview;
     private boolean linkEditorExpanded;
+    private boolean fileIntake;
     private PocketDialog clipboardReview,appUpdateDialog;
     private SwipeActionRow openSwipeRow;
     private boolean queueTouchActive;
@@ -69,7 +70,12 @@ public final class MainActivity extends Activity {
     private boolean foreground=false,clipboardCheckPending=false;
     private final Runnable checkClipboard=()->checkClipboardOffer();
     private InspectionBatch.Inspector inspector;
+    private InspectionBatch.Inspector fileInspector;
     private final ArrayList<Engine.Media> pendingBatch=new ArrayList<>();
+    private final ArrayList<Engine.Quality> pendingBatchQualities=new ArrayList<>();
+    private volatile long archiveGeneration;
+    private boolean archiveChecking;
+    private PocketDialog archiveDialog;
     private boolean parsing=false, loginOpening=false, taskMenuOpen=false;
     private String cookieImportPlatform;
     private String loginRecoveryId, loginRecoveryType;
@@ -87,6 +93,8 @@ public final class MainActivity extends Activity {
         UiTheme.apply(this); super.onCreate(state);
         palette=UiTheme.get(this); BG=palette.bg;INK=palette.ink;MUTED=palette.muted;ACCENT=palette.accent;SURFACE=palette.surface;LINE=palette.line;
         artwork=new MediaArtwork(this); engine=new Engine(this);inspector=engine::inspect;
+        fileInspector=(url,progress,cancelled)->Collections.singletonList(engine.inspectFile(url,cancelled));
+        fileIntake=getPreferences(0).getBoolean("file_intake",false);
         inspectionInbox.restore(getPreferences(0).getString("inspection_inbox",""));
         try{JSONObject selections=new JSONObject(getPreferences(0).getString("inspection_quality","{}"));Iterator<String> keys=selections.keys();while(keys.hasNext()){String key=keys.next();qualitySelections.put(key,selections.optInt(key));}}catch(Exception ignored){}
         if(state!=null){
@@ -174,22 +182,26 @@ public final class MainActivity extends Activity {
 
     private void showNew() {
         LinearLayout c=scrollContent();c.addView(text("新建下载",22,INK,true));
-        add(c,text("粘贴分享文案，选择视频或音频再保存",13,MUTED,false),6,16);
+        add(c,text(fileIntake?"检查文件信息，确认后保存到手机":"粘贴分享文案，选择视频或音频再保存",13,MUTED,false),6,16);
         LinearLayout form=column();form.setPadding(dp(14),dp(8),dp(14),dp(14));form.setBackground(shape(SURFACE,18,0));
+        PocketTabs intake=new PocketTabs(this,new String[]{"视频与音频","普通文件"},fileIntake?1:0,which->{
+            if(input!=null)draft=input.getText().toString();fileIntake=which==1;
+            getPreferences(0).edit().putBoolean("file_intake",fileIntake).apply();hideClipboardOffer();clipboardCheckPending=true;showTab("new");main.post(checkClipboard);
+        });add(form,intake,4,10);
         addLinkRow=row();Button more=quietButton("＋ 继续添加链接");more.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);more.setTextColor(ACCENT);more.setOnClickListener(v->{linkEditorExpanded=true;updateLinkEditor();input.requestFocus();((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(input,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);});addLinkRow.addView(more,new LinearLayout.LayoutParams(0,dp(48),1));
         Button quickPaste=quietButton("粘贴链接");quickPaste.setTextSize(13);quickPaste.setTextColor(ACCENT);quickPaste.setOnClickListener(v->pasteLink());addLinkRow.addView(quickPaste,new LinearLayout.LayoutParams(dp(88),dp(48)));form.addView(addLinkRow);
         linkEditor=column();form.addView(linkEditor,new LinearLayout.LayoutParams(-1,-2));
-        LinearLayout label=row();label.addView(text("视频链接",14,INK,true),new LinearLayout.LayoutParams(0,-2,1));
+        LinearLayout label=row();label.addView(text(fileIntake?"文件链接":"视频链接",14,INK,true),new LinearLayout.LayoutParams(0,-2,1));
         paste=quietButton("粘贴");paste.setMinWidth(0);paste.setTextColor(ACCENT);paste.setOnClickListener(v->pasteLink());label.addView(paste,new LinearLayout.LayoutParams(dp(64),dp(48)));linkEditor.addView(label);
         input=new PocketEditText(this);input.setTextSize(14);input.setTextColor(INK);input.setHintTextColor(MUTED);
         input.setHint("粘贴一个或多个链接，也支持整段分享文案");input.setGravity(Gravity.TOP);
-        input.setSingleLine(false);input.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_VARIATION_URI);input.setMinLines(2);input.setMaxLines(4);input.setContentDescription("视频链接，可粘贴多个链接或分享文案");
+        input.setSingleLine(false);input.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_VARIATION_URI);input.setMinLines(2);input.setMaxLines(4);input.setContentDescription(fileIntake?"文件链接，可粘贴多个HTTP或HTTPS链接":"视频链接，可粘贴多个链接或分享文案");
         input.setBackground(fieldBackground());input.setPadding(dp(12),dp(12),dp(12),dp(12));input.setText(draft);input.setEnabled(true);input.setLineSpacing(dp(3),1);
         input.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence a,int b,int c,int d){}public void onTextChanged(CharSequence a,int b,int c,int d){}public void afterTextChanged(android.text.Editable value){if(!value.toString().equals(draft)){draft=value.toString();updateInspectionControls();}}});add(linkEditor,input,0,8);
         linkHint=text("",12,MUTED,false);linkHint.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);add(linkEditor,linkHint,0,0);
         linkPreview=column();add(linkEditor,linkPreview,6,0);
         parse=button("解析链接",true);parse.setOnClickListener(v->analyze());add(linkEditor,parse,12,0);renderLinkHint();
-        Button collection=quietButton("展开合集并选择");collection.setTextSize(13);collection.setTextColor(ACCENT);
+        Button collection=quietButton("展开合集并选择");collection.setVisibility(fileIntake?View.GONE:View.VISIBLE);collection.setTextSize(13);collection.setTextColor(ACCENT);
         collection.setOnClickListener(v->showCollection());add(linkEditor,collection,0,0);
         cancel=quietButton("取消解析");cancel.setVisibility(View.GONE);cancel.setOnClickListener(v->cancelAnalysis());linkEditor.addView(cancel,new LinearLayout.LayoutParams(-1,dp(48)));
         feedback=text(lastInspectionMessage,12,MUTED,false);feedback.setTextIsSelectable(true);
@@ -245,22 +257,25 @@ public final class MainActivity extends Activity {
         LinearLayout heading=row();heading.addView(text("待下载 · "+inspectedMedia.size()+" 项",16,INK,true),new LinearLayout.LayoutParams(0,-2,1));
         if(inspectedMedia.size()>1){Button all=quietButton("全部下载");all.setTextSize(12);all.setTextColor(ACCENT);all.setOnClickListener(v->enqueueBatch(new ArrayList<>(inspectedMedia)));heading.addView(all,new LinearLayout.LayoutParams(dp(96),dp(48)));}add(inspectionResults,heading,6,4);
         LinearLayout readyTools=row();readyTools.addView(text("保存到 "+DownloadLocation.label(this),12,MUTED,false),new LinearLayout.LayoutParams(0,-2,1));
-        if(inspectedMedia.size()>1){Button batch=quietButton("批量设置");batch.setTextSize(12);batch.setTextColor(ACCENT);batch.setOnClickListener(v->showBatchSettings());readyTools.addView(batch,new LinearLayout.LayoutParams(dp(88),dp(48)));}add(inspectionResults,readyTools,0,8);
+        Button batch=quietButton("下载预设");batch.setTextSize(12);batch.setTextColor(ACCENT);batch.setOnClickListener(v->showPresetPicker());readyTools.addView(batch,new LinearLayout.LayoutParams(dp(88),dp(48)));add(inspectionResults,readyTools,0,8);
         for(Engine.Media m:inspectedMedia){
             LinearLayout item=column();item.setPadding(dp(12),dp(12),dp(12),dp(10));item.setBackground(shape(SURFACE,16,0));
             LinearLayout mediaHeader=row();mediaHeader.setGravity(Gravity.TOP);item.addView(mediaHeader);
-            mediaHeader.addView(cover(m.thumbnail,"inspect:"+m.url+":"+m.id,88,64),new LinearLayout.LayoutParams(dp(88),dp(64)));
+            ImageView preview=cover(m.thumbnail,"inspect:"+m.url+":"+m.id,88,64);
+            if(m.directFile()){preview.setImageDrawable(new PocketIcon("download",MUTED));preview.setPadding(dp(24),dp(12),dp(24),dp(12));preview.setContentDescription("文件");}
+            mediaHeader.addView(preview,new LinearLayout.LayoutParams(dp(88),dp(64)));
             LinearLayout words=column();TextView name=text(m.title==null||m.title.isEmpty()?"未命名视频":m.title,14,INK,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
             LinearLayout readyTitle=row();readyTitle.setBaselineAligned(false);readyTitle.setGravity(Gravity.TOP);readyTitle.addView(name,new LinearLayout.LayoutParams(0,-2,1));Button remove=quietButton("×");remove.setTextSize(20);remove.setMinWidth(0);remove.setPadding(0,0,0,0);remove.setContentDescription("删除解析结果："+m.title);remove.setOnClickListener(v->{inspectedMedia.remove(m);qualitySelections.remove(InspectionBatch.key(m));persistInspectionInbox();renderInspection();});readyTitle.addView(remove,new LinearLayout.LayoutParams(dp(40),dp(40)));words.addView(readyTitle);
             TextView metadata=text(m.platform+(m.duration>0?" · "+duration(m.duration):"")+(m.uploader!=null&&!m.uploader.isEmpty()?" · "+m.uploader:""),12,MUTED,false);metadata.setMaxLines(2);metadata.setEllipsize(android.text.TextUtils.TruncateAt.END);add(words,metadata,4,0);LinearLayout.LayoutParams info=new LinearLayout.LayoutParams(0,-2,1);info.leftMargin=dp(12);mediaHeader.addView(words,info);
             String key=InspectionBatch.key(m);List<Engine.Quality> choices=m.downloadChoices();int chosen=Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),choices.size()-1));
             TextView details=text(mediaSummary(m,chosen),12,MUTED,false);details.setMaxLines(1);details.setEllipsize(android.text.TextUtils.TruncateAt.END);add(words,details,3,0);
-            LinearLayout actions=row();Button quality=button((m.album?"图片："+m.imageCount+" 张":choices.get(chosen).audioOnly()?"音频："+choices.get(chosen).audioFormat.toUpperCase(Locale.ROOT):"画质："+choices.get(chosen).label)+"  ▾",false);quality.setTextSize(12);quality.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);quality.setMinWidth(0);
+            LinearLayout actions=row();Button quality=button(m.directFile()?"原文件":(m.album?"图片："+m.imageCount+" 张":choices.get(chosen).audioOnly()?"音频："+choices.get(chosen).audioFormat.toUpperCase(Locale.ROOT):"画质："+choices.get(chosen).label)+"  ▾",false);quality.setTextSize(12);quality.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);quality.setMinWidth(0);quality.setEnabled(!m.directFile());
             quality.setOnClickListener(v->{String[] options=new String[choices.size()];for(int n=0;n<options.length;n++)options[n]=choices.get(n).label;
                 PocketDialog panel=new PocketDialog.Builder(this).setTitle(m.hasAudio?"保存视频或音频":"选择画质").setSingleChoiceItems(options,chosen,(d,which)->{qualitySelections.put(key,which);persistInspectionInbox();d.dismiss();renderInspection();}).setNegativeButton("返回",null).show();bottom(panel);});
             quality.setPadding(dp(12),0,dp(10),0);quality.setSingleLine(true);quality.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(0,dp(48),1);qp.rightMargin=dp(8);actions.addView(quality,qp);Button save=button(m.album?"保存图集":choices.get(chosen).audioOnly()?"下载音频":"下载视频",true);save.setTextSize(12);save.setPadding(dp(10),0,dp(10),0);save.setOnClickListener(v->enqueue(m,choices.get(Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),choices.size()-1)))));actions.addView(save,new LinearLayout.LayoutParams(dp(100),dp(48)));add(item,actions,10,0);
-            if(!m.album){Button extras=quietButton(attachmentLabel(m));extras.setTextSize(12);extras.setTextColor(MUTED);extras.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);extras.setPadding(0,0,0,0);extras.setOnClickListener(v->showAttachments(m));item.addView(extras,new LinearLayout.LayoutParams(-1,dp(40)));}
+            LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(0,dp(48),1);qp.rightMargin=dp(8);actions.addView(quality,qp);Button save=button(m.directFile()?"下载文件":m.album?"保存图集":choices.get(chosen).audioOnly()?"下载音频":"下载视频",true);save.setTextSize(12);save.setPadding(dp(10),0,dp(10),0);save.setOnClickListener(v->enqueue(m,choices.get(Math.max(0,Math.min(qualitySelections.getOrDefault(key,0),choices.size()-1)))));actions.addView(save,new LinearLayout.LayoutParams(dp(100),dp(48)));add(item,actions,10,0);
+            if(!m.album&&!m.directFile()){Button extras=quietButton(attachmentLabel(m));extras.setTextSize(12);extras.setTextColor(MUTED);extras.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);extras.setPadding(0,0,0,0);extras.setOnClickListener(v->showAttachments(m));item.addView(extras,new LinearLayout.LayoutParams(-1,dp(40)));}
+            if(!m.presetName.isEmpty())add(item,text("预设 · "+m.presetName,12,MUTED,false),4,0);
             add(inspectionResults,item,0,8);
         }
     }
@@ -305,12 +320,12 @@ public final class MainActivity extends Activity {
                 if(text==null&&data.getItemAt(n).getUri()!=null)text=data.getItemAt(n).getUri().toString();
                 if(text!=null){if(content.length()+text.length()>65536)return;content.append(text).append('\n');}
             }
-            List<String> urls=LinkBatch.parse(content.toString()).urls;
-            String digest=ClipboardOffer.fingerprint(urls);
-            if(digest.equals(getPreferences(0).getString("clipboard_seen",""))||ClipboardOffer.alreadyInDraft(urls,draft))return;
-            Set<String> known=new HashSet<>();for(InspectionInbox.Job job:inspectionInbox.jobs)known.add(LinkBatch.identity(job.url));for(Engine.Media media:inspectedMedia)known.add(LinkBatch.identity(media.url));
-            try{for(String url:LinkBatch.parse(draft).urls)known.add(LinkBatch.identity(url));}catch(IllegalArgumentException ignored){}
-            List<String> fresh=new ArrayList<>();for(String url:urls)if(!known.contains(LinkBatch.identity(url)))fresh.add(url);
+            List<String> urls=parseIntakeLinks(content.toString()).urls;
+            String digest=ClipboardOffer.fingerprint(urls,fileIntake);
+            if(digest.equals(getPreferences(0).getString("clipboard_seen",""))||ClipboardOffer.alreadyInDraft(urls,draft,fileIntake))return;
+            Set<String> known=new HashSet<>();for(InspectionInbox.Job job:inspectionInbox.jobs)known.add(intakeKey(job.url,"direct-file".equals(job.kind)));for(Engine.Media media:inspectedMedia)known.add(intakeKey(media.url,media.directFile()));
+            try{for(String url:parseIntakeLinks(draft).urls)known.add(intakeKey(url,fileIntake));}catch(IllegalArgumentException ignored){}
+            List<String> fresh=new ArrayList<>();for(String url:urls)if(!known.contains(intakeKey(url,fileIntake)))fresh.add(url);
             if(fresh.isEmpty())return;
             clipboardSourceDigest=digest;clipboardUrls=new ArrayList<>(fresh);renderClipboardOffer();
         }catch(IllegalArgumentException ignored){ /* Ordinary clipboard text is not a video task. */ }
@@ -323,14 +338,14 @@ public final class MainActivity extends Activity {
         LinearLayout card=row();card.setPadding(dp(14),dp(8),dp(4),dp(8));card.setBackground(shape(SURFACE,14,LINE));
         LinearLayout labels=column();labels.addView(text("发现 "+clipboardUrls.size()+" 个新链接",14,INK,true));TextView preview=text(linkLabel(clipboardUrls.get(0)).replace('\n',' '),12,MUTED,false);preview.setMaxLines(1);preview.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);add(labels,preview,4,0);card.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
         Button open=button("查看链接",true);open.setTextSize(12);open.setMinWidth(0);open.setOnClickListener(v->showClipboardReview());card.addView(open,new LinearLayout.LayoutParams(dp(88),dp(48)));
-        Button dismiss=quietButton("×");dismiss.setTextSize(20);dismiss.setMinWidth(0);dismiss.setContentDescription("忽略剪贴板链接提醒");dismiss.setOnClickListener(v->{rememberClipboardDigest(clipboardSourceDigest.isEmpty()?ClipboardOffer.fingerprint(clipboardUrls):clipboardSourceDigest);hideClipboardOffer();});card.addView(dismiss,new LinearLayout.LayoutParams(dp(44),dp(48)));
+        Button dismiss=quietButton("×");dismiss.setTextSize(20);dismiss.setMinWidth(0);dismiss.setContentDescription("忽略剪贴板链接提醒");dismiss.setOnClickListener(v->{rememberClipboardDigest(clipboardSourceDigest.isEmpty()?ClipboardOffer.fingerprint(clipboardUrls,fileIntake):clipboardSourceDigest);hideClipboardOffer();});card.addView(dismiss,new LinearLayout.LayoutParams(dp(44),dp(48)));
         clipboardNotice.addView(card);clipboardNotice.setVisibility(View.VISIBLE);clipboardNotice.announceForAccessibility("发现 "+clipboardUrls.size()+" 个新链接，查看后选择要解析的链接");
     }
 
     private void showClipboardReview() {
         if(clipboardUrls.isEmpty()||clipboardReview!=null&&clipboardReview.isShowing())return;
         hideLinkKeyboard();
-        List<String> snapshot=new ArrayList<>(clipboardUrls);String sourceDigest=clipboardSourceDigest.isEmpty()?ClipboardOffer.fingerprint(snapshot):clipboardSourceDigest;boolean[] selected=new boolean[snapshot.size()];Arrays.fill(selected,true);
+        List<String> snapshot=new ArrayList<>(clipboardUrls);String sourceDigest=clipboardSourceDigest.isEmpty()?ClipboardOffer.fingerprint(snapshot,fileIntake):clipboardSourceDigest;boolean[] selected=new boolean[snapshot.size()];Arrays.fill(selected,true);
         String[] labels=new String[snapshot.size()];for(int n=0;n<labels.length;n++)labels[n]=linkLabel(snapshot.get(n));
         clipboardReview=new PocketDialog.Builder(this).setTitle("剪贴板 · "+snapshot.size()+" 个链接").setMultiChoiceBulkActions(snapshot.size()>1)
                 .setMultiChoiceItems(labels,selected,(d,which,checked)->{
@@ -349,7 +364,7 @@ public final class MainActivity extends Activity {
         if(clipboardUrls.isEmpty())return;
         List<String> accepted=new ArrayList<>(clipboardUrls);rememberClipboard(accepted);hideClipboardOffer();queueInspections(accepted);showTab("new");
     }
-    private void rememberClipboard(List<String> urls){rememberClipboardDigest(ClipboardOffer.fingerprint(urls));}
+    private void rememberClipboard(List<String> urls){rememberClipboardDigest(ClipboardOffer.fingerprint(urls,fileIntake));}
     private void rememberClipboardDigest(String digest){getPreferences(0).edit().putString("clipboard_seen",digest).apply();}
     private void hideClipboardOffer(){clipboardUrls=Collections.emptyList();clipboardSourceDigest="";if(clipboardNotice!=null){clipboardNotice.setVisibility(View.GONE);clipboardNotice.removeAllViews();}}
 
@@ -363,13 +378,13 @@ public final class MainActivity extends Activity {
                 CharSequence value=data.getItemAt(n).getText();if(value==null&&data.getItemAt(n).getUri()!=null)value=data.getItemAt(n).getUri().toString();
                 if(value!=null){if(content.length()+value.length()+1>65536)throw new IllegalArgumentException("剪贴板内容太长，请分批粘贴");content.append(value).append('\n');}
             }
-            LinkBatch.Result links=LinkBatch.parse(content.toString());
-            Set<String> known=new HashSet<>();try{for(String url:LinkBatch.parse(draft).urls)known.add(LinkBatch.identity(url));}catch(IllegalArgumentException ignored){}
-            List<String> fresh=new ArrayList<>();for(String url:links.urls)if(known.add(LinkBatch.identity(url)))fresh.add(url);
+            LinkBatch.Result links=parseIntakeLinks(content.toString());
+            Set<String> known=new HashSet<>();try{for(String url:parseIntakeLinks(draft).urls)known.add(intakeKey(url,fileIntake));}catch(IllegalArgumentException ignored){}
+            List<String> fresh=new ArrayList<>();for(String url:links.urls)if(known.add(intakeKey(url,fileIntake)))fresh.add(url);
             if(fresh.isEmpty()){showLinkMessage("这些链接已在输入中，可直接解析",false);return;}
             String next=draft.trim().isEmpty()?LinkBatch.join(fresh,"\n"):draft+(draft.endsWith("\n")?"":"\n")+LinkBatch.join(fresh,"\n");
             // Validate before updating, so a full batch keeps its existing editable contents.
-            LinkBatch.parse(next);linkEditorExpanded=true;input.setText(next);input.setSelection(input.length());rememberClipboard(links.urls);hideClipboardOffer();renderLinkHint();
+            parseIntakeLinks(next);linkEditorExpanded=true;input.setText(next);input.setSelection(input.length());rememberClipboard(links.urls);hideClipboardOffer();renderLinkHint();
         } catch(IllegalArgumentException invalid){showLinkMessage(invalid.getMessage());}
         catch(SecurityException denied){showLinkMessage("暂时无法读取剪贴板，请长按输入框粘贴");}
     }
@@ -383,7 +398,7 @@ public final class MainActivity extends Activity {
 
     private void analyze() {
         try {
-            LinkBatch.Result links=LinkBatch.parse(input.getText().toString());rememberClipboard(links.urls);
+            LinkBatch.Result links=parseIntakeLinks(input.getText().toString());rememberClipboard(links.urls);
             hideLinkKeyboard();queueInspections(links.urls);linkEditorExpanded=false;draft="";input.setText("");lastInspectionMessage="";lastInspectionDetails="";
             if(feedback!=null)feedback.setVisibility(View.GONE);if(failureDetails!=null)failureDetails.setVisibility(View.GONE);updateInspectionControls();
             if(links.duplicates>0||!links.invalid.isEmpty())toast("已合并 "+links.duplicates+" 个重复链接，忽略 "+links.invalid.size()+" 个无效链接");
@@ -391,24 +406,31 @@ public final class MainActivity extends Activity {
     }
 
     private void queueInspections(List<String> urls) {
-        int added=inspectionInbox.add(urls);persistInspectionInbox();
+        int added=inspectionInbox.add(urls,fileIntake?"direct-file":"media");persistInspectionInbox();
         toast(added>0?"已添加 "+added+" 个链接，按顺序解析":"链接已在解析队列或待下载列表中");startNextInspection();renderInspection();
+    }
+    private static String intakeKey(String url,boolean files) {
+        return (files?"file:":"media:")+(files?url:LinkBatch.identity(url));
+    }
+
+    private LinkBatch.Result parseIntakeLinks(String text) {
+        return fileIntake ? LinkBatch.parseFiles(text) : LinkBatch.parse(text);
     }
     private void startNextInspection() {
         if(parsing||isDestroyed())return;
         InspectionInbox.Job job=inspectionInbox.next();if(job==null){updateInspectionControls();return;}
-        parsing=true;activeInspection=job;job.state="parsing";job.message="正在读取视频信息…";job.cancelled=false;
+        parsing=true;activeInspection=job;job.state="parsing";job.message="direct-file".equals(job.kind)?"正在检查文件信息…":"正在读取视频信息…";job.cancelled=false;
         int generation=++parseGeneration;persistInspectionInbox();updateInspectionControls();if("new".equals(tab))renderInspection();
         io.execute(()->{
             List<Engine.Media> found=null;Exception problem=null;
-            try {found=inspector.inspect(job.url,stage->main.post(()->{if(!isDestroyed()&&generation==parseGeneration&&activeInspection==job&&!job.cancelled){job.message=stage;if("new".equals(tab))renderInspection();}}),()->job.cancelled||generation!=parseGeneration||isDestroyed());}
+            try {found=("direct-file".equals(job.kind)?fileInspector:inspector).inspect(job.url,stage->main.post(()->{if(!isDestroyed()&&generation==parseGeneration&&activeInspection==job&&!job.cancelled){job.message=stage;if("new".equals(tab))renderInspection();}}),()->job.cancelled||generation!=parseGeneration||isDestroyed());}
             catch(Exception failure){problem=failure;}
             final List<Engine.Media> result=found;final Exception failure=problem;
             main.post(()->{
                 if(isDestroyed()||generation!=parseGeneration)return;
                 if(job.cancelled||failure instanceof InterruptedException)inspectionInbox.fail(job,new InterruptedException("解析已取消"));
                 else if(failure!=null)inspectionInbox.fail(job,failure);
-                else if(result==null||result.isEmpty())inspectionInbox.fail(job,new IOException("源站没有返回可用视频"));
+                else if(result==null||result.isEmpty())inspectionInbox.fail(job,new IOException("源站没有返回可下载内容"));
                 else inspectionInbox.complete(job,result);
                 parsing=false;activeInspection=null;persistInspectionInbox();updateInspectionControls();if("new".equals(tab))renderInspection();startNextInspection();
             });
@@ -423,14 +445,14 @@ public final class MainActivity extends Activity {
         if(input==null||linkHint==null||!"new".equals(tab))return;
         linkHint.setTextColor(MUTED);if(linkPreview!=null)linkPreview.removeAllViews();
         updateInspectionButton();
-        if(draft.trim().isEmpty()){linkHint.setText("支持 YouTube、X、B站、抖音、小红书等，可批量粘贴");return;}
-        try{LinkBatch.Result links=LinkBatch.parse(draft);linkHint.setText("识别到 "+links.urls.size()+" 个链接"+(links.duplicates>0?" · "+links.duplicates+" 个重复已合并":"")+(!links.invalid.isEmpty()?" · "+links.invalid.size()+" 个无效链接已跳过":""));
+        if(draft.trim().isEmpty()){linkHint.setText(fileIntake?"支持普通HTTP或HTTPS文件，不会按视频转码":"支持 YouTube、X、B站、抖音、小红书等，可批量粘贴");return;}
+        try{LinkBatch.Result links=parseIntakeLinks(draft);linkHint.setText("识别到 "+links.urls.size()+" 个链接"+(links.duplicates>0?" · "+links.duplicates+" 个重复已合并":"")+(!links.invalid.isEmpty()?" · "+links.invalid.size()+" 个无效链接已跳过":""));
             if(links.urls.size()==1)linkHint.append(" · "+linkLabel(links.urls.get(0)).split("\n",2)[0]);
             if(linkPreview!=null&&links.urls.size()>1){for(int n=0;n<Math.min(3,links.urls.size());n++){String label=linkLabel(links.urls.get(n));TextView preview=text(label.replace("\n"," · "),12,MUTED,false);preview.setContentDescription(label);preview.setMaxLines(1);preview.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);preview.setPadding(0,dp(4),0,dp(4));linkPreview.addView(preview);}
                 if(links.urls.size()>3)linkPreview.addView(text("另有 "+(links.urls.size()-3)+" 个链接，按输入顺序解析",12,MUTED,false));}
         }catch(IllegalArgumentException invalid){linkHint.setText(invalid.getMessage());linkHint.setTextColor(palette.danger);}
     }
-    private void updateInspectionButton(){if(parse!=null){try{LinkBatch.Result links=LinkBatch.parse(draft);parse.setText((parsing?"追加解析 · ":"解析链接 · ")+links.urls.size()+" 个");parse.setEnabled(true);}catch(IllegalArgumentException invalid){parse.setText("解析链接");parse.setEnabled(false);}}}
+    private void updateInspectionButton(){if(parse!=null){String action=fileIntake?"检查文件":"解析链接";try{LinkBatch.Result links=parseIntakeLinks(draft);parse.setText((parsing?"追加检查 · ":action+" · ")+links.urls.size()+" 个");parse.setEnabled(true);}catch(IllegalArgumentException invalid){parse.setText(action);parse.setEnabled(false);}}}
     private void persistInspectionInbox(){getPreferences(0).edit().putString("inspection_inbox",inspectionInbox.json()).putString("inspection_quality",new JSONObject(qualitySelections).toString()).apply();}
     private static String inspectionFailureMessage(InspectionInbox.Job job){return job.message.contains("取消")||job.details.isEmpty()?job.message:CoreRules.inspectionMessage(new Exception(job.details),job.url);}
     private void cancelAnalysis() {
@@ -471,12 +493,72 @@ public final class MainActivity extends Activity {
 
     private void enqueueBatch(List<Engine.Media> media) {
         if(media.isEmpty())return;
+        if(archiveChecking){toast("正在检查下载记录，请稍候或取消");return;}
+        if(!pendingBatch.isEmpty()){toast("正在等待保存权限，请先完成当前操作");return;}
+        if(isFinishing()||isDestroyed())return;
+        final List<Engine.Media> batch=new ArrayList<>();
+        final List<Engine.Quality> qualities=new ArrayList<>();
+        try {
+            for(Engine.Media item:new ArrayList<>(media)){
+                // An old click from a row already submitted or replaced cannot create another task.
+                if(!inspectedMedia.contains(item))continue;
+                qualities.add(Engine.Quality.fromJson(new JSONObject(selectedQuality(item).toJson().toString())));
+                batch.add(Engine.Media.fromJson(new JSONObject(item.toJson().toString())));
+            }
+        }catch(Exception invalid){showMessage("暂时无法加入队列",friendly(invalid));return;}
+        if(batch.isEmpty())return;
+        final long generation=++archiveGeneration;archiveChecking=true;
+        archiveDialog=new PocketDialog.Builder(this).setTitle("检查下载记录")
+                .setMessage("正在检查这批内容以前是否保存过…")
+                .setNegativeButton("取消",(d,w)->cancelArchiveCheck(generation))
+                .setOnCancelListener(d->cancelArchiveCheck(generation)).show();
+        try{io.execute(()->{
+            int duplicates=0;boolean unavailable=false;
+            try{
+                for(int i=0;i<batch.size();i++){
+                    if(generation!=archiveGeneration||Thread.currentThread().isInterrupted())return;
+                    if(!ContentArchiveStore.find(this,batch.get(i),qualities.get(i)).isEmpty())duplicates++;
+                }
+            }catch(Exception failure){unavailable=true;}
+            final int found=duplicates;final boolean failed=unavailable;
+            main.post(()->{
+                if(generation!=archiveGeneration||!archiveChecking)return;
+                if(isFinishing()||isDestroyed()){cancelArchiveCheck(generation);return;}
+                if(archiveDialog!=null){archiveDialog.dismiss();archiveDialog=null;}
+                if(failed)toast("历史归档暂不可用，本次下载仍可继续");
+                if(found>0&&!failed){
+                    archiveDialog=new PocketDialog.Builder(this).setTitle("其中 "+found+" 项以前保存过")
+                            .setMessage("下载归档会保留以前的保存记录。你仍可重新下载，例如原文件已移除，或这次选择了另一种格式。")
+                            .setNegativeButton("返回检查",(d,w)->cancelArchiveCheck(generation))
+                            .setOnCancelListener(d->cancelArchiveCheck(generation))
+                            .setPositiveButton("仍然下载",(d,w)->{
+                                if(generation!=archiveGeneration||!archiveChecking||isFinishing()||isDestroyed())return;
+                                cancelArchiveCheck(generation);enqueueBatchConfirmed(batch,qualities);
+                            }).show();
+                }else{cancelArchiveCheck(generation);enqueueBatchConfirmed(batch,qualities);}
+            });
+        });}catch(RejectedExecutionException stopped){cancelArchiveCheck(generation);}
+    }
+
+    private void cancelArchiveCheck(long generation) {
+        if(generation!=archiveGeneration)return;
+        archiveGeneration++;archiveChecking=false;
+        PocketDialog dialog=archiveDialog;archiveDialog=null;if(dialog!=null)dialog.dismiss();
+    }
+
+    private Engine.Quality selectedQuality(Engine.Media media) {
+        List<Engine.Quality> choices=media.downloadChoices();
+        return choices.get(Math.max(0,Math.min(qualitySelections.getOrDefault(InspectionBatch.key(media),0),choices.size()-1)));
+    }
+
+    private void enqueueBatchConfirmed(List<Engine.Media> media,List<Engine.Quality> qualities) {
+        if(media.isEmpty())return;
         if(needsStoragePermission()){
-            pendingQueueAction=null;pendingQueueIds.clear();pendingBatch.clear();pendingBatch.addAll(media);requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},STORAGE_REQUEST);return;
+            pendingQueueAction=null;pendingQueueIds.clear();pendingBatch.clear();pendingBatch.addAll(media);
+            pendingBatchQualities.clear();pendingBatchQualities.addAll(qualities);
+            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},STORAGE_REQUEST);return;
         }
         try {
-            List<Engine.Quality> qualities=new ArrayList<>();
-            for(Engine.Media m:media){int chosen=qualitySelections.getOrDefault(InspectionBatch.key(m),0);qualities.add(m.downloadChoices().get(Math.max(0,Math.min(chosen,m.downloadChoices().size()-1))));}
             ArrayList<String> ids=TaskStore.createBatch(this,media,qualities);
             Intent request=new Intent(this,DownloadService.class).setAction(DownloadService.ENQUEUE).putStringArrayListExtra("ids",ids);
             try {if(Build.VERSION.SDK_INT>=26)startForegroundService(request);else startService(request);}
@@ -502,7 +584,7 @@ public final class MainActivity extends Activity {
         boolean starts=DownloadService.ENQUEUE.equals(action)||DownloadService.RESUME.equals(action)
                 ||DownloadService.RETRY_FAILED.equals(action)||DownloadService.RESUME_QUEUE.equals(action);
         if(starts)for(String id:ids){JSONObject task=TaskStore.get(this,id);if(task!=null&&needsStoragePermission(task)){
-            pendingBatch.clear();pendingQueueAction=action;pendingQueueIds.clear();pendingQueueIds.addAll(ids);
+            pendingBatch.clear();pendingBatchQualities.clear();pendingQueueAction=action;pendingQueueIds.clear();pendingQueueIds.addAll(ids);
             requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},STORAGE_REQUEST);return;
         }}
         try {
@@ -549,7 +631,11 @@ public final class MainActivity extends Activity {
             JSONObject media=task.optJSONObject("media");String poster=media==null?"":media.optString("thumbnail");if(poster.isEmpty()&&"completed".equals(status))poster=task.optString("uri");
             FrameLayout thumbnail=new FrameLayout(this);thumbnail.setBackground(shape(palette.control,10,0));thumbnail.setClipToOutline(true);
             ImageView cover=cover(poster,id,64,64);thumbnail.addView(cover,new FrameLayout.LayoutParams(-1,-1));
-            String primary="completed".equals(status)?(task.optString("mime").equals("application/zip")?"打开":"播放"):"paused".equals(status)?(held?"排队":"继续"):"pausing".equals(status)?"暂停中":"cancelling".equals(status)?"取消中":active?(pauseable?"暂停":"处理中"):"重试";
+            JSONObject taskMedia=task.optJSONObject("media");String taskKind=task.optString("kind",taskMedia==null?"":taskMedia.optString("kind"));
+            boolean directFile="direct-file".equals(taskKind)||(taskMedia!=null&&"direct-file".equals(taskMedia.optString("kind")));
+            String mime=task.optString("mime");boolean legacyMedia=mime.isEmpty()&&(taskKind.isEmpty()||"media".equals(taskKind))&&(taskMedia==null||!taskMedia.optBoolean("album"));
+            boolean playable=!directFile&&(mime.startsWith("video/")||mime.startsWith("audio/")||legacyMedia);
+            String primary="completed".equals(status)?(playable?"播放":"打开"):"paused".equals(status)?(held?"排队":"继续"):"pausing".equals(status)?"暂停中":"cancelling".equals(status)?"取消中":active?(pauseable?"暂停":"处理中"):"重试";
             Button action=quietButton(primary);action.setTextColor(Color.WHITE);action.setTextSize(12);action.setPadding(0,0,0,0);action.setMinWidth(0);action.setBackground(new android.graphics.drawable.InsetDrawable(shape(0xB3171A1C,18,0),dp(6)));
             action.setEnabled((!active||pauseable)&&!"pausing".equals(status)&&!"cancelling".equals(status)&&!TaskStore.heldByQueue(task));action.setContentDescription(primary+"："+task.optString("title"));action.setVisibility(action.isEnabled()&&!queueSelecting?View.VISIBLE:View.GONE);
             action.setOnClickListener(v->performTaskPrimary(id));thumbnail.addView(action,new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.CENTER));item.addView(thumbnail,new LinearLayout.LayoutParams(dp(64),dp(64)));
@@ -568,7 +654,7 @@ public final class MainActivity extends Activity {
             if(!summary.isEmpty()){TextView detail=text(summary,12,error.isEmpty()?MUTED:palette.danger,false);detail.setMaxLines(2);detail.setEllipsize(android.text.TextUtils.TruncateAt.END);add(content,detail,5,0);}
             if(!queueSelecting&&"failed".equals(status)&&canOfferLogin(task.optString("url"),task.optString("log",task.optString("userError")))){Button recover=quietButton(accountRecoveryLabel(task.optString("url")));recover.setTextSize(12);recover.setTextColor(ACCENT);recover.setOnClickListener(v->showLoginRecovery("download",id,task.optString("url")));content.addView(recover,new LinearLayout.LayoutParams(-2,dp(40)));}
             if(!queueSelecting){Button more=quietButton("");PocketIcon menuIcon=new PocketIcon("more",INK);menuIcon.setBounds(0,0,dp(24),dp(24));more.setCompoundDrawables(menuIcon,null,null,null);more.setContentDescription("任务更多操作："+task.optString("title"));more.setPadding(0,0,0,0);more.setMinWidth(0);more.setOnClickListener(v->showTaskActions(v,task));item.addView(more,new LinearLayout.LayoutParams(dp(48),dp(48)));}
-            item.setContentDescription(task.optString("title")+(queueSelecting?(queueSelection.contains(id)?"，已选中":"，未选中"):"completed".equals(status)?"，点按播放，更多查看任务详情":"，点按查看进度及详情"));
+            item.setContentDescription(task.optString("title")+(queueSelecting?(queueSelection.contains(id)?"，已选中":"，未选中"):"completed".equals(status)?"，点按"+(playable?"播放":"打开")+"，更多查看任务详情":"，点按查看进度及详情"));
             item.setOnClickListener(v->{if(queueSelecting){toggleQueueSelection(id);return;}JSONObject current=TaskStore.get(this,id);if(current!=null){if("completed".equals(current.optString("status")))openFile(current,false);else showTask(current);}});
             item.setOnLongClickListener(v->{queueSelecting=true;queueSelection.add(id);refreshQueue(true);return true;});
             if(!queueSelecting&&!TaskStore.heldByQueue(task)&&(pauseable||"paused".equals(status))){
@@ -779,7 +865,7 @@ public final class MainActivity extends Activity {
             Intent i=new Intent(share?Intent.ACTION_SEND:Intent.ACTION_VIEW);
             if(share){i.setType(mime);i.putExtra(Intent.EXTRA_STREAM,uri);}else i.setDataAndType(uri,mime);
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);i.setClipData(ClipData.newRawUri(task.optString("mime").startsWith("audio/")?"音频":task.optString("mime").startsWith("video/")?"视频":"文件",uri));
-            startActivity(Intent.createChooser(i,share?"分享文件":"选择播放器"));
+            startActivity(Intent.createChooser(i,share?"分享文件":"选择打开方式"));
         }catch(ActivityNotFoundException e){toast("没有可打开此文件的应用");}
         catch(Exception e){showMessage("无法打开", "文件可能已被移动或删除。\n"+friendly(e));}
     }
@@ -801,6 +887,7 @@ public final class MainActivity extends Activity {
         section(c,"账户与来源");LinearLayout accounts=settingsGroup(c);TextView accountSummary=settingRow(accounts,"账号管理","读取中…",this::showLoginSettings);settingRow(accounts,"支持的平台","视频与音频",this::showSupportedPlatforms);
         io.execute(()->{String summary;try{AccountStore store=new AccountStore(this);store.prepare();int count=0;for(LoginPlatform p:LoginPlatform.values())if(store.hasSaved(p))count++;summary=count==0?"未登录":count+" 个平台已保存";}catch(Exception e){summary="点此管理";}String value=summary;main.post(()->{if(!isDestroyed()&&"settings".equals(tab)&&accountSummary.isAttachedToWindow())accountSummary.setText(value);});});
         section(c,"下载管理");LinearLayout downloads=settingsGroup(c);settingRow(downloads,"下载与速度",downloadConnections()+" 路 · 最高可用",this::showDownloadSettings);settingRow(downloads,"保存位置",DownloadLocation.label(this),this::showStorageSettings);
+        settingRow(downloads,"下载预设","画质、附件与文件命名",this::showPresetManager);
         switchRow(downloads,"剪贴板链接提醒","clipboard_suggestions",true);
         section(c,"播放与外观");LinearLayout appearance=settingsGroup(c);settingRow(appearance,"外观主题",themeLabel(),this::showAppearanceSettings);settingRow(appearance,"快进 / 快退",getSharedPreferences("config",0).getInt("seek_seconds",10)+" 秒",this::showSeekSettings);
         switchRow(appearance,"播放手势","player_gestures",false);switchRow(appearance,"界面动效","motion_enabled",true);
@@ -845,6 +932,7 @@ public final class MainActivity extends Activity {
         }
         c.addView(options,new LinearLayout.LayoutParams(-1,-2));
         add(c,text("更多连接不一定更快。实际速度取决于手机网络和源站，下次开始任务时生效。",12,MUTED,false),12,18);
+        switchRow(c,"回到应用时恢复中断下载","download_auto_recover",true);
         Button save=button("保存下载设置",true);c.addView(save,new LinearLayout.LayoutParams(-1,dp(48)));
         PocketDialog panel=settingsPanel("下载与速度",c);
         save.setOnClickListener(v->{
@@ -1170,6 +1258,106 @@ public final class MainActivity extends Activity {
                 }).show();bottom(panel);
     }
 
+    private static String presetRuleLabel(String rule) {
+        switch(rule){case "cap-1080":return "1080p 以内";case "cap-720":return "720p 以内";
+            case "audio-m4a":return "仅音频 · M4A";case "audio-mp3":return "仅音频 · MP3";
+            case "compatible-mp4":return "兼容优先 · MP4";default:return "最高可用画质";}
+    }
+
+    private void showPresetPicker() {
+        try {
+            List<DownloadPresets.Preset> choices=new ArrayList<>();
+            for(String rule:DownloadPresets.RULES)choices.add(new DownloadPresets.Preset("",presetRuleLabel(rule),rule,
+                    false,false,SubtitleChoices.PREFER_ORIGINAL,Collections.emptyList(),NamingTemplate.DEFAULT));
+            choices.addAll(DownloadPresetStore.all(this));
+            String[] labels=new String[choices.size()+2];
+            for(int i=0;i<choices.size();i++)labels[i]=choices.get(i).name;
+            labels[choices.size()]="管理与新建预设";labels[choices.size()+1]="选择部分内容设置画质";
+            PocketDialog panel=new PocketDialog.Builder(this).setTitle("应用到待下载内容")
+                    .setItems(labels,(d,which)->{if(which==choices.size())showPresetManager();
+                        else if(which==choices.size()+1)showBatchSettings();else applyPreset(choices.get(which));})
+                    .setNegativeButton("返回",null).show();bottom(panel);
+        }catch(Exception error){showMessage("无法读取预设",friendly(error));}
+    }
+
+    private void applyPreset(DownloadPresets.Preset preset) {
+        try {
+            int applied=0;List<String> skipped=new ArrayList<>();
+            for(Engine.Media source:new ArrayList<>(inspectedMedia)){
+                DownloadPresets.Result result=DownloadPresets.copyMediaAndApply(source,preset);
+                if(!result.applied()){if(skipped.size()<3)skipped.add(source.title+"："+result.skipReason);continue;}
+                Engine.Media replacement=result.media;
+                if(replacement.downloadChoices().stream().noneMatch(q->q.id.equals(result.quality.id)))replacement.qualities.add(result.quality);
+                int index=inspectedMedia.indexOf(source);if(index<0)continue;inspectedMedia.set(index,replacement);
+                List<Engine.Quality> qualities=replacement.downloadChoices();
+                for(int n=0;n<qualities.size();n++)if(qualities.get(n).id.equals(result.quality.id)){qualitySelections.put(InspectionBatch.key(replacement),n);break;}
+                applied++;
+            }
+            persistInspectionInbox();renderInspection();
+            if(skipped.isEmpty())toast("已应用到 "+applied+" 项");
+            else showMessage("已应用到 "+applied+" 项",String.join("\n",skipped)+"\n不适用的内容保留原设置。");
+        }catch(Exception error){showMessage("无法应用预设",friendly(error));}
+    }
+
+    private void showPresetManager() {
+        try {
+            List<DownloadPresets.Preset> presets=DownloadPresetStore.all(this);String[] labels=new String[presets.size()+3];
+            for(int i=0;i<presets.size();i++)labels[i]=presets.get(i).name+" · "+presetRuleLabel(presets.get(i).rule);
+            labels[presets.size()]="新建预设";labels[presets.size()+1]="导入预设";labels[presets.size()+2]="导出预设";
+            PocketDialog panel=new PocketDialog.Builder(this).setTitle("下载预设")
+                    .setItems(labels,(d,which)->{
+                        if(which==presets.size())editPreset(null);
+                        else if(which==presets.size()+1)importPresets();
+                        else if(which==presets.size()+2){try{
+                            ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+                            if(clipboard==null)throw new IOException("剪贴板暂不可用");
+                            clipboard.setPrimaryClip(ClipData.newPlainText("拾流下载预设",DownloadPresetStore.exportJson(this)));toast("预设已复制，可保存为 JSON");
+                        }catch(Exception error){showMessage("无法导出",friendly(error));}}
+                        else {DownloadPresets.Preset preset=presets.get(which);
+                            new PocketDialog.Builder(this).setTitle(preset.name).setItems(new String[]{"编辑预设","应用到待下载内容","删除预设"},(menu,action)->{
+                                if(action==0)editPreset(preset);else if(action==1)applyPreset(preset);
+                                else new PocketDialog.Builder(this).setTitle("删除此预设？").setMessage("已加入队列的任务保留原设置。")
+                                        .setNegativeButton("保留",null).setPositiveButton("删除",(confirm,w)->{try{DownloadPresetStore.remove(this,preset.id);showPresetManager();}catch(Exception error){showMessage("无法删除",friendly(error));}}).show();
+                            }).setNegativeButton("返回",null).show();}
+                    }).setNegativeButton("完成",null).show();bottom(panel);
+        }catch(Exception error){showMessage("无法读取预设",friendly(error));}
+    }
+
+    private void editPreset(DownloadPresets.Preset original) {
+        LinearLayout c=column();
+        PocketEditText name=new PocketEditText(this);name.setHint("例如：收藏视频");name.setContentDescription("预设名称");name.setText(original==null?"":original.name);name.setSingleLine(true);name.setTextColor(INK);name.setBackground(fieldBackground());name.setPadding(dp(12),dp(12),dp(12),dp(12));
+        c.addView(text("名称",13,MUTED,true));add(c,name,6,12);
+        String[] rule={original==null?"best":original.rule};Button ruleButton=button(presetRuleLabel(rule[0])+"  ▾",false);
+        ruleButton.setOnClickListener(v->{String[] labels=new String[DownloadPresets.RULES.size()];for(int i=0;i<labels.length;i++)labels[i]=presetRuleLabel(DownloadPresets.RULES.get(i));
+            new PocketDialog.Builder(this).setTitle("保存格式").setItems(labels,(dialog,which)->{rule[0]=DownloadPresets.RULES.get(which);ruleButton.setText(presetRuleLabel(rule[0])+"  ▾");}).setNegativeButton("返回",null).show();});add(c,ruleButton,0,12);
+        c.addView(text("文件命名",13,MUTED,true));PocketEditText template=new PocketEditText(this);template.setText(original==null?NamingTemplate.DEFAULT:original.namingTemplate);
+        template.setContentDescription("文件命名模板");template.setSingleLine(true);template.setTextColor(INK);template.setBackground(fieldBackground());template.setPadding(dp(12),dp(12),dp(12),dp(12));add(c,template,6,8);
+        TextView preview=text("",12,MUTED,false);add(c,preview,0,8);
+        Engine.Media sample=inspectedMedia.stream().filter(m->!m.directFile()).findFirst().orElse(null);
+        Map<String,String> values=NamingTemplate.fields(sample==null?"示例视频":sample.title,sample==null?"video-id":sample.id,sample==null?"作者":sample.uploader,sample==null?"来源":sample.platform,sample==null?0:sample.playlistIndex);
+        Runnable refresh=()->{try{preview.setText("预览："+NamingTemplate.preview(values,template.getText().toString())+"\n扩展名由最终保存格式决定。");preview.setTextColor(MUTED);}catch(IllegalArgumentException error){preview.setText(error.getMessage());preview.setTextColor(palette.danger);}};
+        template.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){}public void afterTextChanged(android.text.Editable s){refresh.run();}});refresh.run();
+        add(c,text("可用字段：{title} 标题、{id} 内容编号、{uploader} 作者、{platform} 来源、{part} 分P序号",12,MUTED,false),0,12);
+        PocketSwitch cover=new PocketSwitch(this);cover.setText("保存源站可用的封面");cover.setTextColor(INK);cover.setChecked(original!=null&&original.saveCover);add(c,cover,0,4);
+        PocketSwitch subtitles=new PocketSwitch(this);subtitles.setText("保存源站可用的字幕");subtitles.setTextColor(INK);subtitles.setChecked(original!=null&&original.saveSubtitles);add(c,subtitles,0,12);
+        TextView error=text("",12,palette.danger,false);error.setVisibility(View.GONE);add(c,error,0,8);Button save=button("保存预设",true);add(c,save,4,0);
+        c.setPadding(0,dp(8),0,dp(8));ScrollView scroll=new ScrollView(this);scroll.addView(c);
+        PocketDialog panel=new PocketDialog.Builder(this).setTitle(original==null?"新建下载预设":"编辑下载预设")
+                .setView(scroll).setNegativeButton("取消",null).show();bottom(panel);
+        save.setOnClickListener(v->{try{
+            DownloadPresets.Preset preset=new DownloadPresets.Preset(original==null?"":original.id,name.getText().toString(),rule[0],cover.isChecked(),subtitles.isChecked(),
+                    original==null?SubtitleChoices.PREFER_ORIGINAL:original.subtitleMode,original==null?Collections.emptyList():original.subtitleLanguages,template.getText().toString());
+            DownloadPresetStore.save(this,preset);panel.dismiss();showPresetManager();
+        }catch(Exception failure){error.setText(friendly(failure));error.setVisibility(View.VISIBLE);}});
+    }
+
+    private void importPresets() {
+        LinearLayout c=column();c.addView(text("粘贴之前导出的 JSON 预设，导入后可再编辑。",13,MUTED,false));
+        PocketEditText input=new PocketEditText(this);input.setMinLines(4);input.setMaxLines(8);input.setTextColor(INK);input.setContentDescription("下载预设 JSON");input.setGravity(Gravity.TOP);input.setBackground(fieldBackground());input.setPadding(dp(12),dp(12),dp(12),dp(12));add(c,input,8,12);
+        TextView error=text("",12,palette.danger,false);error.setVisibility(View.GONE);add(c,error,0,8);Button save=button("导入",true);add(c,save,0,0);PocketDialog panel=settingsPanel("导入下载预设",c);
+        save.setOnClickListener(v->{try{DownloadPresetStore.importJson(this,input.getText().toString());panel.dismiss();showPresetManager();toast("预设已导入");}catch(Exception failure){error.setText(friendly(failure));error.setVisibility(View.VISIBLE);}});
+    }
+
     private void showBatchSettings() {
         List<Engine.Media> items=new ArrayList<>(inspectedMedia);boolean[] chosen=new boolean[items.size()];Arrays.fill(chosen,true);
         String[] labels=new String[items.size()];for(int i=0;i<labels.length;i++)labels[i]=items.get(i).title;
@@ -1180,7 +1368,7 @@ public final class MainActivity extends Activity {
                     String[] rules={"最高可用画质","1080p 以内","720p 以内","仅音频 · M4A","仅音频 · MP3"};
                     new PocketDialog.Builder(this).setTitle("应用到 "+selected.size()+" 项").setItems(rules,(dialog,rule)->{
                         int applied=0;for(Engine.Media media:selected){
-                            if(media.album||!inspectedMedia.contains(media)||(rule>=3&&!media.hasAudio))continue;
+                            if(media.directFile()||media.album||!inspectedMedia.contains(media)||(rule>=3&&!media.hasAudio))continue;
                             String target=rule==0?"best":rule==1?"cap-1080":rule==2?"cap-720":rule==3?"audio-m4a":"audio-mp3";
                             if(rule==1||rule==2){int height=rule==1?1080:720;if(media.qualities.stream().noneMatch(q->q.id.equals(target)))media.qualities.add(new Engine.Quality(target,height+"p 以内","bv*[height<="+height+"]+ba/b[height<="+height+"]"));}
                             List<Engine.Quality> choices=media.downloadChoices();for(int n=0;n<choices.size();n++)if(choices.get(n).id.equals(target)){qualitySelections.put(InspectionBatch.key(media),n);applied++;break;}
@@ -1334,16 +1522,16 @@ public final class MainActivity extends Activity {
         if(request==MOVE_STORAGE_REQUEST){if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)moveDownloadedFiles();else showMessage("没有移动文件","请允许保存文件所需的存储权限，原文件保持不变。");return;}
         if(request==STORAGE_REQUEST) {
             String action=pendingQueueAction;List<String> ids=new ArrayList<>(pendingQueueIds);pendingQueueAction=null;pendingQueueIds.clear();
-            if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){if(action!=null)requestQueueCommand(action,ids);else if(!pendingBatch.isEmpty()){List<Engine.Media> batch=new ArrayList<>(pendingBatch);pendingBatch.clear();enqueueBatch(batch);}}
+            if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED){if(action!=null)requestQueueCommand(action,ids);else if(!pendingBatch.isEmpty()){List<Engine.Media> batch=new ArrayList<>(pendingBatch);List<Engine.Quality> qualities=new ArrayList<>(pendingBatchQualities);pendingBatch.clear();pendingBatchQualities.clear();enqueueBatchConfirmed(batch,qualities);}}
             else showMessage("没有开始下载","Android 7–9 需要存储权限才能把视频保存到公共下载目录。链接已保留。");
-            pendingBatch.clear();
+            pendingBatch.clear();pendingBatchQualities.clear();
         }
     }
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);readShare(intent);}
     private void readShare(Intent intent) {
         if(intent!=null&&Intent.ACTION_SEND.equals(intent.getAction())) {
             String value=intent.getStringExtra(Intent.EXTRA_TEXT);
-            if(value!=null&&!value.isEmpty()){try{queueInspections(LinkBatch.parse(value).urls);showTab("new");}catch(IllegalArgumentException invalid){toast(invalid.getMessage());}intent.setAction(null);}
+            if(value!=null&&!value.isEmpty()){try{queueInspections(parseIntakeLinks(value).urls);showTab("new");}catch(IllegalArgumentException invalid){toast(invalid.getMessage());}intent.setAction(null);}
         }
     }
     private final AppUpdates.Listener appUpdateListener=state->{
@@ -1358,7 +1546,7 @@ public final class MainActivity extends Activity {
         appUpdateDialog=dialog;dialog.setOnDismissListener(d->{if(appUpdateDialog==dialog)appUpdateDialog=null;});dialog.show();
         if(ready)updates.notifiedReady(state.offer.code);else updates.notified(state.offer.code);
     };
-    @Override protected void onResume(){super.onResume();foreground=true;clipboardCheckPending=true;main.post(checkClipboard);AppUpdates.get(this).listen(appUpdateListener);main.removeCallbacks(poll);main.post(poll);if(libraryView!=null)libraryView.refresh();}
+    @Override protected void onResume(){super.onResume();foreground=true;DownloadService.recover(this);clipboardCheckPending=true;main.post(checkClipboard);AppUpdates.get(this).listen(appUpdateListener);main.removeCallbacks(poll);main.post(poll);if(libraryView!=null)libraryView.refresh();}
     @Override protected void onPause(){foreground=false;main.removeCallbacks(checkClipboard);hideClipboardOffer();AppUpdates.get(this).unlisten(appUpdateListener);if(appUpdateDialog!=null)appUpdateDialog.dismiss();if(openSwipeRow!=null)openSwipeRow.close(false);queueTouchActive=false;super.onPause();main.removeCallbacks(poll);if(input!=null)draft=input.getText().toString();getPreferences(0).edit().putString("draft",draft).apply();persistInspectionInbox();}
     @Override protected void onSaveInstanceState(Bundle state){
         state.putBoolean("queue_selecting",queueSelecting);state.putStringArrayList("queue_selection",new ArrayList<>(queueSelection));
@@ -1369,7 +1557,7 @@ public final class MainActivity extends Activity {
         if(libraryView!=null)libraryState=libraryView.saveUiState();if(libraryState!=null)state.putBundle("library_state",libraryState);
         try{org.json.JSONArray media=new org.json.JSONArray();for(Engine.Media m:inspectedMedia)media.put(m.toJson());state.putString("inspection_media",media.toString());}catch(Exception ignored){}
     }
-    @Override protected void onDestroy(){super.onDestroy();foreground=false;fileMoveCancelled.set(true);fileIo.shutdownNow();if(clipboardReview!=null)clipboardReview.dismiss();main.removeCallbacks(checkClipboard);main.removeCallbacks(previewLinks);main.removeCallbacks(poll);main.removeCallbacks(commitRemovals);if(!isChangingConfigurations())commitPendingRemovals(false);pendingRemoval.clear();if(libraryView!=null)libraryView.release();if(artwork!=null)artwork.release();++parseGeneration;engine.cancelInspect();if(collectionEngine!=null)collectionEngine.cancelInspect();io.shutdownNow();}
+    @Override protected void onDestroy(){cancelArchiveCheck(archiveGeneration);super.onDestroy();foreground=false;fileMoveCancelled.set(true);fileIo.shutdownNow();if(clipboardReview!=null)clipboardReview.dismiss();main.removeCallbacks(checkClipboard);main.removeCallbacks(previewLinks);main.removeCallbacks(poll);main.removeCallbacks(commitRemovals);if(!isChangingConfigurations())commitPendingRemovals(false);pendingRemoval.clear();if(libraryView!=null)libraryView.release();if(artwork!=null)artwork.release();++parseGeneration;engine.cancelInspect();if(collectionEngine!=null)collectionEngine.cancelInspect();io.shutdownNow();}
 
     @Override public void onBackPressed(){if("queue".equals(tab)&&queueSelecting){queueSelecting=false;queueSelection.clear();refreshQueue(true);return;}super.onBackPressed();}
 
@@ -1390,6 +1578,7 @@ public final class MainActivity extends Activity {
     private GradientDrawable shape(int color,int radius,int border){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));if(border!=0)d.setStroke(dp(1),border);return d;}
     private void add(LinearLayout parent,View child,int top,int bottom){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(top);p.bottomMargin=dp(bottom);parent.addView(child,p);}
     private static String mediaSummary(Engine.Media media,int selection){
+        if(media.directFile())return fileTypeLabel(media)+" · "+MediaSize.format(media.filesize);
         Engine.Quality choice=media.downloadChoices().get(Math.max(0,Math.min(selection,media.downloadChoices().size()-1)));
         if(media.album)return media.imageCount+" 张图片 · 打包为 ZIP，解压后查看";
         if(choice.audioOnly())return choice.details;
@@ -1398,6 +1587,15 @@ public final class MainActivity extends Activity {
         if(media.filesize>0)value+=(value.isEmpty()?"":" · ")+(media.filesizeEstimated?"预计 ":"")+MediaSize.format(media.filesize);
         return value.isEmpty()?"实际大小在开始下载后确定":value;
     }
+    private static String fileTypeLabel(Engine.Media media) {
+        if(media.file==null)return "文件信息需重新检查";
+        String name=media.file.name;int dot=name.lastIndexOf('.');
+        String extension=dot<0?"":name.substring(dot+1);
+        if(extension.matches("[A-Za-z0-9]{1,12}"))return extension.toUpperCase(Locale.ROOT)+" 文件";
+        String mime=media.file.mime;
+        return mime.startsWith("video/")?"视频文件":mime.startsWith("audio/")?"音频文件":mime.startsWith("image/")?"图片":mime.startsWith("text/")?"文本文件":"文件";
+    }
+
     private static String duration(long seconds){return String.format(Locale.ROOT,"%d:%02d",Math.max(0,seconds)/60,Math.max(0,seconds)%60);}
     private ImageView cover(String source,String key,int width,int height){ImageView image=new ImageView(this);image.setBackground(shape(palette.control,12,0));image.setClipToOutline(true);image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setContentDescription("视频封面");artwork.load(image,source,key);return image;}
     private void clearArtwork(View view){if(artwork==null||view==null)return;if(view instanceof ImageView)artwork.cancel((ImageView)view);if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)clearArtwork(group.getChildAt(i));}}
